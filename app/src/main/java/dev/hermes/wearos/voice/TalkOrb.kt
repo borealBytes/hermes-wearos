@@ -108,7 +108,7 @@ fun TalkOrb(
     Box(contentAlignment = Alignment.Center, modifier = modifier.size(diameter)) {
         // Pulse ring (listening, or speaking alone): an expanding, fading red circle OUTSIDE the
         // orb — drawn first so the orb always covers its center. While a reply is being READ
-        // ALOUD the pulse carries across the room ("silent-but-speaking is obvious", SPEC §12.9).
+        // ALOUD the pulse carries across the room ("silent-but-speaking is obvious", SPEC §12.11).
         if ((listening && !running) || (speaking && !listening && !running)) {
             Box(
                 modifier = Modifier

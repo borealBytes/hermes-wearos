@@ -156,7 +156,7 @@ class MainActivity : ComponentActivity() {
                 val voiceOut by speak.enabled.collectAsState()
                 // The orb's STOP face while the answer is being READ ALOUD (owner 2026-10-29).
                 val speakingNow by speak.speaking.collectAsState()
-                // Where the spoken sentence sits in the live stream — karaoke follow (SPEC §12.9).
+                // Where the spoken sentence sits in the live stream — karaoke follow (SPEC §12.11).
                 val speakingOffsetNow by speak.speakingOffset.collectAsState()
                 // Mute-lane double slider anchor + picker mirror (owner 2026-10-29).
                 val replyVol by settings.ttsVolumeFor.collectAsState()

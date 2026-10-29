@@ -393,31 +393,36 @@ already re-picked by the time the ask is typed.
 ## 12. Orb dial, agent keys, session search (owner batch 3, 2026-10-26)
 
 Owner's frame: *"would it simplify the interface even more to get all but the orb button off the
-main screen?"* One control, eight directions, plus the two bugs that surfaced while using it
+main screen?"* One control, nine directions (since 2026-10-29; eight until ✅ approvals joined the
+default map), plus the two bugs that surfaced while using it
 (agent switch 401s, sessions never preloading) and session search. Verified on the owner's
 hardware this batch: **Galaxy Watch Ultra (SM-L705U), API 36 / Android 16, 480×480 @ 340dpi** —
 byte-identical to `BottomLayout.REF`, so dial geometry is unit-testable against real numbers.
 
-### 12.1 The dial (D1–D8) — `domain/OrbDial.kt` + `ui/OrbDialOverlay.kt`
+### 12.1 The dial (D1–D9) — `domain/OrbDial.kt` + `ui/OrbDialOverlay.kt`
 
-Eight 45° sectors, default map (every slot remappable in Settings ▸ Orb):
+Nine 40° sectors, default map (every slot remappable in Settings ▸ Orb). Keyboard is PINNED to
+12:00 by owner rule (2026-10-29: *"that allows for fast access to the most commonly used option"*) —
+slot 0 is always straight up no matter how the ring is remapped or resized:
 
 | Clock | Lane | Action id | Why |
 |---|---|---|---|
-| 12:00 | keyboard | `keyboard` | the drag-up that already ships (`OrbGesture.DRAG_UP` becomes this sector — semantics unchanged) |
-| 1:30 | mute / unmute | `mute` | the mute satellite's job; same way again = the inverse |
-| 3:00 | settings | `settings` | one drag to Settings (owner: "tough to get to settings"); replaced the unshipped `record_hi` stub, which remains a remap lane (F19) |
-| 4:30 | model picker | `model` | 🧠 per-session model selector — replaced `voice_notes` (F20 stub nobody fired), SPEC §12.6 |
-| 6:00 | slash commands | `commands` | the overlay (F15) |
-| 7:30 | chats | `chats` | local chats for the active agent (the header chip's job) |
-| 9:00 | sessions | `sessions` | gateway/computer sessions |
-| 10:30 | agents | `agents` | agent switcher |
+| 12:00 | keyboard | `keyboard` | the drag-up that already ships (`OrbGesture.DRAG_UP` becomes this sector — semantics unchanged); owner-pinned |
+| 1:20 | mute / unmute | `mute` | the mute satellite's job; same way again = the inverse; DWELL enters volume mode (§12.8) |
+| 2:40 | settings | `settings` | one drag to Settings (owner: "tough to get to settings"); replaced the unshipped `record_hi` stub, which remains a remap lane (F19) |
+| 4:00 | model picker | `model` | 🧠 per-session model selector — replaced `voice_notes` (F20 stub nobody fired), SPEC §12.6 |
+| 5:20 | slash commands | `commands` | the overlay (F15) |
+| 6:40 | chats | `chats` | local chats for the active agent (the header chip's job) |
+| 8:00 | sessions | `sessions` | gateway/computer sessions |
+| 9:20 | agents | `agents` | agent switcher |
+| 10:40 | approvals | `approvals` | ✅ the per-chat approval-mode sheet (§12.9) — the 9th wedge (owner 2026-10-29); a saved EIGHT-slot map decodes onto the new dial by inheriting this default (no reset) |
 
-**Geometry decision (owner, locked):** the orb sits 15 ref-px off the bottom edge, so down / 4:30 /
-7:30 have no room for a ring. The dial therefore uses **contextual rise**: dragging up, left, right
-or either upper diagonal never moves the orb; when the drag vector enters the LOWER arc the orb
-animates toward face center (~110 ms) so the crowded slots are reachable, and it settles back when
-the drag leaves. Ring icons are drawn **past the fingertip** (`ICON_RING_REF` > activation radius)
+**Geometry decision (owner, locked):** the orb sits 15 ref-px off the bottom edge, so the four
+below-horizon wedges have no room for a ring. The dial therefore uses **contextual rise**: dragging
+up, left, right or either upper diagonal never moves the orb; when the drag vector enters the LOWER
+arc (`100°…260°` on the nine-wedge face) the orb animates toward face center (~110 ms) so the
+crowded slots are reachable, and it settles back when the drag leaves. Ring icons are drawn **past
+the fingertip** (`ICON_RING_REF` > activation radius)
 — you are dragging *to* an icon you can see, not to an invisible angle.
 
 **Speed discipline:** the ring fades in ≤ 80 ms, sector changes cost one haptic tick, release
@@ -430,7 +435,7 @@ lane only arms on a drag that crosses before the long-press timeout, so **tap = 
 **Re-aim (owner batch 5: "if I go up I should still be able to move over to one of the others"):**
 arming the dial BEATS the hold timer outright. Once the gate is crossed the gesture belongs to the
 dial until the finger lifts — time passing never freezes the vector — and the lane is decided by
-the finger's angle **at release**, so up-then-slide-left-then-release picks 10:30. (The old bug:
+the finger's angle **at release**, so up-then-slide-left-then-release picks 10:40. (The old bug:
 `Tracker.move` froze dx/dy when the long-press timeout expired mid-drag, ~0.4 s in.)
 
 **SPIN mode (`domain/DialSpin.kt`, owner batch 5: "slide it up, go right or left, the little
@@ -649,7 +654,7 @@ the watch's default browser, honest toast when none exists).
 
 ---
 
-### 12.8 Voice-out config — voices, the speed slider, dial volume (owner 2026-10-29)
+### 12.8 Voice-out config — voices, the speed slider, per-agent volume (owner 2026-10-29)
 
 Owner asked for two things on a call: *"the watch might have a lot more voices"* (change the TTS
 voice) *and change speed — a slider would do me better* (the speed chips clipped off the round
@@ -682,12 +687,18 @@ owns the pure mapping (rate 0.5–2.0 ↔ slider fraction, clamps, `SPEED_CHIPS`
 - **Speed**: a custom drag slider (`ui/SettingsScreen.kt` → `RateSlider`, awaitEachGesture jump+
   drag — wear-compose has no Slider) persists `tts_rate`; `setSpeechRate` applies to the running
   engine immediately so the release-ear-test hears the new rate without a restart.
-- **Volume = the dial (owner: *"dwell ~2 seconds on the mute lane and… swipe back and forth to
-  adjust my reply speed… a double slider"* — meaning reply VOLUME)**: `domain/DialVolume.kt` —
+- **Volume = per-agent, three faces, one store (owner: *"dwell ~2 seconds on the mute lane and…
+  swipe back and forth… a double slider"*, then *"make the volume be per-agent"* + a Voice-page
+  slider)**: `domain/DialVolume.kt` —
   dwell `DWELL_MS=2000` on the 🔇 lane arms volume mode; while armed, dial swipes move reply
   volume on a 5% grid (`FULL_SWEEP_REF=240` px for a comfortable full rotation), the lane caption
   is replaced by a `🔊 xx%` badge (`ui/OrbDialOverlay.kt` `volumeBadge`), and dwell-timeout
-  commits to `tts_volume`. Volume rides **per-utterance `KEY_PARAM_VOLUME`** in `speak()` — the
+  commits. The Voice page carries a matching drag slider ABOVE the speed one, labeled
+  `reply volume · <agent> · xx%` — it edits the ACTIVE AGENT's override; agents with no entry
+  ride the global. Storage is `tts_volumes` (`agent → 5%-grid percent`, codec + quantization in
+  `TtsConfig`, JVM-tested) resolved by `AppSettings.ttsVolumeFor(agent)`, which re-resolves when
+  the agent switches — the dial, the satellite and the slider all read and write the SAME map, so
+  they can never disagree. Volume rides **per-utterance `KEY_PARAM_VOLUME`** in `speak()` — the
   app never touches `STREAM_MUSIC`, so watch media volume and Hermes replies stay independent
   (owner-locked: Hermes-app-only).
 
@@ -723,6 +734,43 @@ gateway, rate, …); each page gets a `‹ …` back row and hardware/back retur
 (`BackHandler` + `SettingsPage.up()`).
 
 ---
+
+### 12.11 The orb state machine, karaoke follow, bottom-anchored streaming (owner 2026-10-29)
+
+One batch answering three complaints about the ANSWER experience — the orb lying about what it's
+doing, having to chase the spoken sentence with my eyes, and replies "streaming from the top of the
+thing instead of just above the orb".
+
+- **Orb state machine (`voice/TalkOrb.kt` + `SpeakAloud.speaking`)**: the orb wears the red ⏹ face
+  (pulse ring + border included) in TWO states — THINKING (run in flight) and SPEAKING (TTS queue
+  live; `pending > 0` in `SpeakAloud`). Tap always means "stop what the orb is doing": thinking →
+  cancel the run AND flush the voice queue in one breath (`stopActiveRun` + `speak.stop()`);
+  speaking → MUTE only (the answer already landed; orb returns to the mic). A stationary HOLD in
+  either state BLOOMS THE DIAL IN PLACE (hold-timeout routes to `onDialArm`): grab the keyboard, a
+  `/steer`, any lane mid-answer — the run is never disturbed by the hold (short tap does that), and
+  release-at-home cancels the bloom. Gesture state reads LIVE via `rememberUpdatedState`, never as
+  `pointerInput` keys: a flip mid-hold (queue drains while the finger sits) must not restart the
+  detector, which would cancel the gesture without `onDialEnd` and freeze the ring open. Idle orb
+  semantics untouched (tap-to-talk, come-home-cancel, drag-dial, dwell-volume).
+- **Karaoke follow (`SpeakAloud.speakingOffset` + `MainActivity` ChatBody effect)**: the utterance
+  registry carries each sentence's STREAM OFFSET (`Utt(text, step, offset)`); `onStart` publishes
+  it, and while speaking + tail-follow is engaged the chat anchors the spoken line ~34 % down the
+  viewport. The char→px ratio SELF-CALIBRATES from the measured live-item height (no font/markdown
+  math); a line already in the 22–72 % band is never nudged; scrolling away disengages exactly like
+  the tail-pin (same `ChatFollow` escape hatch — no yanking); mute stops the feed and frees the
+  scroll. `offset < 0` marks standalone speech (previews/notices) — nothing to follow.
+- **Bottom-anchor (`ChatScreen` spacer item 0 + `ChatAnchor` baseline rows=2)**: measured on-device,
+  the ROOT CAUSE was wear-compose: its list "end" parks the LAST item at the MIDDLE anchor, so a
+  transcript SHORTER than the circle sits pinned at the top (and the tail-pin rocket
+  `scrollToItem(idx, 4096)` shoves short content off the top entirely). Fix: a top SPACER sized from
+  ONE clean fully-composed frame (bounded wait for lazy tail; Σ item heights − spacer = content
+  height; pad = slack under it, 10 dp clear of the orb crown — flush reads as "sliding under").
+  Fits ⇒ pad > 0 + rest at offset 0: newest line just above the orb from SENTENCE ONE, reply grows
+  UPWARD (max scroll-back while waiting — same intent as `ChatFollow`). Doesn't fit ⇒ pad 0 and the
+  classic tail-pin owns the view unchanged. Idle hint and approval centering never compete (slack
+  forced 0); all row indices shifted +1 (tests rebased). Emulator-proven on all three paths: short
+  ask rests above the orb from the thinking state on; long lists tail-pin unchanged; a swipe-back
+  mid-stream holds through 6 s of deltas.
 
 ## 13. Next steps — branch 2 (media + voice quality), scoped 2026-10-26
 

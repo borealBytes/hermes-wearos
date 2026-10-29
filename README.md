@@ -84,32 +84,36 @@ in the film above.)
 - **Tap** — listen. The orb warms up and transcribes as you speak (on-device Vosk); a pause sends
   it, a second tap mid-speech cancels the half-sentence.
 - **Tap while an answer streams** — stop the run. The orb burns red while the gateway is working;
-  one press cancels the *server-side* run, not just the UI.
-- **Press, hold, drag** — the dial. Hold the disc for a beat and a ring appears around it: eight
+  one press cancels the *server-side* run, not just the UI. It also burns red **while it speaks** —
+  there a tap just mutes (the answer already landed), and a press-and-hold in either state pops the
+  dial ring in place so you can grab the keyboard or a `/steer` mid-answer without stopping anything.
+- **Press, hold, drag** — the dial. Hold the disc for a beat and a ring appears around it: nine
   wedges, each with an icon and a label. Keep your finger down and slide around the ring — the lane
   under your finger highlights — and **whatever lane you're on when you let go is the one that
   fires.** The ring is up in under 100 ms and the icons sit outside the activation gate, so once
   you've learned the map it's a blind flick.
 
-The eight directions, on the default map (clock-face — every one remappable, and `off` blanks a
-direction so an accidental drag does nothing):
+The nine directions, on the default map (clock-face — every one remappable, and `off` blanks a
+direction so an accidental drag does nothing; keyboard is pinned at 12:00 — fastest reach for the
+most-used lane):
 
 | Clock | Lane | Release does… |
 |---|---|---|
 | 12:00 | ⌨ **keyboard** | opens the text editor — type it, or use the keyboard's own mic |
-| 1:30 | 🔊 **mute** | toggles spoken replies (TTS is on by default) |
-| 3:00 | ⚙ **settings** | straight to Settings — because getting there otherwise is a finger-crawl (`record` → hi-fi whisper STT lives on as a remap lane, roadmap in progress) |
-| 4:30 | 🧠 **model** | per-chat model picker — lists only what your gateway has enabled; the pick is remembered for that chat, and "gateway default" hands it back |
-| 6:00 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
-| 7:30 | 💬 **chats** | your chat list for the current agent |
-| 9:00 | ≡ **sessions** | the session browser — adopt desktop sessions, fork, archive, delete |
-| 10:30 | 👤 **agents** | the agent picker — persona, tools, session space, and gateway key swap together |
+| 1:20 | 🔊 **mute** | toggles spoken replies (TTS is on by default); dwell 2 s here and the ring becomes a volume slider for THIS agent |
+| 2:40 | ⚙ **settings** | straight to Settings — because getting there otherwise is a finger-crawl (`record` → hi-fi whisper STT lives on as a remap lane, roadmap in progress) |
+| 4:00 | 🧠 **model** | per-chat model picker — lists only what your gateway has enabled; the pick is remembered for that chat, and "gateway default" hands it back |
+| 5:20 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
+| 6:40 | 💬 **chats** | your chat list for the current agent |
+| 8:00 | ≡ **sessions** | the session browser — adopt desktop sessions, fork, archive, delete |
+| 9:20 | 👤 **agents** | the agent picker — persona, tools, session space, and gateway key swap together |
+| 10:40 | ✅ **approvals** | the approval-mode sheet for THIS chat — inherit, manual, smart, off |
 
 Remap any direction at **Settings ▸ Display ▸ Orb dial** — tap a direction's row and it advances to
 the next action. The chat reads the change live: the very next flick obeys the new map, and the ring
 icons redraw with it.
 
-<img src="docs/screens/30-settings-lane.png" width="220" alt="Orb dial lane editor in Settings: clock positions 12:00 through 10:30 mapped to keyboard, mute, settings, model, commands, chats, sessions, agents" align="right" hspace="16"/>
+<img src="docs/screens/30-settings-lane.png" width="220" alt="Orb dial lane editor in Settings: clock positions 12:00 through 10:40 mapped to keyboard, mute, settings, model, commands, chats, sessions, agents, approvals" align="right" hspace="16"/>
 
 ## The back button never quits
 
@@ -193,7 +197,7 @@ There is no free, offline, *perfect* STT on a watch today. Here's the truth ladd
 | **GBoard typing → its mic** | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
 
 TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
-without touching a cloud voice. Mute is one dial flick (drag the orb toward 1:30) — since batch 3 the orb is the *only* control on the chat screen: eight drag directions stand in for every button, and the ⌘ lane at 6:00 opens the slash overlay.
+without touching a cloud voice. Mute is one dial flick (drag the orb toward 1:20) — since batch 3 the orb is the *only* control on the chat screen: nine drag directions stand in for every button, and the ⌘ lane at 5:20 opens the slash overlay. Reply loudness is PER AGENT — the Voice page slider, the mute-lane dwell slider on the dial, and the satellite all ride the same per-agent store. While it reads aloud, the chat keeps the SPOKEN sentence in view (karaoke follow); and a fresh reply rests just above the orb from sentence one, growing upward, instead of starting at the top of the circle.
 
 ## Networking: LAN at home, tailnet everywhere
 
@@ -334,7 +338,7 @@ mermaid as fence blocks (the watch renders them). Start the watchkit helper with
 
 ```bash
 source scripts/env.sh
-../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 350 tests
+../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 353 tests
 scripts/emulator.sh                        # optional headless Wear emulator
 scripts/doctor.sh                          # toolchain + link health report
 ```
