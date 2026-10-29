@@ -79,7 +79,7 @@ config for dev. (No QR scan — Ultra has no usable camera.)
 Connection (endpoints, test, tailnet-only, cert pin, badge) · Agents & sessions
 (default agent, idle rollover) · Voice-in (STT mode: on-watch only / +auto-fallback / gateway) ·
 Voice-out (master ON/OFF + pinned chat-screen mute, rate, chunking, TTS engine) · Display (mermaid,
-image quality, collapsed code, font scale) · Body tools (every switch + test button, digest cadence) ·
+image quality, collapsed code, font scale, launch video) · Body tools (every switch + test button, digest cadence) ·
 Storage (cache meter, cap, TTL, pinned sessions) · Notifications (jobs, approvals, haptics, quiet hours) ·
 Advanced (diag ring buffer + upload, poll interval, dev options).
 
@@ -615,6 +615,35 @@ mutex rather than opening a second capture.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **The launch film (owner 2026-10-29: *"it's only on the very first load of the app… if the user
+  clicks anywhere on the screen it stops playing and loads the rest — we're loading the rest of the
+  app in the background while the video plays"*)** — the 450 ms spirit flash is replaced on cold
+  starts by `app/src/main/assets/hermes-watch-intro.mp4`: 14.3 s, **soundtrack kept**, re-encoded
+  640×640 → **480×480 (exactly the panel)**, H.264 High + AAC-LC, crf 26 + `+faststart`,
+  **3.11 MB → 859,675 B** (72% off; SSIM 0.977 / PSNR 40.6 dB against the master, worst-SSIM frame
+  eyeballed too). Master is NOT in git (repo policy: generated video masters are untracked) — it
+  lives at `../hermes-watch-intro.mp4`, one level above the worktrees.
+  **Gate:** `domain/SplashIntro.kt` (pure) plays it on a **launcher cold start** and nothing else —
+  warm starts, notification/tile deep links, and `am start` (which is every `scripts/*.sh` and
+  `docs/DEMO.md` capture path, so screenshots stay clean) all fall back to the launch that shipped
+  before, as does **Settings ▸ Display ▸ Launch video**. The chat composes *under* the film (the
+  film decorates a warming app, it never gates composition), any touch cuts it and the touch is
+  consumed so the transcript never sees that same finger, and the exit fade is the hand-off. The
+  poster (`splash_spirit.webp`, already shipped) doubles as a curtain from the first frame so no
+  launch leaks a frame of chat between the system splash and the film.
+  **Three bugs only hardware taught** (each with the fix in `ui/IntroVideo.kt`): `res/raw` + media3
+  throws `RawResourceDataSourceException: Resource not found` ~3 s in, when the mp4 reader reopens
+  the URI at a byte offset ⇒ **asset URI, stored uncompressed**; media3 renders **no frame** until
+  it holds audio focus ⇒ ask politely for `AUDIO_GRACE_MS`, then play silent rather than black;
+  a `SurfaceView` hole-punches the poster out of the window ⇒ **TextureView**. And the budgets are
+  measurements: first frame landed **1.9 s / 3.1 s / 4.1 s** after the overlay opened on an
+  SM-L705U (whose system splash holds her face ~8 s before the app draws anything), so
+  `FIRST_FRAME_BUDGET_MS` sits at 6 s — the first attempt's 1.5 s silently ate a film that was
+  about to play. Proof: frame-by-frame cold-start captures on SM-L705U + Wear OS 5 emulator
+  (curtain → film → chat-on-tap → chat-after-natural-end), plus one log line per path
+  (`intro skipped: DeepLink|OwnerOff|NotLauncher`, `intro: first frame 3149ms in`).
+  6 new pure tests (**298 green**, was 292).
 
 - **Multi-gateway epic + IME no-Enter rule (SPEC §11)** — gateway registry (seed
   tailnet-first `hermes.tailnet.ts.net` → LAN fallback; legacy-key migration that keeps

@@ -204,6 +204,7 @@ class WearApp : Application() {
                 speak.init()
                 scope.launch { speak.loadEnabled() }
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
+                scope.launch { settings.loadIntroVideo() } // Display ▸ launch video (SplashIntro gate)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
                 scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
                 scope.launch { settings.loadAgentKeys() } // per-agent gateway keys (SPEC §12.2)

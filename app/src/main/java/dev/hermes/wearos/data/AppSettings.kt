@@ -70,6 +70,8 @@ class AppSettings(private val context: Context) {
         private val KEY_SLASH_USAGE = stringPreferencesKey("slash_usage")
         private val KEY_SLASH_CATALOG = stringPreferencesKey("slash_catalog_json")
         private val KEY_GW_SELECTED = stringPreferencesKey("gateway_selected")
+        // Display ▸ "Launch video" (domain/SplashIntro): play the intro film on a cold start.
+        private val KEY_INTRO_VIDEO = booleanPreferencesKey("intro_video")
     }
 
     suspend fun baseUrl(): String = context.dataStore.data.first()[KEY_BASE_URL] ?: DEFAULT_BASE_URL
@@ -170,6 +172,27 @@ class AppSettings(private val context: Context) {
     suspend fun setMarkdownRendering(v: Boolean) {
         context.dataStore.edit { it[KEY_MARKDOWN] = v }
         _markdownEnabled.value = v
+    }
+
+    /**
+     * Display ▸ "Launch video" (SPEC §4 Display node, gate in domain/SplashIntro): play
+     * res/raw/hermes_watch_intro.mp4 over a cold start. Default ON, and the StateFlow mirror is
+     * what the LAUNCH path reads — first composition cannot await a DataStore read, so
+     * [introSettingsLoaded] says when the mirror holds the owner's real choice instead of the
+     * shipped default (MainActivity waits on it, bounded by SplashIntro.SETTING_BUDGET_MS).
+     */
+    private val _introVideo = MutableStateFlow(true)
+    val introVideoEnabled: StateFlow<Boolean> = _introVideo
+    private val _introSettingsLoaded = MutableStateFlow(false)
+    val introSettingsLoaded: StateFlow<Boolean> = _introSettingsLoaded
+    suspend fun introVideoOn(): Boolean = context.dataStore.data.first()[KEY_INTRO_VIDEO] ?: true
+    suspend fun loadIntroVideo() {
+        _introVideo.value = introVideoOn()
+        _introSettingsLoaded.value = true
+    }
+    suspend fun setIntroVideo(v: Boolean) {
+        context.dataStore.edit { it[KEY_INTRO_VIDEO] = v }
+        _introVideo.value = v
     }
 
     /**

@@ -368,6 +368,19 @@ fun SettingsScreen(
                 onCheckedChange = { v -> scope.launch { settings.setMarkdownRendering(v) } },
             )
         }
+        // THE LAUNCH FILM (domain/SplashIntro owns when it may show): plays the 14 s intro on a
+        // cold start, tap anywhere to skip it. OFF restores the one-frame spirit flash.
+        val introOn by settings.introVideoEnabled.collectAsState()
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Launch video", style = MaterialTheme.typography.caption1)
+            Switch(
+                checked = introOn,
+                onCheckedChange = { v -> scope.launch { settings.setIntroVideo(v) } },
+            )
+        }
         // PINCH FONT-SCALE (Layout D epic): read-out + rescue reset. The two-finger pinch IN THE
         // MESSAGE AREA is the adjust UI (double-tap empty transcript = reset too); this row makes
         // the persisted value visible and recoverable from Settings.

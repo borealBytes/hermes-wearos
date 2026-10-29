@@ -23,6 +23,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -97,7 +100,9 @@ import dev.hermes.wearos.domain.CommandCatalog
 import dev.hermes.wearos.domain.CommandEntry
 import dev.hermes.wearos.domain.CommandKind
 import dev.hermes.wearos.domain.CommandUsage
+import dev.hermes.wearos.domain.SplashIntro
 import dev.hermes.wearos.ui.CommandsOverlay
+import dev.hermes.wearos.ui.IntroVideo
 import dev.hermes.wearos.ui.CommandOverlayState
 import dev.hermes.wearos.ui.OrbDialOverlay
 import dev.hermes.wearos.net.GatewaySessions
@@ -107,7 +112,9 @@ import dev.hermes.wearos.voice.VoskEvent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /** Watch-local navigation (SPEC §3/§4): chat ⇄ chats-list ⇄ settings ⇄ gateway-sessions. No nav library. */
@@ -486,7 +493,28 @@ class MainActivity : ComponentActivity() {
                 }
 
 
-                HermesScaffold {
+                // LAUNCH FILM (gate + rationale in domain/SplashIntro): decided EXACTLY ONCE per
+                // process, and only after the owner's Display switch has actually been read — a
+                // launch-time race against DataStore must not be what makes a 14 s film play. The
+                // wait is bounded (SplashIntro.SETTING_BUDGET_MS), so a slow disk falls back to the
+                // shipped default (ON) instead of holding the launch. The chat composes under the
+                // film either way: the intro decorates a warming app, it never gates it.
+                var introGate by remember { mutableStateOf<SplashIntro.Gate?>(null) }
+                LaunchedEffect(Unit) {
+                    withTimeoutOrNull(SplashIntro.SETTING_BUDGET_MS) {
+                        settings.introSettingsLoaded.first { it }
+                    }
+                    introGate = SplashIntro.decide(
+                        firstCompositionOfProcess = !IntroClaimed.getAndSet(true),
+                        ownerEnabled = settings.introVideoEnabled.value,
+                        deepLink = deepLink.value != null, // notification/tile tap (§M5)
+                        fromLauncher = intent?.isLauncherLaunch() == true,
+                    ).also { if (it != SplashIntro.Gate.Play) Log.i(TAG, "intro skipped: $it") }
+                }
+
+                // NULL until the gate answers — HermesScaffold waits for the answer before it
+                // claims either splash, so a DataStore race can never pick the launch story.
+                HermesScaffold(introGate?.let { it == SplashIntro.Gate.Play }) {
                     VoiceHost(session, speak)
                     when (screen) {
                         Screen.Chat -> ChatBody(
@@ -1320,6 +1348,18 @@ internal fun devMediaTestCard(): ImageBitmap {
 
 // Splash-spirit machinery (see HermesScaffold): process-wide one-shot, clock off the main thread.
 private val SpiritClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+// THE FILM'S ONE-SHOT (domain/SplashIntro answers WHY; this answers HOW ONCE): claimed on the
+// first composition of the PROCESS, so a warm start out of Recents never replays 14 s of film.
+private val IntroClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+/**
+ * Only the app grid means "show me the app". `am start` (scripts/setup.sh, verify-chat.sh) and
+ * every DevAskReceiver path start this activity by explicit component with no LAUNCHER category,
+ * which is what keeps the film out of the docs/screens captures (docs/DEMO.md).
+ */
+private fun Intent.isLauncherLaunch(): Boolean =
+    action == Intent.ACTION_MAIN && hasCategory(Intent.CATEGORY_LAUNCHER)
 internal val spiritVisible = androidx.compose.runtime.mutableStateOf(false)
 private fun spiritBoom() {
     if (!SpiritClaimed.getAndSet(true)) {
@@ -1332,7 +1372,10 @@ private fun spiritBoom() {
 }
 
 @Composable
-private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
+private fun HermesScaffold(
+    intro: Boolean? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     // PINCH FONT-SCALE: the persisted transcript type multiplier is PUBLISHED here, once, over
     // every screen (MdText + message styles consume via LocalFontScale). Cards never read it.
     val fontScale by WearApp.Graph.settings.fontScale.collectAsState()
@@ -1346,7 +1389,20 @@ private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
         // portrait hung on screen for seconds. The system splash (windowSplashScreenAnimatedIcon)
         // already shows her face-circle while the process starts — this overlay owns the
         // full-bleed flash and the hand-off to the chat, and nothing after that.
-        remember { spiritBoom() }
+        //
+        // THE FILM (ui/IntroVideo) REPLACES this flash when it plays — same trigger, first draw of
+        // a fresh process — so the two never stack. Switch off, cut by a tap, or skipped by the
+        // gate, and the launch is exactly the one that shipped before it.
+        //
+        // `intro` stays NULL until the gate answers, which is a beat AFTER first composition (it
+        // waits, bounded, for the owner's Display switch — SplashIntro.SETTING_BUDGET_MS). So the
+        // curtain goes up on the FIRST FRAME regardless of the answer, and the answer only ever
+        // takes it down. Two measured reasons: waiting to be told yes before painting anything
+        // leaked a frame of chat between the system splash and the film (SM-L705U), and an
+        // `introShown` seeded from `intro` latched that null and never woke up at all (emulator —
+        // the film was decided, claimed, and then quietly never painted).
+        var curtainUp by remember { mutableStateOf(true) }
+        LaunchedEffect(intro) { if (intro == false) spiritBoom() } // off/dev launch: the pre-film flash
         val spiritA by animateFloatAsState(
             if (spiritVisible.value) 1f else 0f,
             androidx.compose.animation.core.tween(220), label = "spirit",
@@ -1369,6 +1425,19 @@ private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().alpha(spiritA),
                 )
+            }
+            // THE FILM, topmost: it covers the transcript it is warming up behind, and any touch on
+            // it is a skip (the overlay consumes that touch). Until the gate answers this is the
+            // POSTER only — her face, the same image the system splash just showed — so the launch
+            // reads face→face→film instead of face→a frame of chat→film. `intro == false` (owner
+            // switch off, warm start, am start, notification tap) takes the exit fade, and because
+            // spiritBoom fires on that same beat with the same artwork, it reads as one dissolve.
+            AnimatedVisibility(
+                visible = intro != false && curtainUp,
+                enter = fadeIn(androidx.compose.animation.core.tween(120)),
+                exit = fadeOut(androidx.compose.animation.core.tween(SplashIntro.FADE_MS)),
+            ) {
+                IntroVideo(onDone = { curtainUp = false }, playing = intro)
             }
         }
     }
