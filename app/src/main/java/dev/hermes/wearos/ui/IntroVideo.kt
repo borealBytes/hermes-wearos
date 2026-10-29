@@ -1,5 +1,7 @@
 package dev.hermes.wearos.ui
 
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import android.view.TextureView
@@ -19,6 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -35,7 +39,9 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import dev.hermes.wearos.R
 import dev.hermes.wearos.domain.SplashIntro
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "HermesWear"
@@ -72,6 +78,10 @@ private const val ASSET_URI = "file:///android_asset/hermes-watch-intro.mp4"
  *    picture. A call pauses the film, the screen sleeping pauses it, and a watch that plays audio to
  *    a dark wrist is a bug.
  *
+ *  • **STATIC is the same overlay without the decoder** (owner 2026-10-29: *"I only want static or
+ *    video"*): the still — the built-in portrait or the owner's own picked image — holds
+ *    [SplashIntro.STATIC_HOLD_MS], cuts to any tap, and needs no decoder, no focus, no codec.
+ *
  * The player lives and dies with this composition (released on dispose, which is after the
  * caller's fade-out, so the tail can never leave a decoder running).
  */
@@ -79,6 +89,10 @@ private const val ASSET_URI = "file:///android_asset/hermes-watch-intro.mp4"
 fun IntroVideo(
     onDone: () -> Unit,
     playing: Boolean? = true,
+    kind: SplashIntro.Choice = SplashIntro.Choice.VIDEO,
+    // Owner-picked media from the watch (Settings ▸ Display ▸ Media): a content URI whose
+    // persistable grant the caller has already validated; null/blank = the built-in art.
+    sourceUri: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -94,15 +108,19 @@ fun IntroVideo(
 
     // `playing == null` means the gate has not answered yet: curtain only, no decoder. Building a
     // player here would spin one up on launches that were never going to show the film.
-    val player = remember(playing) {
-        if (playing != true) null
+    val custom = sourceUri?.takeIf { it.isNotEmpty() }
+    val player = remember(playing, kind, custom) {
+        if (playing != true || kind == SplashIntro.Choice.STATIC) null
         else runCatching {
+            custom?.let { Log.i(TAG, "intro: film source = custom media") }
             ExoPlayer.Builder(context.applicationContext).build().apply {
                 setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus = */ true)
                 // The film is square, the panel is round: crop to fill, so the intro reaches every
                 // pixel of the bezel exactly like splash_spirit.webp does (ContentScale.Crop).
                 videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
-                setMediaItem(MediaItem.fromUri(ASSET_URI))
+                // A content URI straight into media3 — it resolves content schemes natively; a
+                // video the watch cannot decode arrives at onPlayerError, which cuts to chat.
+                setMediaItem(MediaItem.fromUri(custom ?: ASSET_URI))
                 // DELIBERATELY not prepared here: prepare() starts the decoder, and a first frame
                 // rendered before the listener below is attached is a first frame nobody heard
                 // about — the overlay then self-cuts while the film is visibly playing (exactly
@@ -144,6 +162,16 @@ fun IntroVideo(
             p.removeListener(listener)
             p.volume = 0f
             p.release()
+        }
+    }
+
+    // A STILL HAS NO END, so it gets one: hold for STATIC_HOLD_MS, then lift (a tap still cuts,
+    // and the hold is deliberately shorter than any measured video first frame — switching to
+    // static must make the launch feel faster).
+    LaunchedEffect(playing, kind) {
+        if (playing == true && kind == SplashIntro.Choice.STATIC) {
+            delay(SplashIntro.STATIC_HOLD_MS)
+            done()
         }
     }
 
@@ -202,11 +230,30 @@ fun IntroVideo(
             // than the intro it replaced).
             .pointerInput(Unit) { detectTapGestures { cut() } },
     ) {
+        if (kind == SplashIntro.Choice.STATIC) {
+            // THE STILL: the owner's own picked image when it decoded, else the built-in
+            // self-portrait. It IS the splash here — there is no hand-off to a film — and the
+            // undecodable case silently keeps the built-in rather than showing black.
+            val customImg = splashBitmap(custom)
+            if (customImg != null) {
+                Image(
+                    bitmap = customImg, contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Image(
+                    painter = painterResource(R.drawable.splash_spirit),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
         // POSTER / CURTAIN: the same self-portrait the system splash used. It covers two gaps that
         // would otherwise show the app mid-launch — the beat while the gate answers, and the
         // ~2 s the decoder needs on a watch (measured 1.9 s on an SM-L705U). The hand-off from the
         // OS splash into the film is face→face→film, never face→chat→film.
-        if (!framePainted) {
+        if (kind == SplashIntro.Choice.VIDEO && !framePainted) {
             Image(
                 painter = painterResource(R.drawable.splash_spirit),
                 contentDescription = null,
@@ -220,7 +267,7 @@ fun IntroVideo(
         // splash whose first visible pixel is black is exactly the regression the poster exists to
         // prevent. A TextureView composites INSIDE the view tree, so the alpha below behaves. At
         // 480×480 the extra texture copy is nothing; correctness on the wrist is not.
-        if (playing == true) {
+        if (playing == true && kind == SplashIntro.Choice.VIDEO) {
             AndroidView(
                 factory = { ctx -> TextureView(ctx).also { player?.setVideoTextureView(it) } },
                 modifier = Modifier.fillMaxSize().alpha(if (framePainted) 1f else 0f),
@@ -228,3 +275,46 @@ fun IntroVideo(
         }
     }
 }
+
+/**
+ * Decode the owner's picked still for the splash, OFF the main thread, downsampled to
+ * [SplashIntro.SPLASH_DECODE_EDGE_PX] longest edge (gallery originals are multi-megapixel; the
+ * panel is 480). Null while decoding or on ANY failure — the caller falls back to the built-in
+ * portrait, so a huge/corrupt/revoked pick degrades the launch instead of breaking it.
+ */
+@Composable
+private fun splashBitmap(uri: String?): ImageBitmap? {
+    val context = LocalContext.current
+    var bmp by remember(uri) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(uri) {
+        bmp = null
+        if (uri != null) {
+            bmp = withContext(Dispatchers.IO) {
+                val decoded = runCatching {
+                    val parsed = Uri.parse(uri)
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(parsed)?.use {
+                        BitmapFactory.decodeStream(it, null, bounds)
+                    }
+                    val edge = maxOf(bounds.outWidth, bounds.outHeight)
+                    val opts = BitmapFactory.Options().apply {
+                        inSampleSize = if (edge > SplashIntro.SPLASH_DECODE_EDGE_PX) {
+                            maxOf(1, Integer.highestOneBit(edge / SplashIntro.SPLASH_DECODE_EDGE_PX))
+                        } else 1
+                    }
+                    context.contentResolver.openInputStream(parsed)?.use { ins ->
+                        BitmapFactory.decodeStream(ins, null, opts)?.asImageBitmap()
+                    }
+                }.onFailure { Log.w(TAG, "intro: custom still undecodable — built-in portrait", it) }
+                    .getOrNull()
+                Log.i(
+                    TAG, if (decoded != null) "intro: custom still decoded ${decoded.width}x${decoded.height}"
+                    else "intro: custom still resolved null — built-in portrait",
+                )
+                decoded
+            }
+        }
+    }
+    return bmp
+}
+

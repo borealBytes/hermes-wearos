@@ -1,11 +1,14 @@
 package dev.hermes.wearos.ui
 
 import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -36,6 +39,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.Button
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Switch
@@ -90,6 +95,29 @@ fun SettingsScreen(
     var keyEdit by remember { mutableStateOf<String?>(null) }
     var keyDraft by remember { mutableStateOf("") }
     var gwNote by remember { mutableStateOf("") }
+
+    // CUSTOM SPLASH MEDIA (owner 2026-10-29: *"let the user choose custom image/video for splash
+    // screen useage from image/video on their watch"*). SAF picker; the pick is CLASSIFIED by the
+    // resolver's MIME type — a video lands in the film slot, an image in the still slot — so each
+    // mode keeps its own custom media and the chooser decides which one plays. Persistable read
+    // grant or it is not stored at all: a pick that silently falls back to built-in every launch
+    // is worse than an honest toast now.
+    val splashPick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val cr = context.contentResolver
+            val granted = runCatching {
+                cr.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.isSuccess
+            if (granted) {
+                val isVideo = cr.getType(uri).orEmpty().startsWith("video")
+                scope.launch { settings.setSplashCustom(isVideo, uri.toString()) }
+                Toast.makeText(context, if (isVideo) "Custom film set" else "Custom still set",
+                    Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "That app can't keep the share", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val voiceOut by speak.enabled.collectAsState()
     val ttsState by speak.state.collectAsState()
@@ -391,19 +419,52 @@ fun SettingsScreen(
                 onCheckedChange = { v -> scope.launch { settings.setMarkdownRendering(v) } },
             )
         }
-        // THE LAUNCH FILM (domain/SplashIntro owns when it may show): plays the 14 s intro on a
-        // cold start, tap anywhere to skip it. OFF restores the one-frame spirit flash.
-        val introOn by settings.introVideoEnabled.collectAsState()
+        // THE LAUNCH SPLASH (domain/SplashIntro owns when and what it may show; owner
+        // 2026-10-29: *"I only want static or video, video by default… let the user choose
+        // custom image/video… from their watch"*). This chooser REPLACES the old Launch-video
+        // switch — its OFF predated the chooser and maps to STATIC on this build's first boot
+        // (migration in SplashIntro.choiceOf, tested). Applies to the NEXT cold start: the gate
+        // is decided exactly once per process.
+        val splashMode by settings.splashMode.collectAsState()
+        val customStill by settings.splashImageUri.collectAsState()
+        val customFilm by settings.splashVideoUri.collectAsState()
+        val videoMode = splashMode != "static"
+        // STACKED, not inline: the round screen clipped a label+2-chip row at the bezel —
+        // label row first, then the two chips centered with room to read.
+        Text("Launch splash", style = MaterialTheme.typography.caption1)
         Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Launch video", style = MaterialTheme.typography.caption1)
-            Switch(
-                checked = introOn,
-                onCheckedChange = { v -> scope.launch { settings.setIntroVideo(v) } },
-            )
+            SplashChoiceChip("Video", videoMode) { scope.launch { settings.setSplashMode("video") } }
+            Spacer(Modifier.size(8.dp))
+            SplashChoiceChip("Static", !videoMode) { scope.launch { settings.setSplashMode("static") } }
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val custom = if (videoMode) customFilm else customStill
+            Button(
+                onClick = { splashPick.launch(arrayOf(if (videoMode) "video/*" else "image/*")) },
+                modifier = Modifier.size(width = 92.dp, height = 32.dp),
+            ) { Text(if (custom.isNotEmpty()) "Swap media" else "Pick media", style = MaterialTheme.typography.button) }
+            if (custom.isNotEmpty()) {
+                Spacer(Modifier.size(8.dp))
+                Button(
+                    onClick = { scope.launch { settings.setSplashCustom(videoMode, null) } },
+                    modifier = Modifier.size(width = 44.dp, height = 32.dp),
+                ) { Text("↺", style = MaterialTheme.typography.button) }
+            }
+        }
+        Text(
+            if ((if (videoMode) customFilm else customStill).isNotEmpty()) "Media: custom ✓ (next launch)"
+            else "Media: built-in",
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+        )
         // PINCH FONT-SCALE (Layout D epic): read-out + rescue reset. The two-finger pinch IN THE
         // MESSAGE AREA is the adjust UI (double-tap empty transcript = reset too); this row makes
         // the persisted value visible and recoverable from Settings.
@@ -823,4 +884,18 @@ private fun StatusLine(key: String, value: String) {
         fontSize = 11.sp,
         textAlign = TextAlign.Center,
     )
+}
+
+/** One option of the Launch-splash chooser: filled when it IS the current mode (owner
+ * 2026-10-29). Same Button idiom as every other action row on this screen. */
+@Composable
+private fun SplashChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.size(width = 84.dp, height = 34.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = if (selected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
+            contentColor = if (selected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+        ),
+    ) { Text(label, style = MaterialTheme.typography.button) }
 }

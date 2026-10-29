@@ -787,7 +787,25 @@ mutex rather than opening a second capture.
   **Gate:** `domain/SplashIntro.kt` (pure) plays it on a **launcher cold start** and nothing else —
   warm starts, notification/tile deep links, and `am start` (which is every `scripts/*.sh` and
   `docs/DEMO.md` capture path, so screenshots stay clean) all fall back to the launch that shipped
-  before, as does **Settings ▸ Display ▸ Launch video**. The chat composes *under* the film (the
+  before.
+- **LAUNCH SPLASH CHOOSER — static or video, and the owner's own media (owner 2026-10-29: *"I only
+  want static or video, video by default. let the user choose video or splash screen in the
+  settings. also let the user choose custom image/video for splash screen usage from image/video on
+  their watch"*):** **Settings ▸ Display ▸ Launch splash** is a two-chip chooser (VIDEO default /
+  STATIC) replacing the old Launch-video switch; a legacy OFF migrates to STATIC (`SplashIntro.choiceOf`,
+  tested), ON/untouched to the film. Each mode may show the owner's OWN media: the media row runs the
+  SAF picker (`OpenDocument`, mime-filtered by the visible mode) and CLASSIFIES the pick by resolver
+  MIME (video → film slot, image → still slot) so switching modes never loses a pick. Storage is the
+  content URI under a **persistable read grant** (`takePersistableUriPermission`, released when the
+  slot is replaced/cleared); a stored pick is only honored while `AppSettings.splashGrantLive` can
+  still OPEN it — a dead URI falls back to the built-in art silently rather than breaking the launch
+  (`file://` is also accepted: the dev hook's shape, since `am broadcast` cannot hand out a
+  persistable grant, and a sideload affordance). A static hold is `SplashIntro.STATIC_HOLD_MS` —
+  deliberately UNDER the film's own worst measured first-frame wait, so switching to static always
+  makes a launch feel faster. Custom stills decode off-thread downsampled to
+  `SPLASH_DECODE_EDGE_PX`; an undecodable pick keeps the built-in portrait. Verified end-to-end on
+  the emulator with a real gallery image and video: still renders Crop-full in static, custom film
+  plays in video (`intro: film source = custom media`), built-ins intact. The chat composes *under* the film (the
   film decorates a warming app, it never gates composition), any touch cuts it and the touch is
   consumed so the transcript never sees that same finger, and the exit fade is the hand-off. The
   poster (`splash_spirit.webp`, already shipped) doubles as a curtain from the first frame so no

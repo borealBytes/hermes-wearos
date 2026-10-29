@@ -500,21 +500,50 @@ class MainActivity : ComponentActivity() {
                 // shipped default (ON) instead of holding the launch. The chat composes under the
                 // film either way: the intro decorates a warming app, it never gates it.
                 var introGate by remember { mutableStateOf<SplashIntro.Gate?>(null) }
+                // Which media the chosen mode shows (null = built-in art). Resolved with the
+                // gate, ONCE: a mid-launch Settings change must not swap the media under a film
+                // that already started.
+                var introSource by remember { mutableStateOf<String?>(null) }
                 LaunchedEffect(Unit) {
                     withTimeoutOrNull(SplashIntro.SETTING_BUDGET_MS) {
                         settings.introSettingsLoaded.first { it }
                     }
+                    val mode = SplashIntro.choiceOf(settings.splashMode.value)
+                    // A stored custom pick counts only while its persistable grant lives; a dead
+                    // URI falls back to built-in silently rather than failing the launch.
+                    val customRaw =
+                        if (mode == SplashIntro.Choice.VIDEO) settings.splashVideoUri.value
+                        else settings.splashImageUri.value
+                    introSource = customRaw.takeIf { settings.splashGrantLive(it) }
+                    Log.i(
+                        TAG, "intro gate: mode=${settings.splashMode.value} custom=$customRaw " +
+                            "source=${introSource ?: "built-in"}",
+                    )
                     introGate = SplashIntro.decide(
                         firstCompositionOfProcess = !IntroClaimed.getAndSet(true),
-                        ownerEnabled = settings.introVideoEnabled.value,
+                        choice = mode,
                         deepLink = deepLink.value != null, // notification/tile tap (§M5)
                         fromLauncher = intent?.isLauncherLaunch() == true,
-                    ).also { if (it != SplashIntro.Gate.Play) Log.i(TAG, "intro skipped: $it") }
+                    ).also {
+                        if (it != SplashIntro.Gate.PlayVideo && it != SplashIntro.Gate.PlayStatic) {
+                            Log.i(TAG, "intro skipped: $it")
+                        }
+                    }
                 }
 
                 // NULL until the gate answers — HermesScaffold waits for the answer before it
                 // claims either splash, so a DataStore race can never pick the launch story.
-                HermesScaffold(introGate?.let { it == SplashIntro.Gate.Play }) {
+                HermesScaffold(
+                    intro = introGate?.let {
+                        it == SplashIntro.Gate.PlayVideo || it == SplashIntro.Gate.PlayStatic
+                    },
+                    introKind = if (introGate == SplashIntro.Gate.PlayStatic) {
+                        SplashIntro.Choice.STATIC
+                    } else {
+                        SplashIntro.Choice.VIDEO
+                    },
+                    introSource = introSource,
+                ) {
                     VoiceHost(session, speak)
                     when (screen) {
                         Screen.Chat -> ChatBody(
@@ -987,6 +1016,10 @@ private fun ChatBody(
     // listening. A per-call remember would reset the scroll to the top when the overlay dismisses
     // — the walkthrough's "after stt talk button done, it scrolls to the top of the convo".
     val chatListState = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
+    // TAIL-FOLLOW flag (owner 2026-10-29, domain/ChatFollow): survives the PTT overlay exactly
+    // like chatListState — reading scroll-back, pressing the orb, and cancelling must NOT snap
+    // the view to the bottom; a new ask re-engages on its own.
+    val chatFollow = remember { mutableStateOf(true) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     val vpW = viewport.width.toFloat()
@@ -1089,6 +1122,7 @@ private fun ChatBody(
                     markdown = markdown,
                     onEditPrompt = onEditPrompt,
                     listState = chatListState,
+                    follow = chatFollow,
                     contentPadBottomDp = if (hasViewport) barPadDp else null,
                     onPullUpAtBottom = onPullUpAtBottom,
                 )
@@ -1374,6 +1408,8 @@ private fun spiritBoom() {
 @Composable
 private fun HermesScaffold(
     intro: Boolean? = null,
+    introKind: SplashIntro.Choice = SplashIntro.Choice.VIDEO,
+    introSource: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // PINCH FONT-SCALE: the persisted transcript type multiplier is PUBLISHED here, once, over
@@ -1437,7 +1473,10 @@ private fun HermesScaffold(
                 enter = fadeIn(androidx.compose.animation.core.tween(120)),
                 exit = fadeOut(androidx.compose.animation.core.tween(SplashIntro.FADE_MS)),
             ) {
-                IntroVideo(onDone = { curtainUp = false }, playing = intro)
+                IntroVideo(
+                    onDone = { curtainUp = false }, playing = intro,
+                    kind = introKind, sourceUri = introSource,
+                )
             }
         }
     }

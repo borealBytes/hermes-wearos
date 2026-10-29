@@ -99,6 +99,40 @@ class DevAskReceiver : BroadcastReceiver() {
                 ?.takeIf { it.isNotBlank() && !it.equals("off", true) && !it.equals("false", true) }
             return
         }
+        intent?.getStringExtra("splash")?.let { mode ->
+            // -e splash video|static → the Display chooser, without touching the wrist UI.
+            val v = if (mode.trim().lowercase() == "static") "static" else "video"
+            CoroutineScope(Dispatchers.Main).launch { WearApp.Graph.settings.setSplashMode(v) }
+            return
+        }
+        intent?.getStringExtra("splash_uri")?.let { raw ->
+            // -e splash_uri content://… → take the persistable grant and store into the slot its
+            // MIME type says (video→film, else still) — the exact path Settings' picker runs.
+            val uri = android.net.Uri.parse(raw)
+            val cr = context?.contentResolver
+            // file:// needs no ceremony (app-owned external dir); am broadcast cannot hand out a
+            // PERSISTABLE grant, so content:// works here only via app-assumed access.
+            val granted = uri.scheme == "file" || runCatching {
+                cr?.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.onFailure { android.util.Log.w("HermesWear", "splash_uri grant refused", it) }.isSuccess
+            // Classify: resolver MIME first (content://), extension as the file:// fallback.
+            val ext = raw.substringAfterLast('.', "").lowercase()
+            val isVideo = cr?.getType(uri).orEmpty().startsWith("video") ||
+                ext in setOf("mp4", "3gp", "mkv", "webm", "mov", "avi")
+            if (granted) {
+                CoroutineScope(Dispatchers.Main).launch {
+                    WearApp.Graph.settings.setSplashCustom(isVideo, uri.toString())
+                }
+            }
+            return
+        }
+        if (intent?.hasExtra("clear_splash") == true) {
+            CoroutineScope(Dispatchers.Main).launch {
+                WearApp.Graph.settings.setSplashCustom(true, null)
+                WearApp.Graph.settings.setSplashCustom(false, null)
+            }
+            return
+        }
         intent?.getStringExtra("fontscale")?.let {
             // -e fontscale 1.4 → persist+apply; non-numeric ("reset") → back to 1.0.
             WearApp.Graph.devSetFontScale(it)

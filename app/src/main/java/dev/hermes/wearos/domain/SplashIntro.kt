@@ -1,36 +1,69 @@
 package dev.hermes.wearos.domain
 
 /**
- * THE LAUNCH-VIDEO GATE (owner 2026-10-29: *"it's only on the very first load of the app… if the
- * user clicks anywhere on the screen it stops playing and loads the rest — and we're loading the
- * rest of the app in the background while the video plays"*). `res/raw/hermes_watch_intro.mp4`
- * (14 s, WITH audio) replaces the one-frame spirit flash on a cold start, drawn OVER a chat that
- * is already composing itself underneath — the film never gates composition, and any touch cuts it.
+ * THE LAUNCH-SPLASH GATE (owner 2026-10-29, two orders: *"it's only on the very first load of the
+ * app… if the user clicks anywhere on the screen it stops playing and loads the rest — and we're
+ * loading the rest of the app in the background while the video plays"*; then *"I only want static
+ * or video, video by default. let the user choose video or splash screen in the settings. also let
+ * the user choose custom image/video for splash screen usage from image/video on their watch if
+ * they want so they can customize"*). The film (`assets/hermes-watch-intro.mp4`, 14 s, WITH audio)
+ * or a still (the built-in self-portrait, or the owner's own image) replaces the one-frame spirit
+ * flash on a launcher cold start, drawn OVER a chat that is already composing itself underneath —
+ * the splash never gates composition, and any touch cuts it.
  *
- * Four conditions, checked in this order, because each one protects a different failure:
+ * Conditions, checked in this order, because each one protects a different failure:
  *
- *  • **first composition of the process** — a warm start out of Recents must not replay a 14 s
- *    film (that is what the caller's `AtomicBoolean` answers). A video you cannot skip is a video
- *    you turn off; the tap-to-cut covers within the film, this covers re-entering the app.
- *  • **the owner left it on** — Settings ▸ Display ▸ Launch video. Any watch that makes sound on
- *    every launch gets silenced fast, so the opt-out is the next thing checked.
+ *  • **first composition of the process** — a warm start out of Recents must not replay the show.
+ *    A video you cannot skip is a video you turn off; the tap-to-cut covers within the show, this
+ *    covers re-entering the app.
  *  • **not a deep link** — a notification tap after the process died wants THAT CHAT and the tile's
  *    "Ask Hermes" wants the mic up; both cold-start the process, neither wants an intro (§M5).
  *  • **launched from the app grid** — the launcher icon is the only intent that means "show me the
  *    app". `am start`/dev broadcasts/screenshot harnesses carry an explicit component with no
- *    LAUNCHER category, and a film painted over a screencap silently breaks every docs/screens shot.
+ *    LAUNCHER category, and a splash painted over a screencap silently breaks every docs/screens
+ *    shot.
+ *  • **the owner's choice decides WHICH show, not whether one exists** — VIDEO or STATIC, both
+ *    real modes now (the old off-switch's OFF maps to STATIC in [choiceOf]: an owner who silenced
+ *    the film still gets a splash, just a still one).
  *
  * No android imports — unit-tested.
  */
 object SplashIntro {
 
-    enum class Gate { Play, WarmStart, OwnerOff, DeepLink, NotLauncher }
+    /** Settings ▸ Display ▸ Launch splash (owner: *"video by default"*). */
+    enum class Choice { VIDEO, STATIC }
+
+    enum class Gate { PlayVideo, PlayStatic, WarmStart, DeepLink, NotLauncher }
+
+    /** The persisted mode string, or the legacy Launch-video switch, mapped to a [Choice]. */
+    fun choiceOf(stored: String?, legacyVideoOn: Boolean? = null): Choice =
+        when (stored?.lowercase()) {
+            "video" -> Choice.VIDEO
+            "static" -> Choice.STATIC
+            // First boot of the chooser build: honor an explicit legacy OFF (that owner never
+            // wanted the film — a still is the closest honest successor), default to the film.
+            // Anything else (never touched the switch) is the shipped default: VIDEO.
+            else -> if (legacyVideoOn == false) Choice.STATIC else Choice.VIDEO
+        }
+
+    fun decide(
+        firstCompositionOfProcess: Boolean,
+        choice: Choice,
+        deepLink: Boolean,
+        fromLauncher: Boolean,
+    ): Gate = when {
+        !firstCompositionOfProcess -> Gate.WarmStart
+        deepLink -> Gate.DeepLink
+        !fromLauncher -> Gate.NotLauncher
+        choice == Choice.VIDEO -> Gate.PlayVideo
+        else -> Gate.PlayStatic
+    }
 
     /**
      * Ceiling on "wait for the owner's Display switch" (DataStore read at boot). Waiting beats
-     * letting a launch-time race decide whether a 14 s film plays; timing out beats hanging the
-     * launch on a slow disk, and defaults to ON — the shipped default for everyone who never
-     * opened the switch.
+     * letting a launch-time race decide whether a film plays; timing out beats hanging the launch
+     * on a slow disk, and defaults to the shipped default (VIDEO) for everyone who never opened
+     * the chooser.
      */
     const val SETTING_BUDGET_MS = 400L
 
@@ -64,19 +97,18 @@ object SplashIntro {
      */
     const val FIRST_FRAME_BUDGET_MS = 8_000L
 
+    /**
+     * How long a STATIC splash holds before lifting on its own (tap cuts it sooner). Sized to sit
+     * clearly UNDER the video path's own cost — every measured first frame of the film on the
+     * SM-L705U was ≥ 1.9 s — so switching to STATIC always makes the launch feel FASTER, never
+     * slower; long enough that a face or a logo is actually read, short enough that a launch with
+     * nothing to decode never feels like it is waiting for something.
+     */
+    const val STATIC_HOLD_MS = 1_200L
+
+    /** Longest edge a custom still is decoded down to (watch gallery originals are multi-megapixel). */
+    const val SPLASH_DECODE_EDGE_PX = 560
+
     /** Crossfade out on dismiss — tap, end, or error — matching the spirit flash's hand-off. */
     const val FADE_MS = 220
-
-    fun decide(
-        firstCompositionOfProcess: Boolean,
-        ownerEnabled: Boolean,
-        deepLink: Boolean,
-        fromLauncher: Boolean,
-    ): Gate = when {
-        !firstCompositionOfProcess -> Gate.WarmStart
-        !ownerEnabled -> Gate.OwnerOff
-        deepLink -> Gate.DeepLink
-        !fromLauncher -> Gate.NotLauncher
-        else -> Gate.Play
-    }
 }

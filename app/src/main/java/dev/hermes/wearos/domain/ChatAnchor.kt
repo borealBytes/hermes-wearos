@@ -29,14 +29,4 @@ object ChatAnchor {
     /** The idle-empty "Ask Hermes" hint condition — kept in one place so the count can't drift. */
     fun showEmptyHint(messageCount: Int, live: String, hasApproval: Boolean): Boolean =
         messageCount == 0 && live.isEmpty() && !hasApproval
-
-    /**
-     * Row index of the LAST user message — pinned while a run is in flight (owner batch 7:
-     * *"when we're waiting for responses, scroll the viewport up a little bit so you can actually
-     * see what the question was and the information come back"*). Row layout puts message i at
-     * row i+1 (header is row 0; the empty hint only coexists with zero messages). Null when the
-     * thread has no user turn to anchor on.
-     */
-    fun questionRow(lastUserMessageIndex: Int): Int? =
-        if (lastUserMessageIndex < 0) null else lastUserMessageIndex + 1
 }

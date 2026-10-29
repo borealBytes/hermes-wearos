@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +42,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import dev.hermes.wearos.domain.ChatAnchor
 import dev.hermes.wearos.domain.ApprovalInfo
+import dev.hermes.wearos.domain.ChatFollow
 import dev.hermes.wearos.domain.ChatMessage
 import dev.hermes.wearos.domain.ChatUiState
 import dev.hermes.wearos.ui.md.MdMessage
@@ -60,6 +65,11 @@ fun ChatScreen(
     // leaves composition while listening) — walkthrough: "after stt talk button done, it scrolls
     // to the top of convo instead of staying at bottom".
     listState: ScalingLazyListState = rememberScalingLazyListState(),
+    // TAIL-FOLLOW (owner 2026-10-29, policy in domain/ChatFollow): hoisted exactly like listState,
+    // because the PTT overlay leaves this composition while listening — an un-hoisted flag would
+    // reset to following the moment the owner's answer arrives, which is precisely when his
+    // scroll position matters most.
+    follow: MutableState<Boolean> = remember { mutableStateOf(true) },
     // PULL-UP-AT-THE-END (owner: *"scroll to the bottom and keep dragging up → refresh that
     // session from the gateway"*). The auto-sync does the everyday work; this is the manual door.
     onPullUpAtBottom: () -> Unit = {},
@@ -67,13 +77,30 @@ fun ChatScreen(
     // PINCH FONT-SCALE: every type change re-runs the bottom anchor (text height changes shift
     // the tail) — same scroll machinery, toast-free.
     val typeScale = LocalFontScale.current
-    // BOTTOM ANCHOR (walkthrough): send (voice OR keyboard) grows messages; stream deltas grow
-    // `live`; STOP adds the marker row; approval appends a card; agent switch / chat open change
-    // activeChatId; overlay dismiss re-enters composition (effect re-runs). Every path → bottom.
+    // BOTTOM ANCHOR + WHO-OWNS-THE-VIEWPORT (owner 2026-10-29: *"keep the text that's coming out
+    // just above the orb, so you can see as much scroll back as possible… by default, unless
+    // you've scrolled"*). The policy is domain/ChatFollow; these are its two signals, wired:
+    //
+    //  • follow == true — the default, re-engaged by every NEW USER ASK and every chat switch —
+    //    pushes the list's END on every content change: newest row just above the orb bar, all
+    //    scroll-back resting ABOVE it where a swipe reaches it. The batch-7 mid-circle question
+    //    pin (`starting`/qRow) is GONE, and it was the disease, not a symptom to keep: pinning
+    //    the question at the list's Middle is exactly what shoved the previous rows off the top.
+    //  • a USER scroll settles ownership (observer below): rest off the end ⇒ the stream keeps
+    //    its hands off the transcript; rest at the end ⇒ the tail belongs to the app again.
+    val lastChatKey = remember { mutableStateOf(state.activeChatId) }
+    val lastAskCount = remember { mutableStateOf(state.messages.size) }
     LaunchedEffect(
         state.activeChatId, state.messages.size, state.live.length,
-        state.busy, state.approval?.requestId, state.status, typeScale,
+        state.busy, state.approval?.requestId, state.status, typeScale, follow.value,
     ) {
+        val switched = state.activeChatId != lastChatKey.value
+        if (switched) lastChatKey.value = state.activeChatId
+        val newAsk = state.messages.size > lastAskCount.value &&
+            state.messages.lastOrNull()?.role == ChatMessage.Role.User
+        lastAskCount.value = state.messages.size
+        if (switched || newAsk) follow.value = ChatFollow.reengaged()
+        if (!follow.value) return@LaunchedEffect // manual mode: the stream holds its hands off
         val idx = ChatAnchor.bottomIndex(
             messageCount = state.messages.size,
             hasApproval = state.approval != null,
@@ -81,25 +108,13 @@ fun ChatScreen(
             hasStatus = state.status.isNotEmpty(),
             showEmptyHint = ChatAnchor.showEmptyHint(state.messages.size, state.live, state.approval != null),
         )
-        // HOLD (owner batch 7): while a run streams and the whole exchange still fits (nothing
-        // left to scroll to), the viewport HOLDS at the question — the incoming first lines are
-        // visible instead of force-pinned under the orb. Only once the answer overflows the
-        // circle does the classic tail-follow kick in.
-        val qRow = ChatAnchor.questionRow(
-            state.messages.indexOfLast { it.role == dev.hermes.wearos.domain.ChatMessage.Role.User },
-        )
-        val starting = state.busy && state.live.isEmpty() && state.approval == null
-        val holding = state.busy && state.live.isNotEmpty() && !listState.canScrollForward
         if (state.approval != null) {
             // APPROVAL CENTERS (owner demo 2026-10-26): the card is the actionable row and the
             // list may already sit at its end (lazy tail) — the tail push can't lift a card that
             // was inserted ABOVE the viewport. scrollToItem(idx, 0) lands idx on the list's
             // center anchor = dead-center in the circle, every time (measured on-device).
             listState.scrollToItem(state.messages.size.coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
-        } else if (starting && qRow != null) {
-            // Pin the question at the list's Middle anchor — the answer grows downward from it.
-            listState.scrollToItem(qRow.coerceAtMost(listState.layoutInfo.totalItemsCount - 1), 0)
-        } else if (!holding && idx > 0) {
+        } else if (idx > 0) {
             // THE anchor (owner walkthrough): latest row must be on screen at the list's end.
             // wear-compose 1.4.1 ScalingLazyColumn facts measured on-device: scrollToItem(last, 0)
             // lands short (lazy composition hasn't laid the tail out yet), and the true list end
@@ -116,6 +131,22 @@ fun ChatScreen(
             }
             if (tries > 1) android.util.Log.d("HermesWear", "anchor idx=$idx tries=$tries (lazy tail)")
         }
+    }
+    // THE SECOND ChatFollow SIGNAL — who moved the list? Every scroll this screen itself makes is
+    // an instantaneous scrollToItem, and those never raise isScrollInProgress; only user drags and
+    // the flings they release do (wear-compose 1.4.1 exposes no interactionSource and no scroll
+    // listener on ScalingLazyListState — this edge is the public surface that can tell them apart,
+    // and it is the same surface that distinguishes a fling settling mid-list from one settling at
+    // the end). So RISE-then-fall ⇒ the user's gesture came to rest, and `ahead` says where.
+    // Documented limit: bezel/rotary travel without a touch shows no edge and keeps following —
+    // fine on the SM-L705U, which has no rotating bezel.
+    LaunchedEffect(listState) {
+        var scrolling = false
+        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
+            .collect { (now, ahead) ->
+                if (scrolling && !now) follow.value = ChatFollow.afterUserScroll(ahead)
+                scrolling = now
+            }
     }
     ScalingLazyColumn(
         state = listState,

@@ -18,6 +18,7 @@ import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.domain.ProfileLogic
+import dev.hermes.wearos.domain.SplashIntro
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -70,8 +71,16 @@ class AppSettings(private val context: Context) {
         private val KEY_SLASH_USAGE = stringPreferencesKey("slash_usage")
         private val KEY_SLASH_CATALOG = stringPreferencesKey("slash_catalog_json")
         private val KEY_GW_SELECTED = stringPreferencesKey("gateway_selected")
-        // Display ▸ "Launch video" (domain/SplashIntro): play the intro film on a cold start.
+        // Display ▸ "Launch video" — the PRE-CHOOSER switch (domain/SplashIntro). Kept as the
+        // legacy mirror of the mode for a downgrade, and read once by [splashModeNow] to migrate
+        // an explicit OFF to STATIC.
         private val KEY_INTRO_VIDEO = booleanPreferencesKey("intro_video")
+        // Display ▸ "Launch splash" chooser (owner 2026-10-29): "video" | "static", plus the
+        // owner's OWN media picked from the watch (content URIs under a persistable read grant;
+        // film and still each keep their own slot so switching modes never loses a pick).
+        private val KEY_SPLASH_MODE = stringPreferencesKey("splash_mode")
+        private val KEY_SPLASH_IMAGE_URI = stringPreferencesKey("splash_image_uri")
+        private val KEY_SPLASH_VIDEO_URI = stringPreferencesKey("splash_video_uri")
     }
 
     suspend fun baseUrl(): String = context.dataStore.data.first()[KEY_BASE_URL] ?: DEFAULT_BASE_URL
@@ -175,25 +184,70 @@ class AppSettings(private val context: Context) {
     }
 
     /**
-     * Display ▸ "Launch video" (SPEC §4 Display node, gate in domain/SplashIntro): play
-     * res/raw/hermes_watch_intro.mp4 over a cold start. Default ON, and the StateFlow mirror is
-     * what the LAUNCH path reads — first composition cannot await a DataStore read, so
-     * [introSettingsLoaded] says when the mirror holds the owner's real choice instead of the
-     * shipped default (MainActivity waits on it, bounded by SplashIntro.SETTING_BUDGET_MS).
+     * Display ▸ "Launch splash" (SPEC §4 Display node, gate in domain/SplashIntro): the whole
+     * splash preference set — mode ("video"|"static", shipped default video per the owner) and the
+     * custom media URIs per mode. The StateFlow mirrors are what the LAUNCH path reads — first
+     * composition cannot await a DataStore read, so [introSettingsLoaded] says when the mirrors
+     * hold the owner's real choices instead of the shipped defaults (MainActivity waits on it,
+     * bounded by SplashIntro.SETTING_BUDGET_MS).
      */
-    private val _introVideo = MutableStateFlow(true)
-    val introVideoEnabled: StateFlow<Boolean> = _introVideo
+    private val _splashMode = MutableStateFlow("video")
+    val splashMode: StateFlow<String> = _splashMode
+    private val _splashImageUri = MutableStateFlow("")
+    val splashImageUri: StateFlow<String> = _splashImageUri
+    private val _splashVideoUri = MutableStateFlow("")
+    val splashVideoUri: StateFlow<String> = _splashVideoUri
     private val _introSettingsLoaded = MutableStateFlow(false)
     val introSettingsLoaded: StateFlow<Boolean> = _introSettingsLoaded
-    suspend fun introVideoOn(): Boolean = context.dataStore.data.first()[KEY_INTRO_VIDEO] ?: true
+
     suspend fun loadIntroVideo() {
-        _introVideo.value = introVideoOn()
+        val prefs = context.dataStore.data.first()
+        _splashMode.value = prefs[KEY_SPLASH_MODE]
+            ?: if (SplashIntro.choiceOf(null, prefs[KEY_INTRO_VIDEO]) == SplashIntro.Choice.VIDEO) "video" else "static"
+        _splashImageUri.value = prefs[KEY_SPLASH_IMAGE_URI].orEmpty()
+        _splashVideoUri.value = prefs[KEY_SPLASH_VIDEO_URI].orEmpty()
         _introSettingsLoaded.value = true
     }
-    suspend fun setIntroVideo(v: Boolean) {
-        context.dataStore.edit { it[KEY_INTRO_VIDEO] = v }
-        _introVideo.value = v
+
+    /** "video" | "static" — the legacy boolean mirror keeps an app downgrade behaving sanely. */
+    suspend fun setSplashMode(v: String) {
+        val mode = if (v == "static") "static" else "video"
+        context.dataStore.edit {
+            it[KEY_SPLASH_MODE] = mode
+            it[KEY_INTRO_VIDEO] = (mode == "video")
+        }
+        _splashMode.value = mode
     }
+
+    /** The owner's custom pick for one slot (film=video / still=image); null clears it. */
+    suspend fun setSplashCustom(video: Boolean, uri: String?) {
+        val key = if (video) KEY_SPLASH_VIDEO_URI else KEY_SPLASH_IMAGE_URI
+        val old = context.dataStore.data.first()[key]
+        context.dataStore.edit { pref -> if (uri == null) pref.remove(key) else pref[key] = uri }
+        if (video) _splashVideoUri.value = uri.orEmpty() else _splashImageUri.value = uri.orEmpty()
+        // Release the superseded grant best-effort — polite, and it keeps the picker's revocable
+        // grants from piling up for media this watch stopped showing.
+        old?.takeIf { it != uri }?.let { o ->
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(
+                    android.net.Uri.parse(o), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
+    }
+
+    /**
+     * A stored pick only counts while its persistable grant still lives (the source app can be
+     * uninstalled, the file moved, the grant revoked). One read from [android.content.ContentResolver.persistedUriPermissions]
+     * — and a splash that silently falls back to built-in beats a launch that dies on a dead URI.
+     */
+    fun splashGrantLive(uri: String): Boolean = uri.isNotEmpty() && runCatching {
+        // The liveness test IS the real question — "can we open it right now" — which covers
+        // persistable content:// grants AND plain paths (the dev hook's shape, and a sideload
+        // affordance) without trusting File.canRead()'s idea of the /sdcard mount.
+        context.contentResolver.openInputStream(android.net.Uri.parse(uri))?.close()
+        true
+    }.onFailure { android.util.Log.w("HermesWear", "splash source dead: $it") }.getOrDefault(false)
 
     /**
      * THE ORB DIAL MAP (SPEC §12.1): eight lanes, index 0 = 12:00 going clockwise. Owner batch 3 —
