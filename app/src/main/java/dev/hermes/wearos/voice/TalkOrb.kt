@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
+import androidx.wear.compose.material.Text
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +34,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.hermes.wearos.R
 import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.OrbGesture
@@ -216,7 +218,11 @@ fun TalkOrb(
             // lighter base); listening = white on red; running = dimmed under the STOP square.
             Image(
                 painter = painterResource(R.drawable.ic_hermes_orb),
-                contentDescription = if (stopped) "stop" else "talk with hermes",
+                contentDescription = when {
+                    running -> "stop"
+                    speaking -> "mute"
+                    else -> "talk with hermes"
+                },
                 contentScale = ContentScale.Fit,
                 colorFilter = when {
                     stopped -> ColorFilter.tint(Color.White.copy(alpha = 0.25f))
@@ -226,15 +232,20 @@ fun TalkOrb(
                 },
                 modifier = Modifier.size(diameter * 0.76f),
             )
-            // STOP overlay glyph (thinking OR speaking): white rounded square — tap semantics per
-            // state: cancel the answer while running, mute while speaking (owner 2026-10-29).
-            if (stopped) {
+            // STOP overlay glyph (thinking): white rounded square = "tap cancels the answer".
+            // While it SPEAKS the answer already landed, so the honest glyph is a MUTE speaker
+            // (owner 2026-10-29: *"by the time you're speaking you've already completed returning
+            // information … it should be a mute button on the orb"*) — same tap-to-act disc,
+            // same red face, but it promises exactly what the tap does.
+            if (running) {
                 Box(
                     modifier = Modifier
                         .size(diameter * 0.32f)
                         .clip(RoundedCornerShape(5.dp))
                         .background(Color.White),
                 )
+            } else if (speaking) {
+                Text("🔇", fontSize = (diameter.value * 0.34f).sp)
             }
         }
     }

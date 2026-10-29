@@ -741,9 +741,12 @@ One batch answering three complaints about the ANSWER experience — the orb lyi
 doing, having to chase the spoken sentence with my eyes, and replies "streaming from the top of the
 thing instead of just above the orb".
 
-- **Orb state machine (`voice/TalkOrb.kt` + `SpeakAloud.speaking`)**: the orb wears the red ⏹ face
-  (pulse ring + border included) in TWO states — THINKING (run in flight) and SPEAKING (TTS queue
-  live; `pending > 0` in `SpeakAloud`). Tap always means "stop what the orb is doing": thinking →
+- **Orb state machine (`voice/TalkOrb.kt` + `SpeakAloud.speaking`)**: the orb wears the red disc
+  (pulse ring + border included) in TWO states with DIFFERENT glyphs (owner same-day fix: *"by the
+  time you're speaking you've already completed returning information … it should be a mute button
+  on the orb"*): THINKING (run in flight) shows the **white ⏹ square**, SPEAKING (TTS queue live;
+  `pending > 0` in `SpeakAloud`) shows a **🔇 speaker** — each promise matches exactly what the tap
+  does. Tap always means "stop what the orb is doing": thinking →
   cancel the run AND flush the voice queue in one breath (`stopActiveRun` + `speak.stop()`);
   speaking → MUTE only (the answer already landed; orb returns to the mic). A stationary HOLD in
   either state BLOOMS THE DIAL IN PLACE (hold-timeout routes to `onDialArm`): grab the keyboard, a
