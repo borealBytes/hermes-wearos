@@ -17,7 +17,7 @@ object ChatAnchor {
         hasStatus: Boolean = false,
         showEmptyHint: Boolean = false,
     ): Int {
-        var rows = 1 // ChatHeader is item 0
+        var rows = 2 // anchor spacer is item 0, ChatHeader/Caption is item 1 (bottom-anchor, 2026-10-29)
         if (showEmptyHint) rows++
         rows += messageCount.coerceAtLeast(0)
         if (hasApproval) rows++

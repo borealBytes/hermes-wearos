@@ -9,16 +9,21 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,11 +93,27 @@ fun ChatScreen(
     //    the question at the list's Middle is exactly what shoved the previous rows off the top.
     //  • a USER scroll settles ownership (observer below): rest off the end ⇒ the stream keeps
     //    its hands off the transcript; rest at the end ⇒ the tail belongs to the app again.
+    //  • BOTTOM-ANCHOR (owner 2026-10-29: *"it starts streaming from the top of the thing
+    //    instead of just above the orb"*): when the WHOLE transcript fits the circle, wear's
+    //    list end parks the last item at the MIDDLE anchor — which shoves short content off
+    //    the TOP. So a top spacer (item 0) eats the exact slack instead and the list rests at
+    //    offset 0: the newest line sits JUST ABOVE THE ORB and the reply grows UPWARD (maximum
+    //    scroll-back while waiting, same intent as ChatFollow). Content that does not fit
+    //    collapses the spacer to 0 and the classic tail-pin owns the view. The measurement is
+    //    the layout's own truth — ONE clean frame with every row visible sums the heights —
+    //    so no font/markdown math can drift.
+    val anchorDensity = androidx.compose.ui.platform.LocalDensity.current
+    var anchorPadPx by remember { mutableStateOf(0f) }
+    var slcH by remember { mutableStateOf(0) }
+    val bottomPadPx = with(anchorDensity) { (contentPadBottomDp ?: 82.dp).toPx() } +
+        // the transcript must REST clear of the orb crown, not flush against the circle — the
+        // round shoulders make a flush rest look like the text slides under the orb.
+        with(anchorDensity) { 10.dp.toPx() }
     val lastChatKey = remember { mutableStateOf(state.activeChatId) }
     val lastAskCount = remember { mutableStateOf(state.messages.size) }
     LaunchedEffect(
         state.activeChatId, state.messages.size, state.live.length,
-        state.busy, state.approval?.requestId, state.status, typeScale, follow.value,
+        state.busy, state.approval?.requestId, state.status, typeScale, follow.value, slcH,
     ) {
         val switched = state.activeChatId != lastChatKey.value
         if (switched) lastChatKey.value = state.activeChatId
@@ -101,6 +122,33 @@ fun ChatScreen(
         lastAskCount.value = state.messages.size
         if (switched || newAsk) follow.value = ChatFollow.reengaged()
         if (!follow.value) return@LaunchedEffect // manual mode: the stream holds its hands off
+        // Wait (bounded) for a frame the list has FULLY composed — wear lays the tail lazily,
+        // and a chat opened mid-transition reports an empty/stale layoutInfo. Without a whole
+        // frame there is no truthful content height to pad against; the classic rocket is the
+        // fallback when composition stays lazy (true overflow shows the last item quickly).
+        var tries = 0
+        var info = listState.layoutInfo
+        var vis = info.visibleItemsInfo
+        while (tries < 8 && (vis.isEmpty() || vis.last().index < info.totalItemsCount - 1 || slcH <= 0)) {
+            withFrameNanos { }
+            info = listState.layoutInfo
+            vis = info.visibleItemsInfo
+            tries++
+        }
+        val first = vis.firstOrNull()
+        // The content height WITHOUT the spacer: valid only when one frame shows every row
+        // (zero-height spacer is omitted by wear — hence the first().index±1 bookkeeping).
+        val last = vis.lastOrNull()
+        val allShown = first != null && last != null &&
+            first.index <= 1 && last.index == info.totalItemsCount - 1 &&
+            last.index - first.index + 1 == vis.size &&
+            vis.size == info.totalItemsCount - (if (first.index == 0) 0 else 1)
+        val contentH = if (allShown && slcH > 0)
+            vis.sumOf { it.size } - (if (first!!.index == 0) first.size else 0) else -1
+        val idleEmpty = state.messages.isEmpty() && state.live.isEmpty()
+        val slack = if (contentH > 0f && !idleEmpty && state.approval == null)
+            (slcH - bottomPadPx - contentH) else 0f
+        anchorPadPx = if (slack > 1f) slack else 0f
         val idx = ChatAnchor.bottomIndex(
             messageCount = state.messages.size,
             hasApproval = state.approval != null,
@@ -113,9 +161,13 @@ fun ChatScreen(
             // list may already sit at its end (lazy tail) — the tail push can't lift a card that
             // was inserted ABOVE the viewport. scrollToItem(idx, 0) lands idx on the list's
             // center anchor = dead-center in the circle, every time (measured on-device).
-            listState.scrollToItem(state.messages.size.coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
+            listState.scrollToItem((state.messages.size + 1).coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
+        } else if (slack > 1f) {
+            // SHORT TRANSCRIPT: the spacer fills to exactly the cluster top — rest at the list
+            // top so the whole thing (spacer included) is on screen, newest just above the orb.
+            listState.scrollToItem(0, 0)
         } else if (idx > 0) {
-            // THE anchor (owner walkthrough): latest row must be on screen at the list's end.
+            // THE tail-pin (owner walkthrough): latest row must be on screen at the list's end.
             // wear-compose 1.4.1 ScalingLazyColumn facts measured on-device: scrollToItem(last, 0)
             // lands short (lazy composition hasn't laid the tail out yet), and the true list end
             // = LAST item resting at the Middle anchor (auto-centering padding fills below it).
@@ -150,7 +202,7 @@ fun ChatScreen(
     }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxWidth().pointerInput(listState) {
+        modifier = Modifier.fillMaxWidth().onSizeChanged { slcH = it.height }.pointerInput(listState) {
             // OBSERVER-ONLY gesture watch (Initial pass, consumes nothing → the list scrolls and
             // the orb keeps its own lane). While the end is reached (no forward scroll left),
             // upward travel accumulates; past the threshold the gateway re-pull fires — once
@@ -180,6 +232,15 @@ fun ChatScreen(
         contentPadding = roundListPadding(bottomExtraDp = 6f, bottomOverrideDp = contentPadBottomDp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // Item 0: the BOTTOM-ANCHOR spacer (see anchorPadPx) — height 0 whenever the tail-pin
+        // owns the view, so every later index is exactly one more than the pre-spacer era.
+        item {
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(with(anchorDensity) { anchorPadPx.toDp() }),
+            )
+        }
         item {
             ChatCaption(voiceEnabled, voiceStatus, chatLabel)
         }
