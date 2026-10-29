@@ -47,6 +47,7 @@ import dev.hermes.wearos.domain.Lane
 import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
+import dev.hermes.wearos.domain.NetworkWatch
 import dev.hermes.wearos.domain.RouteReport
 import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
@@ -99,6 +100,7 @@ fun SettingsScreen(
     val gateways by WearApp.Graph.gatewayList.collectAsState()
     val selectedGwId by WearApp.Graph.gatewaySelectedId.collectAsState()
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
+    val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
     val sttPresent = remember { VoskStt.isModelPresent(context) }
     val version = remember {
         try {
@@ -136,6 +138,25 @@ fun SettingsScreen(
 
         // ─── GATEWAYS (owner multi-gateway epic, SPEC §11) ────────────────────────────────
         FieldLabel("Gateways")
+
+        // WHAT THE RADIO ACTUALLY HAS (SPEC §11.6, owner: "make it flawless for discovering what's
+        // available network wise"). One line, always true: the link carrying us, whether anything
+        // validated it, and — the part that took a bug report to find out — whether a tailnet entry
+        // in this gateway's list has ANY chance of resolving here. A `.ts.net` name is answered by
+        // MagicDNS, which needs a tailnet interface or its resolver on this device; the phone's
+        // tailnet does not lend itself to the watch. So instead of letting the owner infer that from
+        // a DNS error, the Settings screen says it out loud, and the walk-out test reads off the
+        // wrist. No SSID, no address literals: the privacy rule (§ repo policy) still holds.
+        Text(
+            NetworkWatch.describe(
+                netInfo,
+                // Probe evidence counts only for the gateway it was gathered against (§11.2 dots rule).
+                if (gwStatus.gatewayId == selectedGwId) gwStatus.apiResults else emptyMap(),
+            ),
+            style = MaterialTheme.typography.caption3,
+            fontSize = 10.sp,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+        )
         gateways.forEach { gw ->
             GatewayRow(
                 gw = gw,

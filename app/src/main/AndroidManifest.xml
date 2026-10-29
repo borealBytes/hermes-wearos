@@ -4,6 +4,9 @@
     <uses-feature android:name="android.hardware.type.watch" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Route discovery (SPEC §11.6): read the default network + its capabilities so the
+         gateway route can be re-picked the moment the link moves, not one failed ask later. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Location tool (owner ask B): fail-soft one-shot fix; NOT required features so the APK

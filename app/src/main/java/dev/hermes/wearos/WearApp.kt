@@ -15,6 +15,7 @@ import dev.hermes.wearos.notify.Attention
 import dev.hermes.wearos.notify.Notifs
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.EndpointResolver
+import dev.hermes.wearos.net.NetworkMonitor
 import dev.hermes.wearos.net.SnapshotPusher
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
@@ -56,6 +57,10 @@ class WearApp : Application() {
         lateinit var endpoints: EndpointResolver
             private set
         fun hasEndpoints(): Boolean = ::endpoints.isInitialized
+
+        /** The default route's link truth + the change hook that re-picks [endpoints] (SPEC §11.6). */
+        lateinit var network: NetworkMonitor
+            private set
 
         /** Label of the selected gateway (agent-dialog header + Settings badge). */
         private val _gatewayLabel = MutableStateFlow("")
@@ -221,6 +226,20 @@ class WearApp : Application() {
                     settings.syncMirror(api, wk, gw.token)
                     Watchkit.setConfig(wk.ifEmpty { AppSettings.DEFAULT_WATCHKIT_URL }, settings.watchkitToken())
                 }
+                // ROUTE FOLLOWED THE LINK (SPEC §11.6): without this, the app discovered a network
+                // change by failing one ask — a winner learned on home Wi-Fi stayed "fresh" for
+                // minutes while the watch was already somewhere that address means nothing.
+                // The monitor owns the ConnectivityManager callback (application scope, never an
+                // Activity: the change we care about happens in the pocket, screen off).
+                network = NetworkMonitor(app, onChange = { reason ->
+                    val api = endpoints.onNetworkChanged(reason)
+                    Log.i(TAG, "route after network change: ${api.ifEmpty { "none — nothing answered" }}")
+                    // Refresh what visibly lies when a route goes stale: the agent list and the
+                    // gateway's session list (both were the reason a stale endpoint felt like a bug).
+                    runCatching { agents.refresh() }
+                    runCatching { session.refreshGatewaySessions() }
+                    runCatching { refreshGatewayMirror() }
+                })
                 // Queued AFTER Watchkit.setConfig so the first /agents fetch carries the real token.
                 scope.launch {
                     val gw = settings.ensureGateways() // one-time seed/migrate (never loses old keys)
@@ -232,6 +251,7 @@ class WearApp : Application() {
                 }
                 stt = VoskStt(app)
                 session.resume() // loads registry (migrates legacy keys), restores active chat + in-flight run
+                network.start() // LAST: its hook reaches into every other Graph member
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).
                 scope.launch { store.chats.collect { chats -> Attention.publish(app, chats.any { it.pendingAttention }) } }
             }

@@ -145,6 +145,22 @@ class Failover(
     /** Mid-session failure hook: the winner just broke → dethrone, next ensure advances on. */
     fun reportNetworkFailure(url: String, now: Long = clock()) = onFailure(url, now)
 
+    /**
+     * The LINK itself moved (`net/NetworkMonitor`): the network the winner was learned on may not
+     * exist any more, and staleness timers learned on that network say nothing about this one. So
+     * the winner is dethroned WITHOUT waiting for a failed request, [lastKnownGood] survives as the
+     * pointer, and the primary's backoff is cleared — a new network is a fair chance for the
+     * tailnet entry to be reachable (SPEC §11.6: the exit-node-tether case). [needsProbe] is then
+     * trivially true, so the very next [ensure] re-picks for THIS link instead of the ask paying
+     * for a route that died in the other room.
+     */
+    fun invalidate(now: Long = clock()) {
+        winner?.let { lastKnownGood = it }
+        winner = null
+        winnerAtMs = 0L
+        primaryRetryAtMs = 0L
+    }
+
     /** Short human line for logcat/Settings ("winner 192.168.1.50:8642 (primary down)"). */
     fun describe(): String {
         val w = winner ?: return "no winner · ${endpoints.size} endpoints"

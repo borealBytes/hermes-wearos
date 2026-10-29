@@ -221,8 +221,7 @@ class FailoverTest {
     }
 
     @Test
-    fun `routing is per gateway, not per agent - the same machine serves every profile`() {
-        // The owner's question ("is it a profile-based thing?") answered in code: one Failover is
+    fun `routing is per gateway, not per agent - the same machine serves every profile`() {        // The owner's question ("is it a profile-based thing?") answered in code: one Failover is
         // bound per GATEWAY and its winner is the endpoint, not the /p/<profile> suffix — switching
         // agents reuses it, so no profile can pick its own route or poison another's.
         val f = machine(now = { 0L })
@@ -233,5 +232,43 @@ class FailoverTest {
         assertEquals("$lan/p/wear", baseForWear)
         assertEquals(f.effective(), GatewayModel.normalizeEndpoint(baseForComfyui))
         assertEquals(f.effective(), GatewayModel.normalizeEndpoint(baseForWear))
+    }
+
+    // ── invalidate(): the network moved, so the network-learned staleness is meaningless ────
+
+    @Test
+    fun `network change dethrones the winner at once but keeps the pointer`() {
+        val f = machine(now = { 0L })
+        assertEquals(lan, f.go { url -> url == lan }) // learned at home
+        f.invalidate(now = 1_000L) // walk out: the tether attaches, no request has failed yet
+        assertNull("a winner learned on a dead network must not stay the crown", f.winner)
+        assertEquals("…but the thing that answered is still the best pointer", lan, f.lastKnownGood)
+        assertEquals(lan, f.effective())
+        assertTrue("the next ensure must probe, not ride a 5-minute TTL learned elsewhere", f.needsProbe(1_000L))
+    }
+
+    @Test
+    fun `a new network gives the primary a fair chance - tailnet may now be reachable`() {
+        var now = 0L
+        val probed = mutableListOf<String>()
+        val f = Failover(endpoints, clock = { now })
+        assertEquals(lan, f.go { url -> probed += url; url == lan })
+        // On the tether behind an exit-node phone, the tailnet entry is the RIGHT answer (§11.5).
+        now = 5_000L
+        f.invalidate(now)
+        probed.clear()
+        assertEquals(tailnet, f.go { url -> probed += url; url == tailnet })
+        assertEquals("primary is retried first after a link change, not after the 60 s backoff",
+            tailnet, probed.first())
+    }
+
+    @Test
+    fun `invalidating a machine that never reached anything stays honest`() {
+        val f = machine(now = { 0L })
+        f.invalidate(now = 0L)
+        assertNull(f.winner)
+        assertNull(f.lastKnownGood)
+        assertNull(f.fallbackPointer())
+        assertEquals(tailnet, f.effective()) // the owner's chosen default, untouched
     }
 }

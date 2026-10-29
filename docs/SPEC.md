@@ -75,7 +75,8 @@ The Gemini complaint: every press = new chat, no history. Hermes Wear OS flips i
 receives token + endpoints, Keystore-encrypted. Fallbacks: manual entry with keyboard/paste, `adb push`
 config for dev. (No QR scan — Ultra has no usable camera.)
 
-**Settings tree:** Gateways (registry rows, endpoint winner dots, add/edit/delete, row-tap select) ·
+**Settings tree:** Gateways (registry rows, endpoint winner dots, add/edit/delete, row-tap select,
+the live link readout of §11.6) ·
 Connection (endpoints, test, tailnet-only, cert pin, badge) · Agents & sessions
 (default agent, idle rollover) · Voice-in (STT mode: on-watch only / +auto-fallback / gateway) ·
 Voice-out (master ON/OFF + pinned chat-screen mute, rate, chunking, TTS engine) · Display (mermaid,
@@ -225,7 +226,7 @@ is probed and retried **with the same `Idempotency-Key`** (never a double run). 
 is dead the stale winner stands (requests fail naturally with a clear error; no null-pointer
 storm). **What it dials when everything is dead is the last endpoint that ANSWERED, not the
 primary** (`lastKnownGood` / `fallbackPointer`, §11.5 — the primary is often a name the watch can
-never resolve). State machine is pure (fake prober + fake clock, 16 tests); the resolver is the
+never resolve). State machine is pure (fake prober + fake clock, 19 tests); the resolver is the
 thin android shell + 2.5 s OkHttp prober. **Routing is per GATEWAY, never per agent:** one machine
 is bound per gateway and the winner is the endpoint, while the agent only swaps the `/p/<profile>`
 suffix — so every agent shares one route and no profile can pick its own or poison another's
@@ -313,6 +314,63 @@ in the list. At home that is the LAN IP; away from home, a tailnet entry only he
 tethered phone that holds the tailnet — which is why the app's job here is to say plainly, in one
 line, which route it needs.
 
+
+### 11.6 The route follows the link (owner: *"make it flawless for discovering what's available network wise"*)
+
+Until now failover was **demand-driven**: the app learned the network had moved by failing one ask,
+so a winner learned on home Wi-Fi stayed "fresh" for up to 5 minutes while the watch was already on
+a tether where that address means nothing. ConnectivityManager knows the instant the link changes —
+so the watch now re-picks its route before the owner taps anything.
+
+| Piece | Job |
+|---|---|
+| `domain/NetworkWatch.kt` (pure, 12 tests) | the POLICY: which observations are a route change. Identity = **interface** + link kinds + vpn + resolvers, so a connect's callback BURST (available → capabilities → validated → dns) costs one probe round; a change suppressed by the debounce window is remembered as a **debt** and paid by the next settled report (flaps cost one probe, real changes are never dropped); `describe()` renders the whole truth in one line with no SSID and no address literals |
+| `net/NetworkMonitor.kt` | the framework shell: ONE `registerDefaultNetworkCallback` on the Application graph (never an Activity — the change we care about happens screen-off in a pocket), `NET_CAPABILITY_VPN` read via `VpnTransportInfo` because the capability constant is @SystemApi, plus `ACCESS_NETWORK_STATE` in the manifest |
+| `Failover.invalidate()` | dethrone the winner, keep `lastKnownGood` as the pointer, clear the primary backoff (a new link is a fair chance for the tailnet entry), and make the next `ensure` probe instead of riding a TTL learned on a dead network |
+| `EndpointResolver.onNetworkChanged()` | invalidate **both** machines (the ask and the images/mermaid/whisper/sessions path ride different lists) and re-probe them under one lock, then the winner callback rewrites the mirror as usual |
+| Settings ▸ **Gateways** header line | the field-test readout: `wifi(wlan0) · validated`, `bt(bt-pan) · not validated`, `wifi(tun0) · vpn · validated · ts-resolver`, plus the tailnet clause from finding 3 below |
+
+**Three things only measurement taught** (all now in the code as evidence rules, not opinions):
+
+1. **The boot opening swallows everything, not just the first callback.** `start()` primes the
+   readout with the current network, and the framework refines it ~44 ms later on an SM-L705U; that
+   refinement looked like "the watch moved" and fired a second probe round on top of the boot probe.
+2. **A `Network` object is not an identity.** The first build keyed networks on
+   `System.identityHashCode(network)` — but ConnectivityManager constructs a **new `Network` object
+   for every callback**, so one unchanged home Wi-Fi looked like a *new network* each time: the
+   emulator re-routed **every 3 s, forever**. The stable identity is `LinkProperties.getInterfaceName()`
+   (`wlan0` / `rmnet0` / `tun0` — which usefully names a tunnel too; `LinkProperties.getInterfaces()`
+   would be nicer but is @SystemApi). Measured after the fix: **0 re-routes across 30 s of idling**
+   on a stationary network, two per radio cycle (restore, then the validation flip), then silence.
+3. **The tailnet warning is built from a probe that died, not from capability flags.** The Wear
+   emulator has no tunnel and no Tailscale resolver in its own `LinkProperties`, yet `.ts.net`
+   resolves there because slirp forwards the HOST's resolver (this dev box is on the tailnet). A
+   capability-only reading warned "can't resolve" on a device where it resolves fine. So the line
+   reads `… — tailnet entries unreachable from here` **only when the failover machine has a dead
+   probe for a tailnet endpoint** — the same evidence the failover itself acts on. On the owner's
+   watch it shows; on the emulator it stays quiet, both correctly.
+
+**What this buys the tailnet question (§11.5):** the readout answers *"is my phone's tailnet reaching
+the watch?"* on the wrist. It is `vpn`/`ts-resolver` when a tunnel is genuinely in front of the watch
+(exit-node-for-LAN devices, or a future tsnet node, §11.4) and plain `wifi` when it is not — so the
+claim is checked in 20 seconds instead of by bug report. That is also why the endpoint list should
+carry the **tailnet IP** (`http://100.69.144.33:8642`), not only the MagicDNS name: forwarding to
+100/10 is the reliable half of exit-node, resolving `.ts.net` for a tethered client is the flaky half.
+
+**Verified:** emulator (deterministic) — Wi-Fi off → `network change: network lost · no network` →
+re-route finds nothing → `route after network change: none — nothing answered`; Wi-Fi back →
+`route restored · wifi(wlan0) · not validated` → `endpoint winner: …` **before any tap**; the
+validation flip re-routes once, then 0 further events across 30 s idle. Real SM-L705U — monitor
+registers, one re-route at boot, and the Gateways header reads
+`wifi(wlan0) · validated — tailnet entries unreachable from here` (screenshot). Asks stay green
+through the churn (`finish run=… error=false`), and routing is still per-gateway, so every agent
+rides the new route without knowing it changed (§11.2).
+**Not captured on hardware:** the watch-side radio cycle — cycling its Wi-Fi drops adb with the link
+(Samsung also leaves wireless debugging off afterward), so the walk-out capture belongs to the
+owner's own test: `adb logcat -s HermesWear | grep -E "network|route"`, then walk out of Wi-Fi
+range and send one message — expect `network lost` → `route restored · bt(bt-pan)…` (or `no network`
+when the tether is not carrying the watch, which is the exit-node finding in §11.5) and the winner
+already re-picked by the time the ask is typed.
 
 ## 12. Orb dial, agent keys, session search (owner batch 3, 2026-10-26)
 
@@ -666,6 +724,30 @@ mutex rather than opening a second capture.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **The route follows the link (SPEC §11.6, owner: *"let's make it flawless for discovering what's
+  available network wise"*).** Failover was demand-driven: the app discovered a network change by
+  failing one ask, so a winner learned at home stayed authoritative for minutes after the watch had
+  left. Now `net/NetworkMonitor` holds ONE default-network callback on the Application graph and a
+  pure policy (`domain/NetworkWatch.kt`) decides what counts as a change — identity is the network
+  **interface** + link kinds + vpn + resolvers (a connect is a burst of callbacks; it costs one probe
+  round), a debounce-suppressed change is remembered as a debt and paid by the next settled report,
+  and a lost link is never debounced. `Failover.invalidate()` dethrones the winner while
+  `lastKnownGood` (§11.5) stays as the pointer and clears the primary backoff, and
+  `EndpointResolver.onNetworkChanged` re-picks API **and** watchkit under one lock, so the ask and
+  the image/mermaid/sessions path move together. Settings ▸ Gateways now states the link truth out
+  loud (`wifi(wlan0) · validated`, `bt(bt-pan) · not validated`, `wifi(tun0) · vpn · validated ·
+  ts-resolver`) — the answer to "is my phone's tailnet reaching the watch?" without a bug report.
+  Three measurement-forced rules: the boot opening swallows the framework's 44 ms refinement of the
+  primed read (it was double-probing every cold start); **a `Network` object is not an identity**
+  (ConnectivityManager hands out a new object per callback, so keying on its identity hash made the
+  emulator re-route every 3 s forever — the interface name is the stable key, and it also names a
+  tunnel: `tun0`); and the tailnet clause is built from a **dead probe**, not capability flags,
+  because the Wear emulator resolves `.ts.net` through the host's resolver while its own capabilities
+  say otherwise. Measured: 0 re-routes across 30 s idle (was one every 3 s), full lost/restored cycle
+  with the winner re-picked before any tap, monitor + readout captured on the real SM-L705U; the
+  watch's own radio cycle left for the owner's walk test (cycling watch Wi-Fi drops adb with it).
+  15 new pure tests (**326 green**, was 311).
 
 - **"Couldn't connect over tailnet" — routing made honest (owner bug, SPEC §11.5).** Reproduced on the
   SM-L705U by handing it a gateway whose only endpoint is the MagicDNS name: the watch cannot resolve

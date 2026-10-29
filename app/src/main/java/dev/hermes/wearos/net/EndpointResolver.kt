@@ -85,8 +85,11 @@ class EndpointResolver(
      * returns the api endpoint ("" when nothing is known). Fires [onWinner] on every winner
      * change (mirror keys + Watchkit config follow).
      */
-    suspend fun ensure(force: Boolean = false): String = mutex.withLock {
-        val gw = settings.selectedGateway() ?: return@withLock ""
+    suspend fun ensure(force: Boolean = false): String = mutex.withLock { ensureLocked(force) }
+
+    /** [ensure] with the mutex already held (network-change re-route needs both halves at once). */
+    private suspend fun ensureLocked(force: Boolean): String {
+        val gw = settings.selectedGateway() ?: return ""
         bind(gw)
         val profile = settings.profileSync()
         _status.value = _status.value.copy(probing = true)
@@ -107,7 +110,26 @@ class EndpointResolver(
             Log.i(TAG, "endpoint winner: ${winnerNow.substringAfter("://").substringBefore('/')} · ${apiF?.describe()}")
         if ((winnerNow != null && winnerNow != prevApi) || (wk.isNotEmpty() && wk != prevWk))
             onWinner(gw, apiF?.effective().orEmpty(), wkF?.effective().orEmpty())
-        api ?: apiF?.effective().orEmpty()
+        return api // "" = no machine / every probe dead (a stale winner stands inside it)
+    }
+
+    /**
+     * The link moved (`net/NetworkMonitor` fired this): dethrone both winners — the network that
+     * taught them is gone — and re-pick the whole route list FOR THE NEW LINK, right now, before the
+     * user taps anything (SPEC §11.6). Demand-driven failover recovers inside the first ask after a
+     * walk-out; this makes the watch never notice the change at all.
+     *
+     * Returns the API endpoint now in use ("" when no gateway is configured). Both machines are
+     * invalidated, not just the API one: images/mermaid/whisper/sessions ride watchkit and would
+     * otherwise keep dialing the dead interface the ask no longer uses.
+     */
+    suspend fun onNetworkChanged(reason: String): String = mutex.withLock {
+        val gw = settings.selectedGateway() ?: return@withLock ""
+        bind(gw)
+        apiF?.invalidate()
+        wkF?.invalidate()
+        Log.i(TAG, "re-routing for '${gw.label}' ($reason)…")
+        ensureLocked(force = true)
     }
 
     /** Profiled health first, bare `/health` next — either 2xx means the endpoint is alive. */
