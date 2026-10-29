@@ -43,6 +43,10 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private val _enabled = MutableStateFlow(true)
     val enabled: StateFlow<Boolean> = _enabled
 
+    /** True while TTS utterances are in flight — the orb wears its STOP face on this (2026-10-29). */
+    private val _speaking = MutableStateFlow(false)
+    val speaking: StateFlow<Boolean> = _speaking
+
     private var tts: TextToSpeech? = null
     private var utterSeq = 0
     private val pending = AtomicInteger(0)
@@ -189,6 +193,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
             appliedVoice = ""
             utterances.clear()
             pending.set(0)
+            _speaking.value = false
             restoreVolume()
             init()
         }
@@ -357,6 +362,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     fun stop() {
         resetTracking()
         utterances.clear()
+        _speaking.value = false
         try { tts?.stop() } catch (e: Exception) { /* engine gone */ }
         pending.set(0)
         restoreVolume()
@@ -365,6 +371,8 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     fun shutdown() {
         try { tts?.stop(); tts?.shutdown() } catch (e: Exception) { }
         tts = null
+        utterances.clear()
+        _speaking.value = false
         restoreVolume()
     }
 
@@ -376,6 +384,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         if (_state.value != State.Ready) return
         boostVolume()
         pending.incrementAndGet()
+        _speaking.value = true
         val mode = if (queueAdd) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
         // Chain step > 0 means the preferred voice failed: hop the ENGINE-global voice to the
         // fallback before queueing (the drain-snap in utteranceSettled puts it back).
@@ -394,6 +403,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private fun utteranceSettled() {
         if (pending.decrementAndGet() <= 0) {
             pending.set(0)
+            _speaking.value = false
             restoreVolume()
             // Chain drained: put the engine's global voice back on the preferred one.
             val t = tts

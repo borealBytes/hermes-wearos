@@ -154,6 +154,8 @@ class MainActivity : ComponentActivity() {
                 val activeChatId by session.activeChat.collectAsState()
                 val ttsState by speak.state.collectAsState()
                 val voiceOut by speak.enabled.collectAsState()
+                // The orb's STOP face while the answer is being READ ALOUD (owner 2026-10-29).
+                val speakingNow by speak.speaking.collectAsState()
                 // Mute-lane double slider anchor + picker mirror (owner 2026-10-29).
                 val replyVol by settings.ttsVolume.collectAsState()
                 val markdownOn by settings.markdownEnabled.collectAsState()
@@ -581,6 +583,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             listening = listening.value || devPtt != null,
+                            speaking = speakingNow,
                             pttPartial = partial.value.ifBlank { devPtt ?: "" },
                             pttHistory = if (devPtt != null) emptyList() else sttHistory.toList(),
                             handsFree = handsFree.value,
@@ -643,8 +646,16 @@ class MainActivity : ComponentActivity() {
                                             Vad.speakingNow(vad.value, System.currentTimeMillis())
                                         ) cancelListening() else endListening()
                                     }
-                                    // Tap while a reply streams = STOP (ask #3).
-                                    state.busy -> session.stopActiveRun()
+                                    // Tap while a reply streams = STOP the run (ask #3) — and flush
+                                    // the voice queue with it, or a cancelled answer would keep
+                                    // talking (owner 2026-10-29 state machine).
+                                    state.busy -> {
+                                        speak.stop()
+                                        session.stopActiveRun()
+                                    }
+                                    // Tap while it reads aloud = MUTE only — the answer already
+                                    // landed; stop speech and view it (orb returns to the mic).
+                                    speakingNow -> speak.stop()
                                     // Compose box open: send (or close when empty).
                                     composing && draft.isNotBlank() -> {
                                         speak.stop()
@@ -1027,6 +1038,8 @@ private fun ChatBody(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     listening: Boolean,
+    /** TTS queue live → the STOP face + hold-pops-dial state machine (owner 2026-10-29). */
+    speaking: Boolean = false,
     pttPartial: String,
     pttHistory: List<String>,
     handsFree: Boolean,
@@ -1192,6 +1205,7 @@ private fun ChatBody(
                 viewportW = vpW,
                 viewportH = vpH,
                 listening = listening,
+                speaking = speaking,
                 running = state.busy,
                 voiceOut = voiceOut,
                 slots = slots,
@@ -1275,6 +1289,8 @@ private fun OrbCluster(
     viewportW: Float,
     viewportH: Float,
     listening: Boolean,
+    /** TTS queue live → the STOP face + hold-pops-dial state machine (owner 2026-10-29). */
+    speaking: Boolean = false,
     running: Boolean,
     voiceOut: Boolean,
     slots: List<Lane>,
@@ -1350,6 +1366,7 @@ private fun OrbCluster(
     )
     TalkOrb(
         listening = listening,
+        speaking = speaking,
         running = running,
         diameter = with(density) { (cluster.talk.r * 2f).toDp() },
         modifier = Modifier.offset {

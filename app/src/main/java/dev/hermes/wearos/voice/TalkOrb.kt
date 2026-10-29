@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +70,9 @@ fun TalkOrb(
     listening: Boolean,
     modifier: Modifier = Modifier,
     running: Boolean = false,
+    /** TTS queue live (owner 2026-10-29): the orb ALSO wears the STOP face while it SPEAKS —
+     *  tap = mute (the answer already landed); hold = the dial pops out in place. */
+    speaking: Boolean = false,
     diameter: Dp = 68.dp,
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
@@ -83,8 +87,17 @@ fun TalkOrb(
     onDialEnd: (dxPx: Float, dyPx: Float) -> Unit = { _, _ -> },
 ) {
     var pressed by remember { mutableStateOf(false) }
+    // State read LIVE inside the gesture loop (rememberUpdatedState), never as a pointerInput
+    // key: if thinking/speaking flipped mid-hold (queue drained while the finger sat there),
+    // restarting the detector would cancel the gesture WITHOUT onDialEnd and freeze the ring
+    // open (owner 2026-10-29 state machine).
+    val runningLive by androidx.compose.runtime.rememberUpdatedState(running)
+    val speakingLive by androidx.compose.runtime.rememberUpdatedState(speaking)
+    // STOP face = thinking OR speaking (same red ⏹ everywhere: tap always means "stop what the
+    // orb is doing" — cancel the answer while running, mute while speaking).
+    val stopped = running || speaking
     val bg = when {
-        running -> OrbStop
+        stopped -> OrbStop
         listening -> OrbLive
         pressed -> OrbPressed
         else -> OrbIdle
@@ -93,9 +106,10 @@ fun TalkOrb(
     val t by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Restart), label = "t")
 
     Box(contentAlignment = Alignment.Center, modifier = modifier.size(diameter)) {
-        // Pulse ring (listening only): an expanding, fading red circle OUTSIDE the orb — drawn
-        // first so the orb always covers its center.
-        if (listening && !running) {
+        // Pulse ring (listening, or speaking alone): an expanding, fading red circle OUTSIDE the
+        // orb — drawn first so the orb always covers its center. While a reply is being READ
+        // ALOUD the pulse carries across the room ("silent-but-speaking is obvious", SPEC §12.9).
+        if ((listening && !running) || (speaking && !listening && !running)) {
             Box(
                 modifier = Modifier
                     .size(diameter)
@@ -112,12 +126,12 @@ fun TalkOrb(
                 .size(diameter)
                 .clip(CircleShape)
                 .then(
-                    if (running) Modifier.border(androidx.compose.foundation.BorderStroke(3.dp, OrbStopRing), CircleShape).padding(3.dp)
+                    if (stopped) Modifier.border(androidx.compose.foundation.BorderStroke(3.dp, OrbStopRing), CircleShape).padding(3.dp)
                     else Modifier
                 )
                 .clip(CircleShape)
                 .background(bg)
-                .pointerInput(running, dialScale) {
+                .pointerInput(dialScale) {
                     val minUp = OrbGesture.MIN_UP_DP.dp
                     val maxDrift = OrbGesture.MAX_DRIFT_DP.dp
                     awaitEachGesture {
@@ -128,6 +142,19 @@ fun TalkOrb(
                             viewConfiguration.longPressTimeoutMillis, minUp.toPx(), maxDrift.toPx(),
                             OrbDial.ACTIVATE_REF * dialScale,
                         )
+                        // The dial stream, shared by BOTH entries: the drag gate AND the
+                        // stopped-state hold-pop. Feeds moves until the finger leaves. (Extension
+                        // receiver: awaitPointerEvent is a @RestrictsSuspension member.)
+                        val feedDialUntilUp: suspend androidx.compose.ui.input.pointer.AwaitPointerEventScope.() -> Unit = {
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                val ch = ev.changes.firstOrNull { it.pressed }
+                                if (ch == null) break
+                                tracker.move(ch.position.x, ch.position.y, ch.uptimeMillis)
+                                ev.changes.forEach { if (it.pressed) it.consume() }
+                                onDialMove(tracker.dx, tracker.dy)
+                            }
+                        }
                         // THE RACE: drag gate vs hold timeout — whoever crosses first owns the
                         // gesture (a slow slide is PTT, a flick is a lane, and the finger that
                         // lifts before either is a tap).
@@ -152,14 +179,7 @@ fun TalkOrb(
                                 // No mic ever started here.
                                 onDialArm()
                                 onDialMove(tracker.dx, tracker.dy)
-                                while (true) {
-                                    val ev = awaitPointerEvent()
-                                    val ch = ev.changes.firstOrNull { it.pressed }
-                                    if (ch == null) break
-                                    tracker.move(ch.position.x, ch.position.y, ch.uptimeMillis)
-                                    ev.changes.forEach { if (it.pressed) it.consume() }
-                                    onDialMove(tracker.dx, tracker.dy)
-                                }
+                                this.feedDialUntilUp()
                                 pressed = false
                                 onDialEnd(tracker.dx, tracker.dy)
                             }
@@ -167,11 +187,19 @@ fun TalkOrb(
                                 pressed = false
                                 onTap()
                             }
-                            running -> {
-                                // STOP state: a hold is just a slow tap — release stops the run.
-                                waitForUpOrCancellation()
+                            runningLive || speakingLive -> {
+                                // HOLD-POPS-THE-DIAL (owner 2026-10-29: *"press and hold should
+                                // still pop out the clock scrolly thing … maybe I want the
+                                // keyboard, a steer, a slash command"*). While it thinks OR reads
+                                // aloud, a stationary hold blooms the ring IN PLACE — the run is
+                                // NOT stopped (short tap does that) and is not disturbed on
+                                // release-at-home (come-home = cancel). Aim after the bloom and
+                                // release on a lane to fire it.
+                                onDialArm()
+                                onDialMove(tracker.dx, tracker.dy)
+                                this.feedDialUntilUp()
                                 pressed = false
-                                onTap()
+                                onDialEnd(tracker.dx, tracker.dy)
                             }
                             else -> {
                                 onHoldStart()
@@ -188,18 +216,19 @@ fun TalkOrb(
             // lighter base); listening = white on red; running = dimmed under the STOP square.
             Image(
                 painter = painterResource(R.drawable.ic_hermes_orb),
-                contentDescription = if (running) "stop" else "talk with hermes",
+                contentDescription = if (stopped) "stop" else "talk with hermes",
                 contentScale = ContentScale.Fit,
                 colorFilter = when {
-                    running -> ColorFilter.tint(Color.White.copy(alpha = 0.25f))
+                    stopped -> ColorFilter.tint(Color.White.copy(alpha = 0.25f))
                     listening -> ColorFilter.tint(Color.White.copy(alpha = 0.55f))
                     pressed -> ColorFilter.tint(Color.White)
                     else -> ColorFilter.tint(Color.White.copy(alpha = 0.92f))
                 },
                 modifier = Modifier.size(diameter * 0.76f),
             )
-            // STOP overlay glyph (running): white rounded square, semantics unchanged (ask #3).
-            if (running) {
+            // STOP overlay glyph (thinking OR speaking): white rounded square — tap semantics per
+            // state: cancel the answer while running, mute while speaking (owner 2026-10-29).
+            if (stopped) {
                 Box(
                     modifier = Modifier
                         .size(diameter * 0.32f)
