@@ -328,7 +328,7 @@ so the watch now re-picks its route before the owner taps anything.
 | `net/NetworkMonitor.kt` | the framework shell: ONE `registerDefaultNetworkCallback` on the Application graph (never an Activity — the change we care about happens screen-off in a pocket), `NET_CAPABILITY_VPN` read via `VpnTransportInfo` because the capability constant is @SystemApi, plus `ACCESS_NETWORK_STATE` in the manifest |
 | `Failover.invalidate()` | dethrone the winner, keep `lastKnownGood` as the pointer, clear the primary backoff (a new link is a fair chance for the tailnet entry), and make the next `ensure` probe instead of riding a TTL learned on a dead network |
 | `EndpointResolver.onNetworkChanged()` | invalidate **both** machines (the ask and the images/mermaid/whisper/sessions path ride different lists) and re-probe them under one lock, then the winner callback rewrites the mirror as usual |
-| Settings ▸ **Gateways** header line | the field-test readout: `wifi(wlan0) · validated`, `bt(bt-pan) · not validated`, `wifi(tun0) · vpn · validated · ts-resolver`, plus the tailnet clause from finding 3 below |
+| Settings ▸ **Gateways** header line | the field-test readout: `wifi(wlan0) · validated`, `bt(bt-pan) · not validated`, `wifi(tun0) · vpn · validated · ts-resolver`, plus the two-tier tailnet clause of finding 3 (`… unreachable from here` when measured dead, `… no tailnet route on this device` when the device has no tunnel/MagicDNS and nothing has been measured) |
 
 **Three things only measurement taught** (all now in the code as evidence rules, not opinions):
 
@@ -342,13 +342,19 @@ so the watch now re-picks its route before the owner taps anything.
    (`wlan0` / `rmnet0` / `tun0` — which usefully names a tunnel too; `LinkProperties.getInterfaces()`
    would be nicer but is @SystemApi). Measured after the fix: **0 re-routes across 30 s of idling**
    on a stationary network, two per radio cycle (restore, then the validation flip), then silence.
-3. **The tailnet warning is built from a probe that died, not from capability flags.** The Wear
-   emulator has no tunnel and no Tailscale resolver in its own `LinkProperties`, yet `.ts.net`
-   resolves there because slirp forwards the HOST's resolver (this dev box is on the tailnet). A
-   capability-only reading warned "can't resolve" on a device where it resolves fine. So the line
-   reads `… — tailnet entries unreachable from here` **only when the failover machine has a dead
-   probe for a tailnet endpoint** — the same evidence the failover itself acts on. On the owner's
-   watch it shows; on the emulator it stays quiet, both correctly.
+3. **The tailnet clause has two tiers, and measured evidence outranks the structural one in BOTH
+   directions.** The Wear emulator has no tunnel and no Tailscale resolver in its own
+   `LinkProperties`, yet `.ts.net` resolves there because slirp forwards the HOST's resolver (this
+   dev box is on the tailnet) — so a capability-only reading warned "can't resolve" on a device
+   where it resolves fine. Tier 1 is measurement: `… — tailnet entries unreachable from here`,
+   printed only when the failover machine holds a DEAD probe for a tailnet endpoint. Tier 2 is
+   structural and worded as such — `… — no tailnet route on this device`, true of the emulator too,
+   which borrows the host's route rather than having one. And if a tailnet endpoint **answered**, no
+   clause prints at all: the emulator wins on exactly such an endpoint, and printing "no tailnet
+   route" beside a `ts.net` winner said two opposite things (caught by reading the emulator's own
+   Settings screen). Tier 2 exists because a LAN-first list never probes the tailnet entry at all —
+   a probe round stops at the first 2xx — so an evidence-only clause would stay silent forever on
+   the owner's watch, where the claim is nevertheless true.
 
 **What this buys the tailnet question (§11.5):** the readout answers *"is my phone's tailnet reaching
 the watch?"* on the wrist. It is `vpn`/`ts-resolver` when a tunnel is genuinely in front of the watch
@@ -362,7 +368,7 @@ re-route finds nothing → `route after network change: none — nothing answere
 `route restored · wifi(wlan0) · not validated` → `endpoint winner: …` **before any tap**; the
 validation flip re-routes once, then 0 further events across 30 s idle. Real SM-L705U — monitor
 registers, one re-route at boot, and the Gateways header reads
-`wifi(wlan0) · validated — tailnet entries unreachable from here` (screenshot). Asks stay green
+`wifi(wlan0) · validated` — plain, because its tailnet entry was never probed and tier 2 needs the gateway's endpoint list (which it now gets, so a LAN-first list still says `no tailnet route on this device`) (screenshots). Asks stay green
 through the churn (`finish run=… error=false`), and routing is still per-gateway, so every agent
 rides the new route without knowing it changed (§11.2).
 **Not captured on hardware:** the watch-side radio cycle — cycling its Wi-Fi drops adb with the link

@@ -159,24 +159,52 @@ class NetworkWatchTest {
     }
 
     @Test
-    fun `the tailnet clause is built from a probe that died, not from capability flags`() {
+    fun `a measured-dead tailnet probe is stated as measured`() {
         // The Wear emulator is the counter-example that forced this shape: no tunnel, no Tailscale
         // resolver in its own LinkProperties, yet .ts.net resolves because slirp forwards the HOST's
-        // on-tailnet resolver. Warning there would have been a lie; warning here is evidence.
+        // on-tailnet resolver. "Can't resolve" would have been a lie there; a dead probe never is.
         val tailnetUrl = "http://hermes.tailb12aa5.ts.net:8642"
         val lanUrl = "http://192.168.1.50:8642"
         assertEquals(
             "wifi(wlan0) · validated — tailnet entries unreachable from here",
-            NetworkWatch.describe(wifi, mapOf(tailnetUrl to false, lanUrl to true)),
+            NetworkWatch.describe(wifi, listOf(tailnetUrl, lanUrl), mapOf(tailnetUrl to false, lanUrl to true)),
         )
-        // It answered: nothing to warn about, whatever the capabilities say.
+        // It ANSWERED: a working route is a working route, whatever the capabilities claim. The
+        // emulator lives in this case — it wins on a .ts.net endpoint while having no tailnet of its
+        // own, and the hint printed next to that winner said two opposite things.
         assertEquals(
             "wifi(wlan0) · validated",
-            NetworkWatch.describe(wifi, mapOf(tailnetUrl to true, lanUrl to true)),
+            NetworkWatch.describe(wifi, listOf(tailnetUrl, lanUrl), mapOf(tailnetUrl to true, lanUrl to true)),
         )
-        // No evidence yet (fresh install, boot probe still running): stay silent, don't guess.
-        assertEquals("wifi(wlan0) · validated", NetworkWatch.describe(wifi, emptyMap()))
-        assertEquals("wifi(wlan0) · validated", NetworkWatch.describe(wifi, mapOf(lanUrl to false)))
+        assertEquals(
+            "wifi(wlan0) · validated",
+            NetworkWatch.describe(wifi, listOf(lanUrl), mapOf(lanUrl to true)),
+        )
+    }
+
+    @Test
+    fun `without a tunnel or the tailscale resolver the watch simply has no tailnet route`() {
+        // The second tier exists because a LAN-FIRST endpoint list never probes the tailnet entry at
+        // all (a round stops at the first 2xx), so an evidence-only clause would stay silent forever
+        // on the owner's watch — where the claim is true anyway.
+        val tailnetUrl = "http://hermes.tailb12aa5.ts.net:8642"
+        assertEquals(
+            "wifi(wlan0) · validated — no tailnet route on this device",
+            NetworkWatch.describe(wifi, listOf(tailnetUrl), emptyMap()),
+        )
+        // A tunnel, or the MagicDNS resolver, in front of the device: nothing to say.
+        assertEquals(
+            "wifi(tun0) · vpn · validated · ts-resolver",
+            NetworkWatch.describe(tailnet, listOf(tailnetUrl)),
+        )
+        assertEquals(
+            "wifi(wlan0) · validated · ts-resolver",
+            NetworkWatch.describe(
+                wifi.copy(dns = listOf("192.168.10.1", NetInfo.TAILSCALE_RESOLVER)), listOf(tailnetUrl),
+            ),
+        )
+        // A LAN-only gateway never earns a tailnet clause at all.
+        assertEquals("wifi(wlan0) · validated", NetworkWatch.describe(wifi, listOf("http://192.168.1.50:8642")))
     }
 
     @Test

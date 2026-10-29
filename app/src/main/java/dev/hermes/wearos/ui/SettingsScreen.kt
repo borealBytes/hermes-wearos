@@ -150,6 +150,7 @@ fun SettingsScreen(
         Text(
             NetworkWatch.describe(
                 netInfo,
+                gateways.firstOrNull { it.id == selectedGwId }?.apiEndpoints.orEmpty(),
                 // Probe evidence counts only for the gateway it was gathered against (§11.2 dots rule).
                 if (gwStatus.gatewayId == selectedGwId) gwStatus.apiResults else emptyMap(),
             ),

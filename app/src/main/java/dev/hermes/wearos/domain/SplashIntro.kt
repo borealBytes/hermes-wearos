@@ -38,10 +38,13 @@ object SplashIntro {
      * How long the film waits for audio focus before it stops waiting (the policy itself lives in
      * ui/IntroVideo: ask politely, then play silent). Tuned on hardware: an SM-L705U answered a
      * focus request LATER than the first 700 ms attempt, which silently cost the film its soundtrack,
-     * so the ask gets a real window. Invisible either way — the poster is what is on screen while
-     * we wait. Must stay inside [FIRST_FRAME_BUDGET_MS], which is the deadline for giving up.
+     * so the ask gets a real window. It got a wider one after a fifth cold start on the same watch
+     * logged `no audio focus in 1200ms — playing silent` for a launch that otherwise played
+     * perfectly: the owner's intro is silent for that whole boot, and he cannot tell. Invisible
+     * either way — the poster is what is on screen while we wait. Must stay inside
+     * [FIRST_FRAME_BUDGET_MS], which is the deadline for giving up.
      */
-    const val AUDIO_GRACE_MS = 1_200L
+    const val AUDIO_GRACE_MS = 1_800L
 
     /**
      * Ceiling on "wait for the decoder's first frame". Past this the overlay is dropped and the
@@ -53,8 +56,13 @@ object SplashIntro {
      * attempt at 1.5 s cut a film that was about to play perfectly, and 3.5 s still lost one run in
      * four. Waiting costs nothing you can see — the poster is the same face the system splash has
      * been showing — while a premature cut silently kills the launch story. Leave headroom.
+     *
+     * A later session on the same watch added **2.87 / 2.96 / 2.99 / 3.04 s** in a clean run series
+     * and **5.93 s** on a cold start whose audio focus arrived late — media3 gates rendering on
+     * focus, so a slow-focus launch pushes the frame out with it, and the 6 s ceiling came within
+     * 71 ms of eating a film that played fine. That is why the ceiling is 8 s.
      */
-    const val FIRST_FRAME_BUDGET_MS = 6_000L
+    const val FIRST_FRAME_BUDGET_MS = 8_000L
 
     /** Crossfade out on dismiss — tap, end, or error — matching the spirit flash's hand-off. */
     const val FADE_MS = 220

@@ -93,15 +93,30 @@ class NetworkWatch(
          * beyond resolver identity, per this repo's privacy rule (no personal network identity in
          * anything the owner can screenshot).
          *
-         * [tried] is the failover machine's probe record, and the tailnet clause is built from it
-         * rather than from the capability flags — measured, not inferred. The proof this matters is
-         * the Wear emulator: it has no tunnel and no Tailscale resolver in its own LinkProperties
-         * (so a capability-only reading warned "can't resolve"), yet `.ts.net` resolves there
-         * happily because slirp forwards the HOST's resolver, which is on the tailnet. A probe that
-         * came back dead is the only honest evidence that an endpoint does not work on this device,
-         * and it is the same evidence the failover itself acts on (§11.2).
+         * The tailnet clause has TWO tiers, because the two claims behind them are different kinds
+         * of statement and the earlier single-tier wording got one of them wrong:
+         *
+         *  • **[tried] proves it.** A tailnet endpoint the failover machine probed and lost is
+         *    measured unreachability — the exact evidence the failover itself acts on (§11.2).
+         *  • **[endpoints] + capabilities show the shape.** No tunnel interface and no Tailscale
+         *    resolver means THIS device has no tailnet route. That is structural, and it is NOT a
+         *    claim about DNS: the Wear emulator is the counter-example, with no tunnel and no
+         *    resolver in its own `LinkProperties` yet `.ts.net` answering happily, because slirp
+         *    forwards the HOST's on-tailnet resolver. Saying "can't resolve" there was simply
+         *    wrong; "no tailnet route on this device" is true even there — it borrows the host's.
+         *
+         * The second tier is what keeps the line useful in the common case: on a LAN-first list the
+         * tailnet entry is never probed at all (a probe round stops at the first 2xx), so a purely
+         * evidence-based clause would stay silent forever on the owner's watch. Evidence still wins
+         * in both directions when it exists — an entry that ANSWERED is a working route, and the
+         * emulator is living proof (it wins on a `.ts.net` endpoint while its own capabilities claim
+         * no tailnet at all, and printing the hint next to that winner said two opposite things).
          */
-        fun describe(info: NetInfo, tried: Map<String, Boolean> = emptyMap()): String {
+        fun describe(
+            info: NetInfo,
+            endpoints: List<String> = emptyList(),
+            tried: Map<String, Boolean> = emptyMap(),
+        ): String {
             if (!info.up) return "no network"
             val parts = mutableListOf(
                 (info.links.sorted().ifEmpty { listOf("net") }).joinToString("+") +
@@ -111,8 +126,18 @@ class NetworkWatch(
             parts += if (info.validated) "validated" else if (info.internet) "not validated" else "no internet"
             if (info.tailscaleDns) parts += "ts-resolver"
             val line = parts.joinToString(" · ")
-            val tailnetDead = tried.any { (url, ok) -> ok == false && RouteReport.isTailnetUrl(url) }
-            return if (tailnetDead) "$line — tailnet entries unreachable from here" else line
+            // Evidence outranks the structural hint in BOTH directions: a tailnet entry that answered
+            // is a route that works (the Wear emulator wins on exactly such an endpoint while its own
+            // capabilities claim no tunnel), and one that died is a route that does not.
+            val tailnetTried = tried.filterKeys { RouteReport.isTailnetUrl(it) }
+            if (tailnetTried.values.any { it == true }) return line
+            if (tailnetTried.values.any { it == false }) {
+                return "$line — tailnet entries unreachable from here"
+            }
+            if (!info.magicDnsReady && endpoints.any { RouteReport.isTailnetUrl(it) }) {
+                return "$line — no tailnet route on this device"
+            }
+            return line
         }
     }
 
