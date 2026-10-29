@@ -649,6 +649,61 @@ the watch's default browser, honest toast when none exists).
 
 ---
 
+### 12.8 Voice-out config — voices, the speed slider, dial volume (owner 2026-10-29)
+
+Owner asked for two things on a call: *"the watch might have a lot more voices"* (change the TTS
+voice) *and change speed — a slider would do me better* (the speed chips clipped off the round
+face). Both are engine-side config, so `voice/SpeakAloud.kt` owns applying them and `domain/TtsConfig.kt`
+owns the pure mapping (rate 0.5–2.0 ↔ slider fraction, clamps, `SPEED_CHIPS` retired).
+
+- **Voices**: `availableVoices()` returns `VoiceOption(name, quality, builtin)` from
+  `TextToSpeech.onVoiceAvailable`. `Voice.isDefault()/isPresent()` are `@hide` — read via
+  reflection for *cosmetic flags only*; nothing branches on them, so a ROM that hides them harder
+  just shows fewer decorations, never fewer voices. Pick persists to `AppSettings` `tts_voice`
+  (empty = engine default) and applies live (mid-queue), previewing when voice-out is on.
+- **Speed**: a custom drag slider (`ui/SettingsScreen.kt` → `RateSlider`, awaitEachGesture jump+
+  drag — wear-compose has no Slider) persists `tts_rate`; `setSpeechRate` applies to the running
+  engine immediately so the release-ear-test hears the new rate without a restart.
+- **Volume = the dial (owner: *"dwell ~2 seconds on the mute lane and… swipe back and forth to
+  adjust my reply speed… a double slider"* — meaning reply VOLUME)**: `domain/DialVolume.kt` —
+  dwell `DWELL_MS=2000` on the 🔇 lane arms volume mode; while armed, dial swipes move reply
+  volume on a 5% grid (`FULL_SWEEP_REF=240` px for a comfortable full rotation), the lane caption
+  is replaced by a `🔊 xx%` badge (`ui/OrbDialOverlay.kt` `volumeBadge`), and dwell-timeout
+  commits to `tts_volume`. Volume rides **per-utterance `KEY_PARAM_VOLUME`** in `speak()` — the
+  app never touches `STREAM_MUSIC`, so watch media volume and Hermes replies stay independent
+  (owner-locked: Hermes-app-only).
+
+### 12.9 Per-chat approval mode (owner 2026-10-29) — the watch enforces it client-side
+
+Owner wants per-session approvals (*"manual/smart/off… inherit the agent default"*) but the
+gateway cannot offer it: verified in `hermes-agent` source, `approvals.mode` is **profile-scoped**
+(`/approvals [manual|smart|off]`), the only per-session lever is the in-memory `/yolo`, and there
+is no per-chat store. So the watch does it where it can: a new orb lane (`Lane.Approvals`, lanes
+may exceed 8) opens `ui/ApprovalModeDialog.kt`; the choice persists per chat (`ChatMeta.approvalMode`,
+default = Inherit). At approval-arrival time `domain/ApprovalMode.kt` + `ChatSession` decide:
+Manual never auto-answers; **Smart auto-answers only while that chat is NOT the open front
+screen**; Off always auto-answers (`respondApproval(choices.first())`, deduped by request id —
+run-status re-reports pending approvals every ~3 s). `MainActivity` publishes
+`WearApp.Graph.viewingChatId` (screen + active chat) — the single source the gate reads.
+
+The same `viewingChatId` is the whole notification-routing rule (owner: notify *"for ANY case
+except the notification's own chat being the actively-open front chat screen"*): settled replies
+and approvals post standard Wear notifications whenever the chat isn't front-and-center — other
+chat, other screen, watch face, another app, or screen off all notify; the open chat streams
+silently into the transcript.
+
+### 12.10 Settings is a tree now (owner: *"not overloading with a forever-scrolling single screen"*)
+
+`SettingsScreen` became hub + pages (`enum SettingsPage`): **🌐 Gateways** (registry list, add,
+active Base URL + Token, watchkit test — per-gateway options stay behind the pencil), **🔑 Agent
+keys**, **🗣️ Voice out** (toggle, speed slider, voice picker, engine status), **🎛️ Display**
+(markdown, splash, pinch, orb lanes), **⌚ Watch** (body tools, push, health/location status,
+voice toggle), **ℹ️ About** (stt model, version). Every section's logic is UNCHANGED — the blocks
+are wrapped in `if (page == …)`; nav rows carry live subtitles (selected gateway, rate, …); each
+page gets a `‹ all settings` row and hardware/back gesture returns to the hub (`BackHandler`).
+
+---
+
 ## 13. Next steps — branch 2 (media + voice quality), scoped 2026-10-26
 
 Agreed split: dial + agent switching + search land first and get a wrist review; everything below
@@ -742,6 +797,18 @@ mutex rather than opening a second capture.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **Voice-out config + dial volume + per-chat approvals + notif routing + the settings tree
+  (SPEC §12.8–§12.10, owner batch 2026-10-29, all emulator-proven).** Engine voice picker +
+  drag speed slider (`domain/TtsConfig`, `SpeakAloud.applyConfig` live mid-queue); dwell 2 s on
+  the 🔇 dial lane arms reply-volume mode — swipes ride per-utterance `KEY_PARAM_VOLUME` on a 5%
+  grid with a `🔊 xx%` badge, `STREAM_MUSIC` untouched (`domain/DialVolume`); new ✅ approvals
+  lane + `ApprovalModeDialog` persisting Inherit/Manual/Smart/Off per chat, enforced CLIENT-side
+  at approval arrival because gateway approvals are profile-scoped (`domain/ApprovalMode`);
+  notifications for every case except the chat being the open front screen, gated on
+  `Graph.viewingChatId` (MainActivity publishes, `ChatSession.viewingThisChat` decides); and the
+  flat settings screen became a hub + 6 pages with zero logic change (`if (page == …)` wrappers,
+  live-subtitle nav rows, BackHandler). +14 tests → 345 green.
 
 - **The route follows the link (SPEC §11.6, owner: *"let's make it flawless for discovering what's
   available network wise"*).** Failover was demand-driven: the app discovered a network change by
