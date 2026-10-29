@@ -47,6 +47,7 @@ import dev.hermes.wearos.domain.Lane
 import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
+import dev.hermes.wearos.domain.RouteReport
 import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
 import dev.hermes.wearos.location.LocationTool
@@ -276,7 +277,7 @@ fun SettingsScreen(
                                 val n = settings.refreshAgentKeys()
                                 if (n > 0) "✓ $n keys learned" else "watchkit returned no keys"
                             } catch (e: Exception) {
-                                "⚠️ ${e.message?.take(48) ?: e.javaClass.simpleName}"
+                                "⚠️ " + RouteReport.explain(e).take(60)
                             }
                         }
                     }
@@ -336,7 +337,7 @@ fun SettingsScreen(
                             val a = HermesApi(settings.baseUrl(), settings.token())
                             withContext(Dispatchers.IO) { a.health() }
                         } catch (e: Exception) {
-                            "⚠️ ${e.message ?: "unreachable"}"
+                            "⚠️ " + RouteReport.explain(e)
                         }
                         testing = false
                     }
@@ -505,7 +506,7 @@ fun SettingsScreen(
                         wkResult = try {
                             Watchkit.health(url)
                         } catch (e: Exception) {
-                            "⚠️ ${e.message ?: "unreachable"}"
+                            "⚠️ " + RouteReport.explain(e)
                         }
                         wkTesting = false
                     }

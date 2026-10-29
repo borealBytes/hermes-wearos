@@ -223,8 +223,13 @@ the primary a short-backoff retry (60 s, one probe per window — a dead primary
 user per-request); a mid-session I/O failure dethrones the winner and the gateway's next endpoint
 is probed and retried **with the same `Idempotency-Key`** (never a double run). When every probe
 is dead the stale winner stands (requests fail naturally with a clear error; no null-pointer
-storm). State machine is pure (fake prober + fake clock, 12 tests); the resolver is the thin
-android shell + 2.5 s OkHttp prober.
+storm). **What it dials when everything is dead is the last endpoint that ANSWERED, not the
+primary** (`lastKnownGood` / `fallbackPointer`, §11.5 — the primary is often a name the watch can
+never resolve). State machine is pure (fake prober + fake clock, 16 tests); the resolver is the
+thin android shell + 2.5 s OkHttp prober. **Routing is per GATEWAY, never per agent:** one machine
+is bound per gateway and the winner is the endpoint, while the agent only swaps the `/p/<profile>`
+suffix — so every agent shares one route and no profile can pick its own or poison another's
+(proved live 2026-10-29: identical winner and identical failure text for `comfyui` and `wear`).
 
 ### 11.3 Gateway UI + the IME rule
 
@@ -261,6 +266,52 @@ shim (SOCKS5, +size, battery note: goroutine lives in Graph scope, state on
 libtailscale/VpnService (official, consent dialog, heavier on Wear). Either needs a tsnet
 **authkey** (or once-per-node approval on his phone: AuthURL → tailscale.com/key). Dev hook
 today: none — this section IS the Phase B artifact.
+
+
+### 11.5 What "tailnet endpoint" can and cannot mean on the watch (owner bug, 2026-10-29)
+
+Owner report: *"it said it couldn't connect over tailnet to gateway when I was on wifi. I even had
+the phone on tailnet so I thought it should have worked. It was in non-`wear` agent profile… want
+to make sure lan/tailnet routing is automatic in all agents."* Reproduced on the SM-L705U by
+selecting a gateway whose only API endpoint is the MagicDNS name:
+
+```
+submit failed (Unable to resolve host "tuxdesktop…ts.net": No address associated with hostname)
+```
+
+**Root cause, measured on the device:** `adb shell ping <tailnet FQDN>` → `ping: unknown host`.
+A `.ts.net` name is resolved by MagicDNS, which only exists on machines that are IN the tailnet,
+and the watch has no tailscaled (§11.4 is unresearched, not shipped). So the phone's tailnet
+membership is irrelevant to the watch: separate network stack, no MagicDNS, no route to the
+100.64.0.0/10 range from an ordinary LAN. A tailnet entry in the endpoint list is therefore a
+**contingency that only pays off when the watch itself gets a tailnet route** — the BT-tethered
+exit-node path (§11.4's last row) or a real tsnet node — and on its home Wi-Fi the watch lives on
+the LAN entries. Nothing agent-related: the failure text and the winning endpoint were byte-identical
+for `comfyui` and `wear`, because failover is bound per gateway (§11.2).
+
+Two real bugs surfaced while reproducing it, both fixed:
+
+- **A network hiccup used to re-aim the watch at the endpoint that can never resolve.** On a mid-session
+  I/O failure `advanceFrom` dethrones the winner, probes the rest once, and — when nothing answered —
+  fell back to `effective()`, i.e. the PRIMARY. With a tailnet primary that pointer is a hostname DNS
+  cannot answer, so the mirror was rewritten to it, the retry died on DNS, and the owner's screen said
+  "…tailb12aa5.ts.net…" for what was just a LAN blip. Now `Failover` remembers `lastKnownGood` (the last
+  endpoint that answered, never cleared) and hands callers `fallbackPointer()`, which returns **null**
+  when nothing is known better than the base already in use — the caller keeps its endpoint and retries
+  (which is what the function always promised in its own doc comment).
+- **The error text was OkHttp's, so it was unactionable and misleading** (`domain/RouteReport.kt`,
+  pure + 9 tests): DNS miss / connect timeout / refused are translated into a wrist-length line that
+  names the fix ("tailnet name won't resolve on the watch — Settings ▸ Gateways ▸ add this Wi-Fi's LAN
+  IP", "no answer from 3 endpoints…"), counts endpoints only from the failover machine's own probe
+  record, and leaves every non-routing failure's own message intact. The gateway and watchkit **Test**
+  buttons and the learn-keys chip ride the same translation, so one truth is told everywhere.
+  `-e del_gw <id>` (delete + re-land the selection) ships with it: the cleanup half of `add_gw`, so a
+  gateway handed to the watch for a demo can be removed without touching the IME.
+
+**Operator consequence:** put at least one address the watch can route to *from wherever it is* first
+in the list. At home that is the LAN IP; away from home, a tailnet entry only helps through a
+tethered phone that holds the tailnet — which is why the app's job here is to say plainly, in one
+line, which route it needs.
 
 
 ## 12. Orb dial, agent keys, session search (owner batch 3, 2026-10-26)
@@ -615,6 +666,27 @@ mutex rather than opening a second capture.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **"Couldn't connect over tailnet" — routing made honest (owner bug, SPEC §11.5).** Reproduced on the
+  SM-L705U by handing it a gateway whose only endpoint is the MagicDNS name: the watch cannot resolve
+  `.ts.net` at all (`adb shell ping` → `ping: unknown host`), because MagicDNS exists only inside the
+  tailnet and Wear OS runs no tailscaled — so *the phone's tailnet membership does nothing for the
+  watch*, exactly the assumption the old error text invited. Two fixes: `Failover.lastKnownGood` +
+  `fallbackPointer()` (when every probe is dead, `advanceFrom` no longer falls back to the PRIMARY —
+  with a tailnet primary that is a hostname DNS can never answer, so an ordinary LAN blip got the
+  mirror rewritten to a doomed host and the retry died on DNS: the sentence the owner read) — it now
+  returns "" and the caller keeps its own base, exactly as its doc comment always promised; and
+  `domain/RouteReport.kt`, a pure translator that turns a DNS miss / timeout / refusal into a
+  wrist-length line naming the fix ("tailnet name won't resolve on the watch — Settings ▸ Gateways ▸
+  add this Wi-Fi's LAN IP"), counting endpoints only from the failover machine's probe record and
+  leaving non-routing errors' own words intact; the gateway + watchkit **Test** buttons and the
+  learn-keys chip now tell the same truth. Not agent-based, verified live rather than argued:
+  `comfyui` and `wear` produced the identical winner and the identical failure text, because failover
+  binds per gateway and the agent only swaps the `/p/<profile>` suffix (now pinned by a test).
+  `-e del_gw <id>` arrives with it (delete + re-land selection) — the cleanup half of `add_gw`.
+  Proof: on-watch before/after shots of the same failure (raw OkHttp text → the actionable line),
+  `endpoint failover found no route` in logcat, asks green on both agents on watch + emulator.
+  13 new pure tests (**311 green**, was 298).
 
 - **The launch film (owner 2026-10-29: *"it's only on the very first load of the app… if the user
   clicks anywhere on the screen it stops playing and loads the rest — we're loading the rest of the

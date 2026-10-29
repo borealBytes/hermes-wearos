@@ -28,7 +28,9 @@ import kotlinx.coroutines.launch
  *  flaky synthetic dial release; waits on the gateway catalog round-trip itself).
  *  -e notify_demo plain|approval|both (post the REAL notification cards on command — the deterministic
  *  door for the demo's "off the wrist" act, see docs/DEMO.md).
- *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>.
+ *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>, -e add_gw "label|api|wk",
+ *  -e del_gw <id> (the cleanup half of add_gw — deletes and re-lands the selection on the
+ *  surviving gateway, so a demo gateway can never be left stranded on the watch).
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
  *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags),
@@ -72,6 +74,7 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
+        intent?.getStringExtra("del_gw")?.let { WearApp.Graph.devGwDelete(it); return }
         // -e add_gw "label|https?://api|https?://watchkit" → upsert a gateway reusing the current
         // token + agent-key map (deterministic multi-gateway demo shots, no GBoard wrestling).
         intent?.getStringExtra("add_gw")?.let { spec ->

@@ -34,6 +34,20 @@ class Failover(
     var winner: String? = null
         private set
 
+    /**
+     * The last endpoint that ever ANSWERED since this machine was bound, winner-or-not, never
+     * cleared by a failure. This is the difference between "the network blinked" and "the watch
+     * pins itself to a hostname it cannot resolve": with every probe dead, [effective] used to
+     * fall back to the PRIMARY — the tailnet entry — which for a watch that is not IN the tailnet
+     * is a name DNS can never answer. So a hiccup on LAN handed [EndpointResolver.advanceFrom] a
+     * doomed endpoint, the mirror was rewritten to it, and the retry was guaranteed to die on
+     * "Unable to resolve host …" — which is exactly how an ordinary network change reached the
+     * owner as *"couldn't connect over tailnet"* (SPEC §11.5). Something that answered once is a
+     * better pointer than a candidate that has never answered at all.
+     */
+    var lastKnownGood: String? = null
+        private set
+
     private var winnerAtMs = 0L
     private var primaryRetryAtMs = 0L
 
@@ -41,8 +55,19 @@ class Failover(
     private val _lastResult = LinkedHashMap<String, Boolean>()
     val lastResult: Map<String, Boolean> get() = _lastResult
 
-    /** What to dial RIGHT NOW: the winner, else the primary (first) endpoint. */
-    fun effective(): String = winner ?: endpoints.firstOrNull().orEmpty()
+    /**
+     * What to dial RIGHT NOW: the winner, else the last endpoint that answered, else the primary.
+     * The middle term is the bug fix — a never-answered primary (a tailnet name the watch cannot
+     * resolve) must not outrank a LAN endpoint that worked 30 seconds ago.
+     */
+    fun effective(): String = winner ?: lastKnownGood ?: endpoints.firstOrNull().orEmpty()
+
+    /**
+     * Pointer for a caller that must NOT be handed a doomed endpoint ([EndpointResolver.advanceFrom]).
+     * NULL means "we know nothing better than the base you are already holding", so the caller keeps
+     * dialing its own endpoint instead of being re-aimed at a candidate that just failed.
+     */
+    fun fallbackPointer(): String? = winner ?: lastKnownGood
 
     fun isWinner(url: String): Boolean = winner != null && normalize(url) == normalize(winner!!)
 
@@ -70,6 +95,7 @@ class Failover(
     fun onSuccess(url: String, now: Long = clock()) {
         winner = url
         winnerAtMs = now
+        lastKnownGood = url
         _lastResult[url] = true
         val primary = endpoints.firstOrNull()
         if (primary != null && normalize(url) == normalize(primary)) primaryRetryAtMs = 0L

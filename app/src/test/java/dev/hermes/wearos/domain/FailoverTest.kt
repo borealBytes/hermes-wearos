@@ -181,4 +181,57 @@ class FailoverTest {
         // Primary-retry order after backoff keeps list order for the rest:
         assertEquals(listOf(tailnet, lan, vps), f.probeOrder(61_000L))
     }
+
+    // ── lastKnownGood / fallbackPointer: SPEC §11.5, the "couldn't connect over tailnet" bug ──
+
+    @Test
+    fun `dethroned winner stays the pointer - a never-answered primary must not outrank it`() {
+        val f = machine(now = { 0L })
+        assertEquals(lan, f.go { url -> url == lan }) // home: tailnet entry is DNS-dead, LAN serves
+        f.reportNetworkFailure(lan, now = 5_000L)    // a plain LAN hiccup dethrones the winner
+        assertNull(f.winner)
+        // advanceFrom must NOT be handed the tailnet name: on a watch outside the tailnet that is a
+        // host DNS can never resolve, so the "recovery" was a guaranteed second failure whose text
+        // the owner read as "tailnet broken" while sitting on Wi-Fi.
+        assertEquals(lan, f.fallbackPointer())
+        assertEquals(lan, f.effective())
+    }
+
+    @Test
+    fun `a machine that has never heard from anyone offers no pointer, only the primary`() {
+        val f = machine(now = { 0L })
+        assertNull("no success yet → nothing trustworthy", f.fallbackPointer())
+        assertEquals(tailnet, f.effective()) // first-contact dial: the owner's chosen default
+        assertNull(f.go { false })
+        assertNull(f.fallbackPointer())
+        assertEquals(tailnet, f.effective()) // still the primary: we never reached anything else
+    }
+
+    @Test
+    fun `total outage after a good run keeps pointing at what answered`() {
+        var now = 0L
+        val f = Failover(endpoints, clock = { now })
+        assertEquals(lan, f.go { url -> url == lan })
+        now = 400_000L
+        f.reportNetworkFailure(lan, now)
+        assertNull(f.go { false })               // VPN flap: every candidate dead
+        assertEquals(lan, f.lastKnownGood)
+        assertEquals(lan, f.fallbackPointer())
+        assertEquals(lan, f.effective())
+    }
+
+    @Test
+    fun `routing is per gateway, not per agent - the same machine serves every profile`() {
+        // The owner's question ("is it a profile-based thing?") answered in code: one Failover is
+        // bound per GATEWAY and its winner is the endpoint, not the /p/<profile> suffix — switching
+        // agents reuses it, so no profile can pick its own route or poison another's.
+        val f = machine(now = { 0L })
+        val baseForComfyui = GatewayModel.apiBase(lan, "comfyui")
+        val baseForWear = GatewayModel.apiBase(lan, "wear")
+        assertEquals(lan, f.go { url -> url == lan })
+        assertEquals("$lan/p/comfyui", baseForComfyui)
+        assertEquals("$lan/p/wear", baseForWear)
+        assertEquals(f.effective(), GatewayModel.normalizeEndpoint(baseForComfyui))
+        assertEquals(f.effective(), GatewayModel.normalizeEndpoint(baseForWear))
+    }
 }

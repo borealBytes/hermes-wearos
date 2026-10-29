@@ -192,15 +192,25 @@ class ChatSession(
     }
 
     /**
-     * Turn a raw failure into something a wrist can act on. The one that mattered (SPEC §12.2):
-     * a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box —
-     * `run submit 401: {"error":{…}}` told the owner nothing, so name the agent and say where to
-     * fix it. Everything else keeps its own message (no lying about real network failures).
+     * Turn a raw failure into something a wrist can act on. Two mistakes this exists for:
+     *  • a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box
+     *    (SPEC §12.2) — `run submit 401: {"error":{…}}` told the owner nothing, so name the agent
+     *    and say where to fix it;
+     *  • a routing failure used to print OkHttp's sentence, naming whichever endpoint happened to
+     *    be first in the list, so a watch off its LAN reported "Unable to resolve host
+     *    <tailnet name>" and the owner reasonably read it as "tailnet is broken" rather than "add
+     *    this Wi-Fi's LAN address" (SPEC §11.5). [RouteReport] owns that translation, and it gets
+     *    the failover machine's own probe record so the "tried N endpoints" count cannot drift.
+     *
+     * Everything else keeps its own message — no lying about real errors.
      */
     private fun explain(e: Throwable): String {
         val code = (e as? ApiException)?.code
         if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
-        return e.message ?: "network error"
+        val tried = runCatching {
+            if (WearApp.Graph.hasEndpoints()) WearApp.Graph.endpoints.status.value.apiResults else emptyMap()
+        }.getOrDefault(emptyMap())
+        return RouteReport.explain(e, tried)
     }
 
     /**

@@ -123,6 +123,13 @@ class EndpointResolver(
      * Mid-session failure hook (SPEC §11 "advance to next endpoint"): a request to [usedBaseUrl]
      * just died with an I/O error. Dethrone it, re-probe the rest ONCE, return the NEW base
      * (with /p/agent) or "" when nothing better exists (caller keeps its old base + retries).
+     *
+     * "Nothing better exists" is decided by [Failover.fallbackPointer], deliberately NOT by
+     * [Failover.effective]: the old code fell back to the PRIMARY endpoint, and when that primary is
+     * a tailnet hostname the watch cannot resolve, a plain LAN hiccup got the mirror rewritten to an
+     * address guaranteed to fail DNS — the retry then surfaced as "Unable to resolve host
+     * …tailb12aa5.ts.net", which is the sentence the owner read as "couldn't connect over tailnet"
+     * while sitting on Wi-Fi (SPEC §11.5). Silence here is honest; a pointer to a dead host is not.
      */
     suspend fun advanceFrom(usedBaseUrl: String): String = mutex.withLock {
         val gw = settings.selectedGateway() ?: return@withLock ""
@@ -131,14 +138,19 @@ class EndpointResolver(
         val f = apiF ?: return@withLock ""
         f.reportNetworkFailure(used)
         val profile = settings.profileSync()
-        val next = f.resolve { ep -> probeApi(ep, profile) } ?: f.effective()
+        val next = f.resolve { ep -> probeApi(ep, profile) } ?: f.fallbackPointer()
         _status.value = _status.value.copy(apiWinner = f.winner ?: gw.primaryApi, apiResults = f.lastResult.toMap())
-        if (next.isNotEmpty() && next != used) {
+        if (!next.isNullOrEmpty() && next != used) {
             Log.i(TAG, "endpoint failover advanced: ${used.substringAfter("://")} -> ${next.substringAfter("://")} (${f.describe()})")
             val wk = wkF?.effective().orEmpty()
             onWinner(gw, next, wk)
             dev.hermes.wearos.domain.GatewayModel.apiBase(next, profile)
-        } else ""
+        } else {
+            // Nothing answered AND nothing better than what the caller already holds: say so, because
+            // this is the state where the chat's next line becomes "no route to gateway".
+            Log.w(TAG, "endpoint failover found no route (used ${used.substringAfter("://").ifEmpty { "?" }}, ${f.lastResult.size} probed)")
+            ""
+        }
     }
 }
 

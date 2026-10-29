@@ -345,6 +345,25 @@ class WearApp : Application() {
             Log.i(TAG, "gw_select ok=$ok id=$id label='$label' err=$err")
         }
 
+        /** Dev-only (adb `-e del_gw <id>`): delete a gateway, then land the selection where the
+         *  registry points next and re-probe it — the deterministic cleanup for multi-gateway demo
+         *  shots (§11) (and the only way to clear a gateway the watch cannot route to without
+         *  wrestling the IME). */
+        fun devGwDelete(id: String) = scope.launch {
+            val remaining = settings.deleteGateway(id)
+            if (remaining != null) {
+                endpoints.rebind(remaining)
+                endpoints.ensure(force = true)
+                settings.syncMirror(endpoints.currentApi(), endpoints.currentWatchkit(), remaining.token)
+                settings.loadProfile()
+                _gatewayLabel.value = remaining.label
+                session.switchAgent(settings.savedAgent()) { ok, base, err ->
+                    Log.i(TAG, "gateway after delete id=${remaining.id} ok=$ok base=$base err=$err")
+                }
+            }
+            Log.i(TAG, "del_gw id=$id -> selected ${remaining?.id ?: "(none)"}")
+        }
+
         /** Dev-only (adb `-e add_gw "label|api|watchkit"`): upsert a gateway carrying the current
          *  token + per-agent keys so a second endpoint is immediately usable (demo shots, §11). */
         fun devAddGateway(spec: String) = scope.launch {
