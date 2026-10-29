@@ -411,7 +411,12 @@ class WearApp : Application() {
         }
 
         fun setWatchkitBase(url: String) {
-            scope.launch { settings.setMermaidBaseUrl(url) }
+            scope.launch {
+                settings.setMermaidBaseUrl(url)
+                // Mirror-only writes left the gateway record's wk list frozen (SPEC §11): a URL
+                // added via dev hook or Settings never became a failover candidate. Fold it in.
+                settings.foldWatchkitIntoSelected(url)
+            }
         }
 
         /** Dev-only (adb `-e set_watchkit`): store watchkit token + push config so renders retry. */

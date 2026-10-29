@@ -96,12 +96,12 @@ class AppSettings(private val context: Context) {
         _profile.value = seg.ifEmpty { ProfileLogic.FALLBACK_AGENT }
         // Gateway fold (SPEC §11): an endpoint already on the selected gateway keeps its
         // position (failover/agent-switch re-set the base constantly); a NEW host prepends.
-        val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
-        val list = GatewayModel.decode(raw)
+        val list = gateways()
         if (list.isNotEmpty()) {
-            val sel = context.dataStore.data.first()[KEY_GW_SELECTED].orEmpty()
-                .ifEmpty { list.first().id }
-            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(GatewayModel.foldBaseUrl(list, sel, t)) }
+            val sel = selectedGatewayId().ifEmpty { list.first().id }
+            val folded = GatewayModel.foldBaseUrl(list, sel, t)
+            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+            gatewaysCache = folded
         }
     }
 
@@ -155,11 +155,12 @@ class AppSettings(private val context: Context) {
 
     suspend fun setToken(v: String) {
         context.dataStore.edit { it[KEY_TOKEN] = v.trim() }
-        val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
-        val list = GatewayModel.decode(raw)
+        val list = gateways()
         if (list.isNotEmpty()) {
-            val sel = context.dataStore.data.first()[KEY_GW_SELECTED].orEmpty().ifEmpty { list.first().id }
-            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(GatewayModel.foldToken(list, sel, v)) }
+            val sel = selectedGatewayId().ifEmpty { list.first().id }
+            val folded = GatewayModel.foldToken(list, sel, v)
+            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+            gatewaysCache = folded
         }
     }
     suspend fun setSessionId(v: String) = context.dataStore.edit { it[KEY_SESSION_ID] = v }.let { }
@@ -353,10 +354,27 @@ class AppSettings(private val context: Context) {
     // or the selection changes — every existing consumer (ChatSession, Watchkit, pusher, UI)
     // keeps reading the legacy keys and needs zero changes.
 
-    suspend fun gateways(): List<Gateway> = GatewayModel.decode(context.dataStore.data.first()[KEY_GATEWAYS].orEmpty())
+    /**
+     * The registry. A non-blank `gateways_json` that fails to parse must NEVER read as empty:
+     * every mutator (upsert/delete/fold) rewrites the WHOLE key from what it read, so a transient
+     * decode blip returning empty would silently prune every sibling gateway (owner 2026-10-29:
+     * "the other gateway totally disappeared when I clicked this one"). The last good decode is
+     * the tiebreaker; genuine first-run (blank raw) still reads empty so migration can run.
+     */
+    @Volatile private var gatewaysCache: List<Gateway> = emptyList()
 
-    suspend fun saveGateways(list: List<Gateway>) =
-        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(list) }.let { }
+    suspend fun gateways(): List<Gateway> {
+        val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
+        val list = GatewayModel.decode(raw)
+        if (list.isNotEmpty()) { gatewaysCache = list; return list }
+        if (raw.isNotBlank() && gatewaysCache.isNotEmpty()) return gatewaysCache
+        return list
+    }
+
+    suspend fun saveGateways(list: List<Gateway>) {
+        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(list) }
+        gatewaysCache = list
+    }
 
     suspend fun selectedGatewayId(): String = context.dataStore.data.first().let {
         (it[KEY_GW_SELECTED].orEmpty()).ifEmpty { GatewayModel.decode(it[KEY_GATEWAYS].orEmpty()).firstOrNull()?.id ?: "" }
@@ -373,11 +391,17 @@ class AppSettings(private val context: Context) {
     /**
      * First-run/upgrade hook: seed or migrate the registry from legacy keys ONCE. Legacy keys
      * stay untouched (still the live mirror); returns the selected gateway.
+     *
+     * Migration fires ONLY on a BLANK registry. A non-blank-but-undecodable blob means the
+     * registry EXISTS and is hurt — writing a fresh single-gateway list over it is exactly how
+     * the owner lost the multi-path gateway; hold the last good decode (or nothing) instead.
      */
     suspend fun ensureGateways(): Gateway? {
         val prefs = context.dataStore.data.first()
-        val existing = GatewayModel.decode(prefs[KEY_GATEWAYS].orEmpty())
+        val raw = prefs[KEY_GATEWAYS].orEmpty()
+        val existing = GatewayModel.decode(raw)
         if (existing.isNotEmpty()) return existing.firstOrNull { it.id == (prefs[KEY_GW_SELECTED].orEmpty()) } ?: existing.first()
+        if (raw.isNotBlank()) return gatewaysCache.firstOrNull()
         val (list, selected) = GatewayModel.migrate(
             prefs[KEY_BASE_URL] ?: "", prefs[KEY_TOKEN] ?: "", prefs[KEY_WATCHKIT_URL] ?: "",
         )
@@ -385,6 +409,7 @@ class AppSettings(private val context: Context) {
             it[KEY_GATEWAYS] = GatewayModel.encode(list)
             it[KEY_GW_SELECTED] = selected
         }
+        gatewaysCache = list
         return list.firstOrNull { it.id == selected }
     }
 
@@ -395,6 +420,7 @@ class AppSettings(private val context: Context) {
             it[KEY_GATEWAYS] = GatewayModel.encode(list)
             if (select) it[KEY_GW_SELECTED] = gw.id
         }
+        gatewaysCache = list
         return list
     }
 
@@ -407,7 +433,18 @@ class AppSettings(private val context: Context) {
             it[KEY_GATEWAYS] = GatewayModel.encode(next)
             it[KEY_GW_SELECTED] = selected
         }
+        gatewaysCache = next
         return next.firstOrNull { it.id == selected }
+    }
+
+    /** Fold a watchkit-URL edit into the selected gateway's wk list (SPEC §11, foldBaseUrl twin). */
+    suspend fun foldWatchkitIntoSelected(url: String) {
+        val list = gateways()
+        if (list.isEmpty()) return
+        val folded = GatewayModel.foldWatchkit(list, selectedGatewayId(), url)
+        if (folded === list) return
+        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+        gatewaysCache = folded
     }
 
     /**

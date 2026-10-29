@@ -234,10 +234,11 @@ fun SettingsScreen(
                 draft = draft,
                 onChange = { gwEditor = it },
                 onSave = { d ->
-                    val api = listOf(d.apiA, d.apiB).map { it.trim() }.filter { it.isNotEmpty() }
+                    val api = (listOf(d.apiA, d.apiB) + d.extraApis).map { it.trim() }
+                        .filter { it.isNotEmpty() }.distinct()
                     if (api.isEmpty()) { gwNote = "⚠️ needs an API URL"; return@GatewayEditor }
-                    val wk = listOf(d.wkA.ifBlank { GatewayModel.derivedWatchkit(api.first()) })
-                        .map { it.trim() }.filter { it.isNotEmpty() }
+                    val wk = (listOf(d.wkA.ifBlank { GatewayModel.derivedWatchkit(api.first()) }) + d.extraWks)
+                        .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
                     val gwId = d.id.ifEmpty { GatewayModel.hostId(api.first()) }
                     val gw = Gateway(
                         id = gwId,
@@ -771,6 +772,11 @@ private fun GatewayEditor(
         FieldLabel("API backup (optional)")
         EditLine(value = draft.apiB, onChange = { onChange(draft.copy(apiB = it)) },
             placeholder = "http://192.168.1.50:8642", onDone = { onSave(draft) })
+        if (draft.extraApis.isNotEmpty() || draft.extraWks.isNotEmpty()) {
+            // Reassurance the hidden endpoints ride along (they used to be silently dropped).
+            Text("+${draft.extraApis.size} api / +${draft.extraWks.size} wk kept",
+                style = MaterialTheme.typography.caption3, color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f))
+        }
         FieldLabel("Watchkit URL (optional)")
         EditLine(value = draft.wkA, onChange = { onChange(draft.copy(wkA = it)) },
             placeholder = "http://host:8651", onDone = { onSave(draft) })
@@ -798,7 +804,12 @@ private data class GwDraft(
     val label: String = "",
     val apiA: String = "",
     val apiB: String = "",
+    // The editor shows two API rows, but a record can hold more (tailnet + LANs + …). The rows
+    // beyond the visible ones ride along HIDDEN and merge back on save — before this, saving an
+    // edit SILENTLY DROPPED every 3rd+ endpoint (owner's 3-green-dot gateway shrank under an edit).
+    val extraApis: List<String> = emptyList(),
     val wkA: String = "",
+    val extraWks: List<String> = emptyList(),
     val token: String = "",
 ) {
     companion object {
@@ -807,7 +818,9 @@ private data class GwDraft(
             label = gw.label,
             apiA = gw.apiEndpoints.getOrElse(0) { "" },
             apiB = gw.apiEndpoints.getOrElse(1) { "" },
+            extraApis = gw.apiEndpoints.drop(2),
             wkA = gw.watchkitEndpoints.getOrElse(0) { "" },
+            extraWks = gw.watchkitEndpoints.drop(1),
             token = gw.token,
         )
     }

@@ -212,6 +212,18 @@ defaults migrate to the tailnet-first order. Settings edits fold into the regist
 endpoint keeps its position (agent switches re-set base_url constantly and must never reorder),
 an unknown host prepends. Token = the gateway's `API_SERVER_KEY`; the watchkit bearer stays a
 separate global setting.
+- **Registry can never lose a gateway (owner 2026-10-29: *"I clicked the tux-LAN one and the other
+  one totally disappeared"*):** every mutator (upsert/delete/folds) rewrites the whole `gateways_json`
+  from what it read, so three silent-prune paths got closed: **(a)** `AppSettings.gateways()` keeps the
+  last good decode and returns it when a NON-blank blob fails to parse (a parse blip reading as empty
+  was the one way a later save could overwrite N gateways with 1), and `ensureGateways()` migrates
+  ONLY on a blank blob — a present-but-hurt registry is never overwritten; **(b)** the gateway EDITOR
+  carries endpoints beyond its two visible API rows hidden in `GwDraft.extraApis/extraWks` and merges
+  them on save — before this, saving an edit on a 3-path gateway silently dropped the 3rd path (the
+  editor shows a small `+N api / +N wk kept` line so the carry is visible); **(c)** `watchkit_url`
+  edits (dev hook or Settings) now fold into the selected gateway's wk list exactly like `base_url`
+  folds into the api list (`GatewayModel.foldWatchkit`) — before, they hit only the mirror, so a wk
+  fallback could never be added without re-adding the whole gateway.
 
 ### 11.2 Endpoint failover (`domain/Failover.kt` + `net/EndpointResolver.kt`)
 
