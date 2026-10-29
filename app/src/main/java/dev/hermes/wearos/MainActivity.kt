@@ -156,6 +156,8 @@ class MainActivity : ComponentActivity() {
                 val voiceOut by speak.enabled.collectAsState()
                 // The orb's STOP face while the answer is being READ ALOUD (owner 2026-10-29).
                 val speakingNow by speak.speaking.collectAsState()
+                // Where the spoken sentence sits in the live stream — karaoke follow (SPEC §12.9).
+                val speakingOffsetNow by speak.speakingOffset.collectAsState()
                 // Mute-lane double slider anchor + picker mirror (owner 2026-10-29).
                 val replyVol by settings.ttsVolume.collectAsState()
                 val markdownOn by settings.markdownEnabled.collectAsState()
@@ -584,6 +586,7 @@ class MainActivity : ComponentActivity() {
                             },
                             listening = listening.value || devPtt != null,
                             speaking = speakingNow,
+                            speakingOffset = speakingOffsetNow,
                             pttPartial = partial.value.ifBlank { devPtt ?: "" },
                             pttHistory = if (devPtt != null) emptyList() else sttHistory.toList(),
                             handsFree = handsFree.value,
@@ -1040,6 +1043,8 @@ private fun ChatBody(
     listening: Boolean,
     /** TTS queue live → the STOP face + hold-pops-dial state machine (owner 2026-10-29). */
     speaking: Boolean = false,
+    /** Char offset into `state.live` of the sentence being READ ALOUD (karaoke follow, null = silent). */
+    speakingOffset: Int? = null,
     pttPartial: String,
     pttHistory: List<String>,
     handsFree: Boolean,
@@ -1099,6 +1104,26 @@ private fun ChatBody(
     // Transcript/overlay clearance = the cluster's top edge; pre-measure first frame keeps the
     // old 74–78 dp bar clearance.
     val barPadDp = if (hasViewport) with(density) { clusterPadPx.toDp() } else 78.dp
+    // KARAOKE FOLLOW (owner 2026-10-29: *"while it's speaking the line that is being spoken is
+    // in the middle of the screen. That way you can follow along"*): while the answer is being
+    // READ ALOUD and tail-follow is engaged, the spoken sentence is anchored ~⅓ down. The
+    // char→pixel ratio SELF-CALIBRATES from the live item's measured height (no font math, no
+    // assumption about markdown sizes); scrolling away disengages exactly like the tail-pin
+    // (same chatFollow escape hatch — no yanking); a line already comfortably on screen is
+    // never nudged; and the tap-to-mute orb simply stops the feed, freeing the scroll.
+    LaunchedEffect(speakingOffset) {
+        val off = speakingOffset ?: return@LaunchedEffect
+        if (!speaking || !chatFollow.value || vpH <= 0f) return@LaunchedEffect
+        val liveLen = state.live.length
+        if (liveLen <= 0 || off < 0) return@LaunchedEffect
+        val tailIdx = 2 + state.messages.size + (if (state.approval != null) 1 else 0)
+        val item = chatListState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.index == tailIdx } ?: return@LaunchedEffect
+        val yOfSpoken = off.toFloat() / liveLen * item.size
+        val onScreen = item.offset + yOfSpoken
+        if (onScreen in vpH * 0.22f..vpH * 0.72f) return@LaunchedEffect
+        chatListState.animateScrollToItem(tailIdx, (yOfSpoken - vpH * 0.34f).roundToInt().coerceAtLeast(0))
+    }
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewport = it }) {
         if (listening) {
             PttOverlay(

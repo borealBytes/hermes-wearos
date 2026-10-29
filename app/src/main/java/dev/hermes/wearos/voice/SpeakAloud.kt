@@ -194,6 +194,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
             utterances.clear()
             pending.set(0)
             _speaking.value = false
+            _speakingOffset.value = null
             restoreVolume()
             init()
         }
@@ -241,15 +242,27 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private val spokenPrefix = StringBuilder()
     private var scanFrom = 0
 
-    /** utteranceId → (text, chain-step) so an engine error can retry the SAME sentence next. */
-    private val utterances = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Int>>()
+    /** utteranceId → (text, chain-step, stream-offset) so an engine error can retry the SAME
+     *  sentence next, and the CHAT can center the line being spoken (karaoke follow, 2026-10-29).
+     *  offset < 0 = standalone speech (notices/previews) — nothing to follow. */
+    private data class Utt(val text: String, val step: Int, val offset: Int)
+    private val utterances = java.util.concurrent.ConcurrentHashMap<String, Utt>()
+
+    /** Char offset into the ACTIVE chat's live stream of the sentence currently being spoken —
+     *  the chat screen anchors it ~⅓ down while voice is on (null = not speaking standalone/none). */
+    private val _speakingOffset = MutableStateFlow<Int?>(null)
+    val speakingOffset: StateFlow<Int?> = _speakingOffset
 
     /** Preferred → fallback (blank-safe, deduped) — domain/VoiceCatalog owns the rule. */
     private fun voiceChain(): List<String> =
         dev.hermes.wearos.domain.VoiceCatalog.chain(voiceName, fallbackName)
 
     private val progress = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String?) {}
+        override fun onStart(utteranceId: String?) {
+            // Karaoke: the moment a sentence LEAVES the queue, tell the chat where it is.
+            val rec = utteranceId?.let { utterances[it] }
+            if (rec != null && rec.offset >= 0) _speakingOffset.value = rec.offset
+        }
         override fun onDone(utteranceId: String?) { utterances.remove(utteranceId); utteranceSettled() }
         @Deprecated("kept for API 30") override fun onError(utteranceId: String?) = fail(utteranceId)
         override fun onError(utteranceId: String?, errorCode: Int) = fail(utteranceId)
@@ -266,11 +279,10 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         val t = tts
         var retried = false
         if (rec != null && t != null) {
-            val (text, step) = rec
             val chain = voiceChain()
-            if (step + 1 < chain.size) {
-                Log.i(TAG, "tts voice '${chain[step]}' errored → retry on '${chain[step + 1]}'")
-                speakOne(text, queueAdd = true, step = step + 1)
+            if (rec.step + 1 < chain.size) {
+                Log.i(TAG, "tts voice '${chain[rec.step]}' errored → retry on '${chain[rec.step + 1]}'")
+                speakOne(rec.text, queueAdd = true, step = rec.step + 1, offset = rec.offset)
                 retried = true
             }
         }
@@ -321,7 +333,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         var i = scanFrom
         while (i < textSoFar.length) {
             if (textSoFar[i] in SENTENCE_ENDS && i + 1 - segStart >= MIN_CHUNK) {
-                speak(textSoFar.substring(segStart, i + 1), queueAdd = true)
+                speak(textSoFar.substring(segStart, i + 1), queueAdd = true, offset = segStart)
                 consumeTo(textSoFar, i + 1)
                 segStart = scanFrom
             }
@@ -343,11 +355,11 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         val prefix = spokenPrefix.toString()
         if (fullText.startsWith(prefix)) {
             val rest = fullText.drop(prefix.length).trim()
-            if (rest.isNotEmpty()) speak(rest, queueAdd = prefix.isNotEmpty())
+            if (rest.isNotEmpty()) speak(rest, queueAdd = prefix.isNotEmpty(), offset = prefix.length)
         } else {
             // Terminal output diverged from the stream (rare): stop and read the settled answer.
             stop()
-            speak(fullText, queueAdd = false)
+            speak(fullText, queueAdd = false, offset = 0)
         }
         resetTracking()
     }
@@ -356,13 +368,14 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     fun speakFinal(text: String) {
         if (!_enabled.value || _state.value != State.Ready) return
         stop()
-        speak(text, queueAdd = false)
+        speak(text, queueAdd = false, offset = -1)
     }
 
     fun stop() {
         resetTracking()
         utterances.clear()
         _speaking.value = false
+        _speakingOffset.value = null
         try { tts?.stop() } catch (e: Exception) { /* engine gone */ }
         pending.set(0)
         restoreVolume()
@@ -373,13 +386,14 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         tts = null
         utterances.clear()
         _speaking.value = false
+        _speakingOffset.value = null
         restoreVolume()
     }
 
-    private fun speak(text: String, queueAdd: Boolean) = speakOne(text, queueAdd, step = 0)
+    private fun speak(text: String, queueAdd: Boolean, offset: Int) = speakOne(text, queueAdd, step = 0, offset = offset)
 
-    /** Speak one utterance at [step] of the voice chain; registers it for fallback retry. */
-    private fun speakOne(text: String, queueAdd: Boolean, step: Int) {
+    /** Speak one utterance at [step] of the voice chain; registers it for fallback retry + karaoke follow. */
+    private fun speakOne(text: String, queueAdd: Boolean, step: Int, offset: Int = -1) {
         val t = tts ?: return
         if (_state.value != State.Ready) return
         boostVolume()
@@ -396,7 +410,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
         } else null
         val id = "hermes-${++utterSeq}"
-        utterances[id] = text to step
+        utterances[id] = Utt(text, step, offset)
         t.speak(text, mode, params, id)
     }
 
@@ -404,6 +418,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         if (pending.decrementAndGet() <= 0) {
             pending.set(0)
             _speaking.value = false
+            _speakingOffset.value = null
             restoreVolume()
             // Chain drained: put the engine's global voice back on the preferred one.
             val t = tts
