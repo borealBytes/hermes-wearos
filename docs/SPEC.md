@@ -762,6 +762,28 @@ thing instead of just above the orb".
   math); a line already in the 22–72 % band is never nudged; scrolling away disengages exactly like
   the tail-pin (same `ChatFollow` escape hatch — no yanking); mute stops the feed and frees the
   scroll. `offset < 0` marks standalone speech (previews/notices) — nothing to follow.
+  **Day-two fixes (owner watch-proof: *"when you're counting and stuff for the audio test I am not
+  seeing the line that you're saying be at the center of the screen"*).** Three compounding bugs,
+  all now pinned:
+  1. **One utterance ≠ one line.** Replies without `.!?\n` inside (number lists, tables) ride the
+     TTS queue as ONE utterance, so `onStart` alone pinned line 1 for a minute. `domain/
+     KaraokeCursor` adds the IN-UTTERANCE cursor: a 180 ms ticker estimates the playhead by
+     chars-elapsed × chars/sec, and the speed model SELF-CALIBRATES — every finished utterance
+     feeds an EMA of the voice's real seconds-per-char, so rate settings and slow voices converge
+     in one sentence (JVM-tested; `onProgress` is absent from the compileSdk's listener, and
+     engine bookend 0-values would re-create the pin anyway).
+  2. **The voice outlives the stream.** Reading mostly happens AFTER settle, and the live item
+     vanishes into the transcript then — the first version read that as "nothing to follow". The
+     effect now follows the SETTLED last-Hermes row (same char offsets; the settled text IS the
+     live text), index `2+size-1` regardless of a trailing approval card.
+  3. **Karaoke disengaged itself.** The `ChatFollow` edge detector reads any RISE-then-fall of
+     `isScrollInProgress` as the user grabbing the list — and wear-compose raises it for OUR
+     scrolls too (animated AND instant `scrollToItem`, measured). The first nudge flipped
+     tail-follow off and froze the view (which is exactly the static-window frames the owner saw).
+     Karaoke now STAMPS its own jumps (`programmaticScrollAt`) and the detector ignores edges
+     settling within 400 ms of a stamp. Watch-proof (SM-L705U, 45-number list, owner's 1.60×):
+     the visible window marches with the voice — 13–33 → 21–41 → 29–45, spoken line inside the
+     band the whole way, view settling to the tail when speech ends.
 - **Bottom-anchor (`ChatScreen` spacer item 0 + `ChatAnchor` baseline rows=2)**: measured on-device,
   the ROOT CAUSE was wear-compose: its list "end" parks the LAST item at the MIDDLE anchor, so a
   transcript SHORTER than the circle sits pinned at the top (and the tail-pin rocket
@@ -963,7 +985,14 @@ mutex rather than opening a second capture.
   film decorates a warming app, it never gates composition), any touch cuts it and the touch is
   consumed so the transcript never sees that same finger, and the exit fade is the hand-off. The
   poster (`splash_spirit.webp`, already shipped) doubles as a curtain from the first frame so no
-  launch leaks a frame of chat between the system splash and the film.
+  launch leaks a frame of chat between the system splash and the film. **Night audit on the owner's
+  watch (2026-10-29):** both modes proven by real launcher cold starts — `intro gate: mode=video`
+  (blue film renders; a 5.49 s first frame was measured mid-test) and `intro gate: mode=static`
+  (portrait holds `STATIC_HOLD_MS` then lifts into the chat). The owner's *"it showed the static
+  instead of the video"* was the POSTER reading as a static splash during the slow decode — and on
+  launches where the first frame passed the 8 s budget the film really WAS dropped — so
+  `FIRST_FRAME_BUDGET_MS` is now 12 s: the wait is invisible (the poster is the same face the
+  system splash shows) while a premature cut silently kills the launch story.
   **Three bugs only hardware taught** (each with the fix in `ui/IntroVideo.kt`): `res/raw` + media3
   throws `RawResourceDataSourceException: Resource not found` ~3 s in, when the mp4 reader reopens
   the URI at a byte offset ⇒ **asset URI, stored uncompressed**; media3 renders **no frame** until

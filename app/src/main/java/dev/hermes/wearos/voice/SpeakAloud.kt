@@ -5,12 +5,15 @@ import android.media.AudioManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import android.os.SystemClock
 import android.util.Log
 import dev.hermes.wearos.data.AppSettings
+import dev.hermes.wearos.domain.KaraokeCursor
 import dev.hermes.wearos.domain.TtsConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
@@ -264,13 +267,56 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
 
     private val progress = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {
-            // Karaoke: the moment a sentence LEAVES the queue, tell the chat where it is.
-            val rec = utteranceId?.let { utterances[it] }
-            if (rec != null && rec.offset >= 0) _speakingOffset.value = rec.offset
+            // Karaoke: the moment a sentence LEAVES the queue, tell the chat where it is — and
+            // start the IN-UTTERANCE cursor (owner day-two fix: un-punctuated replies like
+            // numbered lists ride as ONE utterance, so onStart alone pins line 1 for a minute).
+            val rec = utteranceId?.let { utterances[it] } ?: return
+            if (rec.offset < 0) return
+            _speakingOffset.value = rec.offset
+            startCursor(utteranceId!!, rec)
         }
-        override fun onDone(utteranceId: String?) { utterances.remove(utteranceId); utteranceSettled() }
+        // (No onProgress override: absent from the compileSdk's UtteranceProgressListener, and
+        //  the calibrated ticker below is engine-independent anyway.)
+        override fun onDone(utteranceId: String?) {
+            // Self-calibration: this utterance just told us the voice's REAL seconds-per-char —
+            // the next estimate rides that (rate setting, voice, and pauses all converge in).
+            val started = utteranceId?.let { uttStartMs.remove(it) }
+            val rec = utteranceId?.let { utterances[it] }
+            if (started != null && rec != null) {
+                measuredCps = KaraokeCursor.calibrate(measuredCps, rec.text.length, SystemClock.elapsedRealtime() - started)
+            }
+            stopCursor()
+            utterances.remove(utteranceId); utteranceSettled()
+        }
         @Deprecated("kept for API 30") override fun onError(utteranceId: String?) = fail(utteranceId)
         override fun onError(utteranceId: String?, errorCode: Int) = fail(utteranceId)
+    }
+
+    // ── KARAOKE CURSOR plumbing (domain/KaraokeCursor has the rules + the why) ────────────────
+    private var cursorJob: kotlinx.coroutines.Job? = null
+    private val uttStartMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var measuredCps: Float? = null
+
+    private fun startCursor(id: String, rec: Utt) {
+        stopCursor()
+        uttStartMs[id] = SystemClock.elapsedRealtime()
+        cursorJob = scope.launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(KaraokeCursor.TICK_MS)
+                val started = uttStartMs[id] ?: break
+                val est = KaraokeCursor.estimateOffset(
+                    rec.text.length,
+                    SystemClock.elapsedRealtime() - started,
+                    measuredCps ?: KaraokeCursor.SEED_CHARS_PER_SEC,
+                )
+                _speakingOffset.value = rec.offset + est
+            }
+        }
+    }
+
+    private fun stopCursor() {
+        cursorJob?.cancel()
+        cursorJob = null
     }
 
     /**
@@ -378,6 +424,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
 
     fun stop() {
         resetTracking()
+        stopCursor()
         utterances.clear()
         _speaking.value = false
         _speakingOffset.value = null
@@ -389,6 +436,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     fun shutdown() {
         try { tts?.stop(); tts?.shutdown() } catch (e: Exception) { }
         tts = null
+        stopCursor()
         utterances.clear()
         _speaking.value = false
         _speakingOffset.value = null

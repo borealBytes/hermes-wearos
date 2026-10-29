@@ -75,6 +75,14 @@ fun ChatScreen(
     // reset to following the moment the owner's answer arrives, which is precisely when his
     // scroll position matters most.
     follow: MutableState<Boolean> = remember { mutableStateOf(true) },
+    // KARAOKE's "WE MOVED IT" STAMP (owner 2026-10-29 night): the follow-disengage edge detector
+    // below reads any RISE-then-fall of isScrollInProgress as the user's gesture — but wear-
+    // compose raises that flag for programmatic scrollToItem too (measured: an animated karaoke
+    // nudge AND an instant one each froze tail-follow on its first jump). The karaoke effect
+    // stamps this timestamp right before its own jump; edges settling within the grace window are
+    // ours, not the wrist's. User flings last well past 400 ms, so the guard never eats a real
+    // scroll-away except one landing inside that window — and landing at the end re-engages anyway.
+    programmaticScrollAt: MutableState<Long> = remember { mutableStateOf(0L) },
     // PULL-UP-AT-THE-END (owner: *"scroll to the bottom and keep dragging up → refresh that
     // session from the gateway"*). The auto-sync does the everyday work; this is the manual door.
     onPullUpAtBottom: () -> Unit = {},
@@ -196,7 +204,10 @@ fun ChatScreen(
         var scrolling = false
         snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
             .collect { (now, ahead) ->
-                if (scrolling && !now) follow.value = ChatFollow.afterUserScroll(ahead)
+                if (scrolling && !now) {
+                    val ours = android.os.SystemClock.elapsedRealtime() - programmaticScrollAt.value < 400L
+                    if (!ours) follow.value = ChatFollow.afterUserScroll(ahead)
+                }
                 scrolling = now
             }
     }

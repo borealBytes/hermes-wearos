@@ -88,6 +88,7 @@ import dev.hermes.wearos.ui.VoiceHost
 import dev.hermes.wearos.ui.md.ZoomableMediaViewer
 import dev.hermes.wearos.domain.BackRing
 import dev.hermes.wearos.domain.BottomLayout
+import dev.hermes.wearos.domain.ChatMessage
 import dev.hermes.wearos.domain.DialSpin
 import dev.hermes.wearos.domain.DialVolume
 import dev.hermes.wearos.domain.FontScale
@@ -1094,6 +1095,8 @@ private fun ChatBody(
     // like chatListState — reading scroll-back, pressing the orb, and cancelling must NOT snap
     // the view to the bottom; a new ask re-engages on its own.
     val chatFollow = remember { mutableStateOf(true) }
+    // Karaoke's "we moved it" stamp (guard rationale in ChatScreen's parameter docs).
+    val chatScrollStamp = remember { mutableStateOf(0L) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     val vpW = viewport.width.toFloat()
@@ -1111,18 +1114,40 @@ private fun ChatBody(
     // assumption about markdown sizes); scrolling away disengages exactly like the tail-pin
     // (same chatFollow escape hatch — no yanking); a line already comfortably on screen is
     // never nudged; and the tap-to-mute orb simply stops the feed, freeing the scroll.
-    LaunchedEffect(speakingOffset) {
+    // SETTLED FOLLOW (owner 2026-10-29 night: *"when you're counting and stuff for the audio
+    // test I am not seeing the line that you're saying be at the center"*): the voice lags the
+    // stream, so most reading happens AFTER the answer settles — and the live item then vanishes
+    // into the transcript, which the first version read as "nothing to follow". It now follows
+    // the settled last-Hermes row too (same char offsets — the settled text IS the live text),
+    // and the ticker in SpeakAloud walks the cursor THROUGH un-punctuated replies (number lists
+    // ride the TTS queue as one utterance; onStart alone would pin line 1 for a minute).
+    LaunchedEffect(speakingOffset, state.messages.size, state.live.length) {
         val off = speakingOffset ?: return@LaunchedEffect
         if (!speaking || !chatFollow.value || vpH <= 0f) return@LaunchedEffect
+        if (off < 0) return@LaunchedEffect
         val liveLen = state.live.length
-        if (liveLen <= 0 || off < 0) return@LaunchedEffect
+        val settling = liveLen <= 0
+        val lastMsg = state.messages.lastOrNull()
+        if (settling && (lastMsg == null || lastMsg.role != ChatMessage.Role.Hermes)) return@LaunchedEffect
+        val textLen = if (settling) lastMsg!!.text.length else liveLen
+        if (textLen <= 0) return@LaunchedEffect
         val tailIdx = 2 + state.messages.size + (if (state.approval != null) 1 else 0)
+        // Last row of the transcript sits at 2+size-1 regardless of a trailing approval card.
+        val wantIdx = if (settling) 1 + state.messages.size else tailIdx
         val item = chatListState.layoutInfo.visibleItemsInfo
-            .firstOrNull { it.index == tailIdx } ?: return@LaunchedEffect
-        val yOfSpoken = off.toFloat() / liveLen * item.size
+            .firstOrNull { it.index == wantIdx } ?: return@LaunchedEffect
+        val yOfSpoken = off.toFloat() / textLen * item.size
         val onScreen = item.offset + yOfSpoken
         if (onScreen in vpH * 0.22f..vpH * 0.72f) return@LaunchedEffect
-        chatListState.animateScrollToItem(tailIdx, (yOfSpoken - vpH * 0.34f).roundToInt().coerceAtLeast(0))
+        // INSTANT, not animateScrollToItem: the follow-disengage detector reads a RISE of
+        // isScrollInProgress as the user grabbing the list, and wear-compose raises it for
+        // ANIMATED scrolls too — an animated karaoke nudge disengaged tail-follow on its first
+        // jump and froze the view (owner: "I am not seeing the line that you're saying be at the
+        // center"). Even instant jumps raise it on this wear-compose, so we also STAMP the jump:
+        // edges settling within the guard window are ours (ChatScreen skips them). The 180 ms
+        // ticker + the 22–72 % no-nudge band keep the jumps rare and small.
+        chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
+        chatListState.scrollToItem(wantIdx, (yOfSpoken - vpH * 0.34f).roundToInt().coerceAtLeast(0))
     }
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewport = it }) {
         if (listening) {
@@ -1217,6 +1242,7 @@ private fun ChatBody(
                     onEditPrompt = onEditPrompt,
                     listState = chatListState,
                     follow = chatFollow,
+                    programmaticScrollAt = chatScrollStamp,
                     contentPadBottomDp = if (hasViewport) barPadDp else null,
                     onPullUpAtBottom = onPullUpAtBottom,
                 )

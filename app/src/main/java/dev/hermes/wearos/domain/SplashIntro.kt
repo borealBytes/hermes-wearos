@@ -93,9 +93,14 @@ object SplashIntro {
      * A later session on the same watch added **2.87 / 2.96 / 2.99 / 3.04 s** in a clean run series
      * and **5.93 s** on a cold start whose audio focus arrived late — media3 gates rendering on
      * focus, so a slow-focus launch pushes the frame out with it, and the 6 s ceiling came within
-     * 71 ms of eating a film that played fine. That is why the ceiling is 8 s.
+     * 71 ms of eating a film that played fine. That is why the ceiling is 8 s. And it was STILL
+     * eating films: the owner launched the app, watched the poster sit there, and reported *"it
+     * showed the static instead of the video"* — a same-session cold start logged a **5.49 s**
+     * first frame that WOULD have played. The waiting is invisible (the poster is the same face
+     * the system splash shows) while a premature cut silently kills the launch story, so the
+     * ceiling is 12 s and the only thing it can cost is patience on a bad boot.
      */
-    const val FIRST_FRAME_BUDGET_MS = 8_000L
+    const val FIRST_FRAME_BUDGET_MS = 12_000L
 
     /**
      * How long a STATIC splash holds before lifting on its own (tap cuts it sooner). Sized to sit
