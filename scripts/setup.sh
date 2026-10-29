@@ -210,10 +210,21 @@ if [ "$NO_DEVICE" = 0 ]; then
   # every profiles/<p>/.env and push the whole map — otherwise "switch agent" 401s on every agent
   # that lacks a key (and /v1/health, being unauthenticated, never warns you).
   if [ "${AGENT_KEYS:-0}" = "1" ]; then
+    # One-login convention (docs above): on the OWNER's box every profile shares the default
+    # profile's API_SERVER_KEY from ~/.hermes/.env. Agents created AFTER first setup miss that
+    # copy — the gateway then 401s them closed while unauthenticated /health still answers 200,
+    # and "learn from watchkit" correctly reports no key (owner 2026-10-29). So: seed the missing
+    # line (the gateway re-reads .env live — verified 2026-10-29), then push the whole map.
+    HOME_KEY="$(grep '^API_SERVER_KEY=' "$HOME/.hermes/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)"
     for envf in "$HOME"/.hermes/profiles/*/.env; do
       [ -f "$envf" ] || continue
       prof="$(basename "$(dirname "$envf")")"
       akey="$(grep '^API_SERVER_KEY=' "$envf" 2>/dev/null | cut -d= -f2- | tr -d '\"'"'"'"' || true)"
+      if [ -z "$akey" ] && [ -n "$HOME_KEY" ]; then
+        printf '%s\n' "API_SERVER_KEY=$HOME_KEY" >> "$envf"
+        akey="$HOME_KEY"
+        echo "  agent key: $prof (seeded from ~/.hermes/.env)"
+      fi
       [ -n "$akey" ] || continue
       echo "  agent key: $prof"
       broadcast set_agent_key "${prof}=${akey}"
