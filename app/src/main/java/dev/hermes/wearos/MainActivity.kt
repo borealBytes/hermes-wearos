@@ -46,6 +46,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -409,6 +410,19 @@ class MainActivity : ComponentActivity() {
                 val activeChat by session.activeChat.collectAsState()
                 LaunchedEffect(screen, activeChat) {
                     WearApp.Graph.viewingChatId = if (screen == Screen.Chat) activeChat else ""
+                }
+                // PAUSE clears the published view (WearApp gate); coming BACK must re-publish it
+                // or wrist-up-over-the-same-chat would notify when it shouldn't.
+                val screenNow = rememberUpdatedState(screen)
+                val activeChatNow = rememberUpdatedState(activeChat)
+                val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+                        if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME) WearApp.Graph.viewingChatId =
+                            if (screenNow.value == Screen.Chat) activeChatNow.value else ""
+                    }
+                    lifecycleOwner.lifecycle.addObserver(obs)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
                 }
 
                 val voiceStatus = when {

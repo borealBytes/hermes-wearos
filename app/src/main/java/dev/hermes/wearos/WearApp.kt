@@ -198,6 +198,16 @@ class WearApp : Application() {
         @Volatile var viewingChatId: String = ""
         private var resumedActivities = 0
 
+        /** PAUSE-CLEANED (owner 2026-10-29 night: *"wait thirty seconds, then send a haiku and
+         *  immediately went to the watchface while it was thinking. i did not get a notification"*
+         *  — the run settled while the wrist was away and the gate suppressed it): PAUSE, not
+         *  STOP, is the moment the chat stops being visible on a watch. A dropped wrist / screen
+         *  off pauses the activity but may not stop it for minutes (Samsung ambient), and HOME can
+         *  keep the task resumed under the launcher. So the instant anything pauses, the chat is
+         *  no longer watched; onActivityResumed puts it back (any surface re-publishes its own
+         *  value via MainActivity's effect the moment it's composed). */
+        private fun clearViewing() { viewingChatId = "" }
+
         fun init(app: Application) {
             if (!::settings.isInitialized) {
                 this.app = app
@@ -211,11 +221,12 @@ class WearApp : Application() {
                     override fun onActivityStopped(activity: android.app.Activity) {
                         resumedActivities = (resumedActivities - 1).coerceAtLeast(0)
                         isForeground = resumedActivities > 0
+                        clearViewing()
                     }
 
                     override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) {}
                     override fun onActivityStarted(activity: android.app.Activity) {}
-                    override fun onActivityPaused(activity: android.app.Activity) {}
+                    override fun onActivityPaused(activity: android.app.Activity) { clearViewing() }
                     override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: Bundle) {}
                     override fun onActivityDestroyed(activity: android.app.Activity) {}
                 })

@@ -1264,6 +1264,8 @@ class ChatSession(
         if (chatId.isNotEmpty() && !viewingThisChat(chatId)) {
             store.update(chatId) { it.copy(pendingAttention = true) }
             Notifs.settle(app, chatId, store.get(chatId)?.label ?: "", text, error)
+        } else if (chatId.isNotEmpty()) {
+            Log.i(TAG, "settle suppressed — viewing chat=$chatId")
         }
     }
 
