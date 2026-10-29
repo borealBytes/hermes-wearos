@@ -32,4 +32,32 @@ class TtsConfigTest {
         assertEquals("custom", TtsConfig.labelFor(1.1f))
         assertEquals("custom", TtsConfig.labelFor(0f))
     }
+
+    // ── per-agent reply volume (owner 2026-10-29) ────────────────────────────────────────────
+
+    @Test fun `volumes quantize onto the 5 percent grid`() {
+        assertEquals(40, TtsConfig.volumePercent(0.4f))
+        assertEquals(40, TtsConfig.volumePercent(0.42f))   // nearest notch
+        assertEquals(35, TtsConfig.volumePercent(0.374f))  // 7.48 steps → 7 → 35
+        assertEquals(100, TtsConfig.volumePercent(1f))
+        assertEquals(0, TtsConfig.volumePercent(0f))
+        assertEquals(100, TtsConfig.volumePercent(0.99f))  // rounds up to full
+        assertEquals(100, TtsConfig.volumePercent(2f))     // clamped first
+        assertEquals(100, TtsConfig.volumePercent(Float.NaN)) // NaN → DEFAULT_VOLUME (full)
+        assertEquals(0.4f, TtsConfig.volumeFromPercent(40), 0.0001f)
+        assertEquals(1f, TtsConfig.volumeFromPercent(140), 0.0001f) // clamped both ends
+    }
+
+    @Test fun `the agent volume map round-trips and self-heals`() {
+        val map = mapOf("wear" to 40, "default" to 100, "work" to 5)
+        val raw = TtsConfig.encodeVolumes(map)
+        assertEquals("default=100,wear=40,work=5", raw) // sorted: stable on-disk form
+        assertEquals(map, TtsConfig.decodeVolumes(raw))
+        // Garbage-tolerant: bad pairs skip, off-grid values land on the nearest notch, blanks empty.
+        assertEquals(emptyMap<String, Int>(), TtsConfig.decodeVolumes(null))
+        assertEquals(emptyMap<String, Int>(), TtsConfig.decodeVolumes(""))
+        assertEquals(mapOf("wear" to 45), TtsConfig.decodeVolumes("wear=47,junk,=30,code,,wear=x"))
+        assertEquals(0, TtsConfig.decodeVolumes("a=-9")?.get("a")) // negative clamps home
+        assertEquals(100, TtsConfig.decodeVolumes("a=140")?.get("a"))
+    }
 }

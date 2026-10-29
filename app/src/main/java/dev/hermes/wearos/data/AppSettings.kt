@@ -23,6 +23,7 @@ import dev.hermes.wearos.domain.SplashIntro
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -39,6 +40,7 @@ class AppSettings(private val context: Context) {
         private val KEY_TTS_FALLBACK = stringPreferencesKey("tts_fallback")
         private val KEY_TTS_RATE = floatPreferencesKey("tts_rate")
         private val KEY_TTS_VOLUME = floatPreferencesKey("tts_volume")
+        private val KEY_TTS_VOLUMES = stringPreferencesKey("tts_volumes")
         private val KEY_MARKDOWN = booleanPreferencesKey("markdown_rendering")
         private val KEY_CHATS_JSON = stringPreferencesKey("chats_json")
         private val KEY_ACTIVE_CHAT = stringPreferencesKey("active_chat")
@@ -125,6 +127,12 @@ class AppSettings(private val context: Context) {
     private val _profile = MutableStateFlow(ProfileLogic.FALLBACK_AGENT)
     val profile: StateFlow<String> = _profile
     fun profileSync(): String = _profile.value
+
+    init {
+        // An agent switch (base-URL swap, dial agent lane, gateway fold) re-resolves the
+        // EFFECTIVE reply volume — the Voice slider and the dial must track the new agent.
+        kotlinx.coroutines.MainScope().launch { _profile.collect { refreshTtsVolumeFor() } }
+    }
 
     /** Persisted last-used agent (owner batch 2); default `wear`, garbage values fall back. */
     suspend fun savedAgent(): String =
@@ -230,11 +238,43 @@ class AppSettings(private val context: Context) {
     val ttsVolume: StateFlow<Float> = _ttsVolume
     suspend fun ttsVolumeValue(): Float =
         TtsConfig.clampVolume(context.dataStore.data.first()[KEY_TTS_VOLUME] ?: TtsConfig.DEFAULT_VOLUME)
-    suspend fun loadTtsVolume() { _ttsVolume.value = ttsVolumeValue() }
+    suspend fun loadTtsVolume() {
+        _ttsVolume.value = ttsVolumeValue()
+        _ttsVolumes.value = TtsConfig.decodeVolumes(context.dataStore.data.first()[KEY_TTS_VOLUMES])
+        refreshTtsVolumeFor()
+    }
     suspend fun setTtsVolume(v: Float) {
         val x = TtsConfig.clampVolume(v)
         context.dataStore.edit { it[KEY_TTS_VOLUME] = x }
         _ttsVolume.value = x
+        refreshTtsVolumeFor()
+    }
+
+    /**
+     * PER-AGENT OVERRIDE MAP (owner 2026-10-29): agent → percent on the 5 % grid. An agent with
+     * no entry rides the global [ttsVolume]. The Voice-page slider, the dial double-slider and
+     * the mute satellite ALL write the current agent's override — one shared store, three faces.
+     */
+    private val _ttsVolumes = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val ttsVolumes: StateFlow<Map<String, Int>> = _ttsVolumes
+
+    /** Effective volume for an agent: its override when set, else the global slider. */
+    fun ttsVolumeFor(agent: String): Float =
+        _ttsVolumes.value[agent]?.let { TtsConfig.volumeFromPercent(it) } ?: _ttsVolume.value
+
+    /** Effective volume for the CURRENT agent — what the orb dial / Voice slider show. */
+    private val _ttsVolumeFor = MutableStateFlow(TtsConfig.DEFAULT_VOLUME)
+    val ttsVolumeFor: StateFlow<Float> = _ttsVolumeFor
+    fun ttsVolumeForSync(): Float = ttsVolumeFor(profileSync())
+    private fun refreshTtsVolumeFor() { _ttsVolumeFor.value = ttsVolumeFor(profileSync()) }
+
+    /** Set (or with [v]==null clear) the current agent's override; global untouched. */
+    suspend fun setTtsVolumeFor(agent: String, v: Float?) {
+        val map = _ttsVolumes.value.toMutableMap()
+        if (v == null) map.remove(agent) else map[agent] = TtsConfig.volumePercent(v)
+        context.dataStore.edit { it[KEY_TTS_VOLUMES] = TtsConfig.encodeVolumes(map) }
+        _ttsVolumes.value = map
+        refreshTtsVolumeFor()
     }
 
     /**

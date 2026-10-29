@@ -1,5 +1,7 @@
 package dev.hermes.wearos.domain
 
+import kotlin.math.roundToInt
+
 /**
  * Text-to-speech reply config (owner 2026-10-29: *"settings for that so that you can change
  * voices … and I also want to be able to change speed"*). Pure half of the voice-out feature:
@@ -36,6 +38,36 @@ object TtsConfig {
 
     fun clampVolume(v: Float): Float =
         if (v.isNaN()) DEFAULT_VOLUME else v.coerceIn(0f, 1f)
+
+    /**
+     * PER-AGENT REPLY VOLUME (owner 2026-10-29): each agent may ride its own level (the wear
+     * agent polite at 40 %, the work agent loud at 100 %); unset agents inherit the global
+     * slider. Stored as a 5 % grid so a wrist-sized slider can never land on a phantom value:
+     * `tts_volumes` = "wear=40,default=100".
+     */
+    const val VOLUME_STEP_PCT = 5
+
+    fun volumePercent(v: Float): Int =
+        (clampVolume(v) * 100f / VOLUME_STEP_PCT).roundToInt() * VOLUME_STEP_PCT
+
+    fun volumeFromPercent(pct: Int): Float =
+        (pct.coerceIn(0, 100) / 100f)
+
+    /** Map → "wear=40,default=100" (sorted for a stable on-disk form, values on the grid). */
+    fun encodeVolumes(volumes: Map<String, Int>): String =
+        volumes.entries.sortedBy { it.key }
+            .joinToString(",") { "${it.key}=${(it.value / VOLUME_STEP_PCT * VOLUME_STEP_PCT).coerceIn(0, 100)}" }
+
+    /** Garbage-tolerant inverse: bad pairs skip, values quantize onto the 5 % grid. */
+    fun decodeVolumes(raw: String?): Map<String, Int> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return raw.split(",").mapNotNull { part ->
+            val agent = part.substringBefore('=', "").trim()
+            val pct = part.substringAfter('=', "").trim().toIntOrNull()
+            if (agent.isEmpty() || pct == null) null
+            else agent to (pct / VOLUME_STEP_PCT * VOLUME_STEP_PCT).coerceIn(0, 100)
+        }.toMap()
+    }
 
     /** Chip labels resolve known rates and unknown ones stay neutral. */
     fun labelFor(rate: Float): String =

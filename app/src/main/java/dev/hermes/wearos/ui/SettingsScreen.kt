@@ -135,6 +135,10 @@ fun SettingsScreen(
     val ttsState by speak.state.collectAsState()
     // Voice-out config rows (owner 2026-10-29): flows mirror what SpeakAloud persists on pick.
     val ttsRate by settings.ttsRate.collectAsState()
+    // PER-AGENT REPLY VOLUME (owner 2026-10-29): the slider edits the ACTIVE AGENT's override;
+    // the flow re-seeds it whenever the agent or the level changes (dial/mute write the same map).
+    val replyVolFor by settings.ttsVolumeFor.collectAsState()
+    val agentNow by settings.profile.collectAsState()
     val ttsVoice by settings.ttsVoice.collectAsState()
     var voicesOpen by remember { mutableStateOf(false) }
     // Engine/local-network cascade pickers (owner 2026-10-29): engine pkg + filtered voice lists
@@ -559,7 +563,7 @@ fun SettingsScreen(
         )
 
         // THE ORB DIAL (SPEC §12.1, owner batch 3): "the orb should be the only thing on the
-        // screen — drag it eight ways". Every one of the eight directions is a lane and every lane
+        // screen — drag it nine ways". Every one of the nine directions is a lane and every lane
         // is remappable HERE. Tapping a row advances that direction to the next action (the Lane
         // list cycles; `off` blanks a direction so an accidental drag does nothing instead of
         // opening something). The chat reads the StateFlow mirror, so the very next flick obeys —
@@ -717,6 +721,15 @@ fun SettingsScreen(
             Text("🔊 voice out", style = MaterialTheme.typography.body2)
             Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
         }
+        // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
+        // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
+        // dial's double-slider and the mute satellite write the SAME store, so all three agree.
+        VolumeSlider(
+            volume = replyVolFor,
+            agent = agentNow,
+            commit = { speak.setReplyVolume(it) },
+            onDone = { if (voiceOut) speak.preview() },
+        )
         RateSlider(
             rate = ttsRate,
             onRate = { speak.setSpeechRate(it) },
@@ -1183,10 +1196,74 @@ private fun RateSlider(rate: Float, onRate: (Float) -> Unit, onDone: () -> Unit)
 }
 
 /**
- * local | network | any filter chips above a voice list (owner: "then local/network, then it
- * shows the list"). Wear Button row — round-safe, caption2 tiny.
+ * REPLY VOLUME slider (owner 2026-10-29): "% of max output" on a 5 % grid, riding ABOVE the speed
+ * slider on Voice. The label names the AGENT whose override it edits; the commit lands in that
+ * agent's slot (agents without one ride the global). Drag updates the readout only — persistence
+ * and the ear-test preview fire on release, like the dial's volume mode.
  */
 @Composable
+private fun VolumeSlider(volume: Float, agent: String, commit: (Float) -> Unit, onDone: () -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var trackW by remember { mutableStateOf(1f) }
+    // Local drag state: quantized onto the grid so the knob and the percent always agree.
+    var level by remember(volume) { mutableStateOf(TtsConfig.volumePercent(volume) / 100f) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "reply volume · $agent · ${(level * 100).roundToInt()}%",
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
+                .onSizeChanged { trackW = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(agent) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun applyAt(x: Float) {
+                            level = TtsConfig.volumePercent(x / trackW) / 100f
+                        }
+                        applyAt(down.position.x)
+                        down.consume()
+                        while (true) {
+                            val ch = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: break
+                            applyAt(ch.position.x)
+                            ch.consume()
+                        }
+                        commit(level)
+                        onDone()
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            val knob = with(density) { 26.dp.toPx() }
+            Box(
+                modifier = Modifier
+                    .size(with(density) { 26.dp })
+                    .offset { IntOffset(((trackW - knob) * level).roundToInt(), 0) }
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colors.primary),
+            )
+        }
+        Text(
+            "quiet 0% ←──→ loud 100% · per-agent",
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.4f),
+        )
+    }
+}
+
+/**
+ * local | network | any filter chips above a voice list (owner: "then local/network, then it
+ * shows the list"). Wear Button row — round-safe, caption2 tiny.
+ */@Composable
 private fun VoiceSourceChips(src: String, onSrc: (String) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),

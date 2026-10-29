@@ -141,7 +141,8 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         settings.loadTtsFallback()
         rate = settings.ttsRateValue()
         voiceName = settings.ttsVoiceValue()
-        volume = settings.ttsVolumeValue()
+        settings.loadTtsVolume()
+        volume = settings.ttsVolumeForSync()
         fallbackName = settings.ttsFallbackValue()
         val wantEngine = settings.ttsEngineValue()
         if (tts == null) {
@@ -203,13 +204,17 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     /** Say a short sample with current settings — the picker's ear-test button. */
     fun preview() = speakFinal(TtsConfig.PREVIEW_TEXT)
 
-    /** Current persisted reply volume (the dial's volume mode reads its anchor from this). */
-    fun replyVolume(): Float = volume
+    /** Current reply volume FOR THE ACTIVE AGENT (the dial's volume mode seeds from this). */
+    fun replyVolume(): Float = settings.ttsVolumeForSync()
 
-    /** The mute-lane double slider's commit: scale THIS app's replies, persist, ear-test. */
+    /**
+     * The mute-lane double slider / Voice-page slider commit: scale THIS app's replies for the
+     * CURRENT AGENT (per-agent override, owner 2026-10-29 — the global slider stays as the
+     * default for agents that never got one).
+     */
     fun setReplyVolume(v: Float) {
         volume = TtsConfig.clampVolume(v)
-        scope.launch { settings.setTtsVolume(volume) }
+        scope.launch { settings.setTtsVolumeFor(settings.profileSync(), volume) }
     }
 
     private fun applyRate(t: TextToSpeech) = runCatching { t.setSpeechRate(rate) }
@@ -396,6 +401,9 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private fun speakOne(text: String, queueAdd: Boolean, step: Int, offset: Int = -1) {
         val t = tts ?: return
         if (_state.value != State.Ready) return
+        // PER-UTTERANCE agent resolution (owner 2026-10-29): the agent that OWNS this reply is
+        // active right now, so its override (or the global default) rides this exact sentence.
+        volume = settings.ttsVolumeForSync()
         boostVolume()
         pending.incrementAndGet()
         _speaking.value = true

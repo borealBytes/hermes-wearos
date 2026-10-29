@@ -159,7 +159,7 @@ class MainActivity : ComponentActivity() {
                 // Where the spoken sentence sits in the live stream — karaoke follow (SPEC §12.9).
                 val speakingOffsetNow by speak.speakingOffset.collectAsState()
                 // Mute-lane double slider anchor + picker mirror (owner 2026-10-29).
-                val replyVol by settings.ttsVolume.collectAsState()
+                val replyVol by settings.ttsVolumeFor.collectAsState()
                 val markdownOn by settings.markdownEnabled.collectAsState()
                 val profile by settings.profile.collectAsState()
                 val agentList by agents.agents.collectAsState()
@@ -476,7 +476,7 @@ class MainActivity : ComponentActivity() {
                     runCommand(entry)
                 }
 
-                // THE DIAL ROUTER (SPEC §12.1): eight directions, every one remappable in
+                // THE DIAL ROUTER (SPEC §12.1): nine directions, every one remappable in
                 // Settings ▸ Interface, all of them lands here. Lanes the branch-2 voice work owns
                 // say so plainly instead of silently doing nothing.
                 fun handleLane(lane: Lane) {

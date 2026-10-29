@@ -3,6 +3,7 @@ package dev.hermes.wearos.domain
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -57,23 +58,26 @@ enum class Lane(val id: String, val glyph: String, val label: String) {
  * the owner's "it should be very fast … the icon pops up and you don't even look at it".
  *
  * Slot 0 is 12:00 — the drag-up → keyboard editor that already ships, same direction, now one lane
- * among eight — and slots run CLOCKWISE in 45° wedges: 1 = 1:30, 2 = 3:00, 3 = 4:30, 4 = 6:00,
- * 5 = 7:30, 6 = 9:00, 7 = 10:30. The owner's clock-face model is stated as an INDEX LIST
- * (`AppSettings.orbSlots()`) so every direction is remappable in Settings ▸ Orb.
+ * among nine — and slots run CLOCKWISE in 40° wedges (since 2026-10-29; eight 45° lanes until the
+ * ✅ approvals lane joined the default map): 1 = 1:20, 2 = 2:40, 3 = 4:00, 4 = 5:20, 5 = 6:40,
+ * 6 = 8:00, 7 = 9:20, 8 = 10:40. The owner's clock-face model is stated as an INDEX LIST
+ * (`AppSettings.orbSlots()`) so every direction is remappable in Settings ▸ Orb. A saved 8-slot
+ * map decodes onto the new dial by inheriting [DEFAULT_SLOTS]'s 9th entry.
  *
  * GEOMETRY is unit-tested against the real face (Galaxy Watch Ultra, 480×480 @ 340dpi — numerically
  * identical to `BottomLayout.REF`, so 1 ref unit = 1 screen px on the owner's watch). The orb is
  * grounded 15 ref-px off the bottom edge (`BottomLayout.ORB_DY` / `ORB_R`), so the LOWER wedges have
  * no room for their icons: the owner's locked answer is the CONTEXTUAL RISE — the disc slides
- * toward face center ONLY once the drag enters the lower arc ([needsRise]), making 4:30 / 6:00 /
- * 7:30 reachable while every other direction never moves the orb at all.
+ * toward face center ONLY once the drag enters the lower arc ([needsRise]), making the below-
+ * horizon wedges reachable while every other direction never moves the orb at all.
  *
  * Pure: viewport px + the 480→viewport scale in, lanes out. No android.* imports — JVM-tested
  * (OrbDialTest).
  */
 object OrbDial {
-    const val SLOT_COUNT = 8
-    const val SLOT_DEG = 45f
+    /** 9 wedges since 2026-10-29 (owner: approvals deserves a default home — ✅ at 10:40). */
+    const val SLOT_COUNT = 9
+    const val SLOT_DEG = 40f
 
     /**
      * Icon centers sit this far from the orb center (ref px). Chosen so the ring clears the
@@ -106,14 +110,15 @@ object OrbDial {
      *  ("slide it up, then you can go right or left"); side/bottom drags stay pure aim. */
     const val SPIN_UP_ARC_DEG = 65f
 
-    /** Lower-arc bounds that trigger the contextual rise: the 4:30 / 6:00 / 7:30 wedges. */
-    const val RISE_FROM_DEG = 112.5f
-    const val RISE_TO_DEG = 247.5f
+    /** Lower-arc bounds that trigger the contextual rise: the wedges whose centers sit below
+     *  the horizon (4:00 / 5:20 / 6:40 / 8:00 on the 9-wedge dial). */
+    const val RISE_FROM_DEG = 100f
+    const val RISE_TO_DEG = 260f
 
-    /** Owner's default map, slot 0 → slot 7 (12:00 → 10:30 clockwise), SPEC §12.1. */
+    /** Owner's default map, slot 0 → slot 8 (12:00 → 10:40 clockwise), SPEC §12.1. */
     val DEFAULT_SLOTS: List<Lane> = listOf(
         Lane.Keyboard, Lane.Mute, Lane.Settings, Lane.Model,
-        Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents,
+        Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents, Lane.Approvals,
     )
 
     /** 480-reference → viewport scale from the MIN dimension (same rule as `BottomLayout`). */
@@ -128,7 +133,7 @@ object OrbDial {
     fun normDeg(angleDeg: Float): Float = ((angleDeg % 360f) + 360f) % 360f
 
     /**
-     * Slot for an angle (0 = 12:00, clockwise), each wedge owning ±22.5° around its center —
+     * Slot for an angle (0 = 12:00, clockwise), each wedge owning ±20° around its center —
      * boundaries land between the icons, never on one, so a diagonal is never ambiguous.
      */
     fun slotAt(angleDeg: Float): Int =
@@ -187,13 +192,13 @@ object OrbDial {
     fun risenCenterY(cyPx: Float, viewportHPx: Float): Float =
         if (viewportHPx <= 0f) cyPx else minOf(cyPx, viewportHPx / 2f)
 
-    /** Settings row label for a slot ("12:00" … "10:30") — the clock face, stated in words. */
+    /** Settings row label for a slot on the 9-wedge dial ("12:00", "1:20", "2:40", …). */
     fun clockLabel(slot: Int): String {
         val i = ((slot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT
-        val hour = (i * 45 / 360f * 12f) // 0,1.5,3,…
-        val h = (hour.toInt() % 12)
-        val m = if (hour % 1f == 0.5f) "30" else "00"
-        return "${if (h == 0) 12 else h}:$m"
+        val hourF = i * 12f / SLOT_COUNT          // hours past 12:00 (…:20/…:40 land on thirds)
+        val h = hourF.toInt() % 12
+        val m = ((hourF - hourF.toInt()) * 60f).roundToInt()
+        return "${if (h == 0) 12 else h}:${"%02d".format(m)}"
     }
 
     /** Persisted form of the map (`keyboard,mute,record_hi,…`). */
