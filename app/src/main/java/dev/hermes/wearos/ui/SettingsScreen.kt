@@ -137,6 +137,14 @@ fun SettingsScreen(
     val ttsRate by settings.ttsRate.collectAsState()
     val ttsVoice by settings.ttsVoice.collectAsState()
     var voicesOpen by remember { mutableStateOf(false) }
+    // Engine/local-network cascade pickers (owner 2026-10-29): engine pkg + filtered voice lists
+    // for preferred AND fallback.
+    var enginesOpen by remember { mutableStateOf(false) }
+    var fbOpen by remember { mutableStateOf(false) }
+    var voiceSrc by remember { mutableStateOf(dev.hermes.wearos.domain.VoiceCatalog.ANY) }
+    var fbSrc by remember { mutableStateOf(dev.hermes.wearos.domain.VoiceCatalog.ANY) }
+    val ttsEngine by settings.ttsEngine.collectAsState()
+    val ttsFallback by settings.ttsFallback.collectAsState()
     val markdownOn by settings.markdownEnabled.collectAsState()
     val bodyTools by settings.bodyTools.collectAsState()
     val bodyStatus by BodyTools.status.collectAsState()
@@ -147,7 +155,7 @@ fun SettingsScreen(
     // hub of nav rows; every section lives on its own page. Sections below are UNCHANGED logic,
     // just wrapped in `if (page == …)` — same state, same prefs, same behavior.
     var page by remember { mutableStateOf(SettingsPage.Root) }
-    androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = SettingsPage.Root }
+    androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = page.up() }
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
     val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
     val sttPresent = remember { VoskStt.isModelPresent(context) }
@@ -187,15 +195,14 @@ fun SettingsScreen(
 
         if (page != SettingsPage.Root) {
             Column(
-                modifier = Modifier.fillMaxWidth().clickable { page = SettingsPage.Root },
+                modifier = Modifier.fillMaxWidth().clickable { page = page.up() },
                 horizontalAlignment = Alignment.CenterHorizontally,
-            ) { Text("‹  all settings", style = MaterialTheme.typography.caption2) }
+            ) { Text(if (page.up() == SettingsPage.Root) "‹  all settings" else "‹  " + page.up().title.lowercase(), style = MaterialTheme.typography.caption2) }
             Spacer(Modifier.height(6.dp))
         }
         if (page == SettingsPage.Root) {
             val selGw = gateways.firstOrNull { it.id == selectedGwId }
             SettingNavRow("🌐", "Gateways", "${gateways.size} saved" + (if (selGw != null) " · ✓ ${selGw.label}" else "")) { page = SettingsPage.Gateways }
-            SettingNavRow("🔑", "Agent keys", "per-agent gateway tokens") { page = SettingsPage.AgentKeys }
             SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×") { page = SettingsPage.Voice }
             SettingNavRow("🎛️", "Display", "markdown · splash · orb") { page = SettingsPage.Display }
             SettingNavRow("⌚", "Watch", "body tools ${bodyTools.size} on · notifications") { page = SettingsPage.Watch }
@@ -453,6 +460,8 @@ fun SettingsScreen(
 
         // Display (SPEC §4 "Display" node, §5 F3): renders Hermes replies through
         // ui/md/WatchMarkdown instead of raw text. Default ON; StateFlow so the chat re-renders live.
+            Spacer(Modifier.height(2.dp))
+            SettingNavRow("🔑", "Agent keys", "learned from the selected gateway") { page = SettingsPage.AgentKeys }
         }
         if (page == SettingsPage.Display) {
         FieldLabel("Display")
@@ -693,25 +702,62 @@ fun SettingsScreen(
                 LocationTool.status.collectAsState().value.take(64),
         )
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("🔊", style = MaterialTheme.typography.body2)
-            Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
-        }
-
         }
         if (page == SettingsPage.Voice) {
         // ─── VOICE-OUT CONFIG (owner 2026-10-29: "change voices… and change speed"; the chips
         // became a DRAG SLIDER the same day: "the buttons don't all fit… a slider would do me
         // better"). domain/TtsConfig owns the ↔ mapping; SpeakAloud applies mid-queue live and
         // the release ear-tests the result. Slow (0.5×) left … fast (2.0×) right.
+        // The master switch moved HERE from the Watch page (the same-day tree move had stranded
+        // a lone 🔊 under body tools).
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("🔊 voice out", style = MaterialTheme.typography.body2)
+            Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
+        }
         RateSlider(
             rate = ttsRate,
             onRate = { speak.setSpeechRate(it) },
             onDone = { if (voiceOut) speak.preview() },
         )
+        // ENGINE row (owner: "choose google/samsung/(other if exists)") — switching packages
+        // rebuilds the live engine; its voices load right after.
+        FieldLabel("engine")
+        val engines = speak.availableEngines()
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = { enginesOpen = !enginesOpen },
+                modifier = Modifier.size(width = 140.dp, height = 34.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) {
+                Text(
+                    (if (ttsEngine.isEmpty()) "system default"
+                    else engines.firstOrNull { it.pkg == ttsEngine }?.label ?: ttsEngine).take(18) +
+                        if (enginesOpen) " ▲" else " ▼",
+                    style = MaterialTheme.typography.button, maxLines = 1,
+                )
+            }
+        }
+        if (enginesOpen) {
+            VoicePickRow("★ system default", "", ttsEngine, onSelect = {
+                speak.setEngine(""); enginesOpen = false
+            })
+            if (engines.size <= 1) {
+                StatusLine("engines", "engine not ready yet")
+            } else {
+                engines.drop(1).forEach { e ->
+                    VoicePickRow(e.label, e.pkg, ttsEngine, onSelect = {
+                        speak.setEngine(e.pkg); enginesOpen = false
+                    })
+                }
+            }
+        }
+
+        // VOICE row with the local/network filter (owner: "then local/network, then it shows
+        // the list … limited by the higher level choices") — an unfiltered Google list is 100+
+        // rows; 🌐 marks network voices so the ear-test target is findable in two taps.
         FieldLabel("voice")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(
@@ -727,10 +773,14 @@ fun SettingsScreen(
             }
         }
         if (voicesOpen) {
-            // Engine-supplied list; empty until TTS reports Ready (engine wakes async).
-            val voices = speak.availableVoices()
-            if (voices.isEmpty()) {
+            VoiceSourceChips(voiceSrc) { voiceSrc = it }
+            val all = speak.availableVoices()
+            val voices = all.filter { voiceSrc == dev.hermes.wearos.domain.VoiceCatalog.ANY ||
+                (voiceSrc == dev.hermes.wearos.domain.VoiceCatalog.LOCAL) == it.local }
+            if (all.isEmpty()) {
                 StatusLine("voices", "engine not ready yet")
+            } else if (voices.isEmpty()) {
+                StatusLine("voices", "no $voiceSrc voices on this engine")
             } else {
                 VoicePickRow("★ engine default", "", ttsVoice, onSelect = {
                     speak.setVoice("")   // the settings.ttsVoice flow comes back on write
@@ -738,10 +788,49 @@ fun SettingsScreen(
                 })
                 voices.forEach { v ->
                     VoicePickRow(
-                        v.name.take(30) + if (v.builtin) " (built-in)" else "",
+                        v.name.take(26) + if (!v.local) " 🌐" else "",
                         v.name, ttsVoice, onSelect = {
                             speak.setVoice(v.name)
                             if (voiceOut) speak.preview()
+                        },
+                    )
+                }
+            }
+        }
+
+        // FALLBACK row (owner: "choose a default and fallback… network first… local fallback"):
+        // when the preferred voice ERRORS mid-utterance (the usual network voice off-wifi), the
+        // same sentence re-queues on this one — see SpeakAloud.fail.
+        FieldLabel("fallback")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = { fbOpen = !fbOpen },
+                modifier = Modifier.size(width = 140.dp, height = 34.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) {
+                Text(
+                    (if (ttsFallback.isEmpty()) "none" else ttsFallback).take(18) +
+                        if (fbOpen) " ▲" else " ▼",
+                    style = MaterialTheme.typography.button, maxLines = 1,
+                )
+            }
+        }
+        if (fbOpen) {
+            VoiceSourceChips(fbSrc) { fbSrc = it }
+            val all = speak.availableVoices()
+            val voices = all.filter { fbSrc == dev.hermes.wearos.domain.VoiceCatalog.ANY ||
+                (fbSrc == dev.hermes.wearos.domain.VoiceCatalog.LOCAL) == it.local }
+            VoicePickRow("— none (single try) —", "", ttsFallback, onSelect = {
+                speak.setVoiceFallback(""); fbOpen = false
+            })
+            if (all.isEmpty()) {
+                StatusLine("voices", "engine not ready yet")
+            } else {
+                voices.forEach { v ->
+                    VoicePickRow(
+                        v.name.take(26) + if (!v.local) " 🌐" else "",
+                        v.name, ttsFallback, onSelect = {
+                            speak.setVoiceFallback(v.name); fbOpen = false
                         },
                     )
                 }
@@ -1093,9 +1182,42 @@ private fun RateSlider(rate: Float, onRate: (Float) -> Unit, onDone: () -> Unit)
     }
 }
 
+/**
+ * local | network | any filter chips above a voice list (owner: "then local/network, then it
+ * shows the list"). Wear Button row — round-safe, caption2 tiny.
+ */
+@Composable
+private fun VoiceSourceChips(src: String, onSrc: (String) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+    ) {
+        listOf(
+            dev.hermes.wearos.domain.VoiceCatalog.ANY to "any",
+            dev.hermes.wearos.domain.VoiceCatalog.LOCAL to "local",
+            dev.hermes.wearos.domain.VoiceCatalog.NETWORK to "🌐 net",
+        ).forEach { (k, label) ->
+            Button(
+                onClick = { onSrc(k) },
+                modifier = Modifier.size(width = 62.dp, height = 26.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = if (src == k) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.surface.copy(alpha = 0.35f),
+                    contentColor = if (src == k) MaterialTheme.colors.onPrimary
+                    else MaterialTheme.colors.onSurface,
+                ),
+            ) { Text(label, style = MaterialTheme.typography.caption2, maxLines = 1) }
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+}
+
 /** Settings tree pages (owner 2026-10-29 anti-forever-scroll restructure). */
 enum class SettingsPage(val title: String) {
     Root("Settings"),
+    // Agent keys hangs UNDER Gateways (owner 2026-10-29: "shouldn't agent keys be under
+    // gateways? … too high up in the tree") — the map is learned from one gateway, so that is
+    // its parent. See up() below.
     Gateways("Gateways"),
     AgentKeys("Agent keys"),
     Display("Display"),
@@ -1103,6 +1225,9 @@ enum class SettingsPage(val title: String) {
     Voice("Voice out"),
     About("About"),
 }
+
+/** Back-target per page: Agent keys returns to Gateways, everything else to the hub. */
+private fun SettingsPage.up(): SettingsPage = if (this == SettingsPage.AgentKeys) SettingsPage.Gateways else SettingsPage.Root
 
 @Composable
 private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClick: () -> Unit) {

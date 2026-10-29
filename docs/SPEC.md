@@ -656,11 +656,29 @@ voice) *and change speed — a slider would do me better* (the speed chips clipp
 face). Both are engine-side config, so `voice/SpeakAloud.kt` owns applying them and `domain/TtsConfig.kt`
 owns the pure mapping (rate 0.5–2.0 ↔ slider fraction, clamps, `SPEED_CHIPS` retired).
 
-- **Voices**: `availableVoices()` returns `VoiceOption(name, quality, builtin)` from
+- **Voices**: `availableVoices()` returns `VoiceOption(name, quality, builtin, local)` from
   `TextToSpeech.onVoiceAvailable`. `Voice.isDefault()/isPresent()` are `@hide` — read via
   reflection for *cosmetic flags only*; nothing branches on them, so a ROM that hides them harder
   just shows fewer decorations, never fewer voices. Pick persists to `AppSettings` `tts_voice`
   (empty = engine default) and applies live (mid-queue), previewing when voice-out is on.
+- **Engines + transport filters + fallback (owner: *"are there google voices or just samsung?
+  would be cool to have both… choose google/samsung/(other if exists), then local/network, then
+  it shows the list… also default and fallback so someone could choose network first and a local
+  fallback"*).** The watch ships BOTH: `com.google.android.tts` (system default) and
+  `com.samsung.SMT`. `availableEngines()` lists them (`★ system default` head entry; short
+  vendor labels via `VoiceCatalog.friendlyEngine`); picking one rebuilds the live engine
+  (`setEngine` → `restartEngine`, main-looper posted because the TTS init callback binds to the
+  creating looper — Application scope is not main). Each voice is classified
+  `local|network` by `Voice.getNetworkConnectionTier()` where the ROM exposes it, else the
+  `-local`/`-network` name convention (`domain/VoiceCatalog`, JVM-tested) — the picker's
+  `any|local|🌐 net` chips filter on it. Proof on hardware: Google engine → hundreds of
+  language voices, `-network` ones tagged 🌐; Samsung → SMT voices classified local, and the
+  🌐 chip honestly says *"no network voices on this engine"*. `tts_fallback` names a second
+  voice; when the
+  preferred one ERRORS mid-utterance (the usual network voice off-wifi), `SpeakAloud.fail`
+  requeues the SAME sentence on the fallback (QUEUE_ADD keeps stream order; per-utterance
+  registry `id → (text, step)`), and queue-drain snaps the engine-global voice back to
+  preferred. Blank fallback = one attempt — the chain rule lives in `VoiceCatalog.chain`.
 - **Speed**: a custom drag slider (`ui/SettingsScreen.kt` → `RateSlider`, awaitEachGesture jump+
   drag — wear-compose has no Slider) persists `tts_rate`; `setSpeechRate` applies to the running
   engine immediately so the release-ear-test hears the new rate without a restart.
@@ -695,12 +713,14 @@ silently into the transcript.
 ### 12.10 Settings is a tree now (owner: *"not overloading with a forever-scrolling single screen"*)
 
 `SettingsScreen` became hub + pages (`enum SettingsPage`): **🌐 Gateways** (registry list, add,
-active Base URL + Token, watchkit test — per-gateway options stay behind the pencil), **🔑 Agent
-keys**, **🗣️ Voice out** (toggle, speed slider, voice picker, engine status), **🎛️ Display**
-(markdown, splash, pinch, orb lanes), **⌚ Watch** (body tools, push, health/location status,
-voice toggle), **ℹ️ About** (stt model, version). Every section's logic is UNCHANGED — the blocks
-are wrapped in `if (page == …)`; nav rows carry live subtitles (selected gateway, rate, …); each
-page gets a `‹ all settings` row and hardware/back gesture returns to the hub (`BackHandler`).
+active Base URL + Token, watchkit test, and — one level down, owner: *"shouldn't agent keys be
+under gateways? … too high up in the tree"* — a **🔑 Agent keys** page whose back row returns to
+Gateways, not the hub), **🗣️ Voice out** (toggle, speed slider, engine/voice/fallback pickers,
+engine status), **🎛️ Display** (markdown, splash, pinch, orb lanes), **⌚ Watch** (body tools,
+push, health/location status), **ℹ️ About** (stt model, version). Every section's logic is
+UNCHANGED — the blocks are wrapped in `if (page == …)`; nav rows carry live subtitles (selected
+gateway, rate, …); each page gets a `‹ …` back row and hardware/back returns to its parent
+(`BackHandler` + `SettingsPage.up()`).
 
 ---
 
@@ -808,7 +828,11 @@ mutex rather than opening a second capture.
   notifications for every case except the chat being the open front screen, gated on
   `Graph.viewingChatId` (MainActivity publishes, `ChatSession.viewingThisChat` decides); and the
   flat settings screen became a hub + 6 pages with zero logic change (`if (page == …)` wrappers,
-  live-subtitle nav rows, BackHandler). +14 tests → 345 green.
+  live-subtitle nav rows, BackHandler). Same-day follow-ups: Agent keys nested UNDER Gateways
+  (its parent is the gateway it was learned from — `SettingsPage.up()` drives back), and the
+  voice picker grew into ENGINE → local/network → voice with a per-utterance FALLBACK chain
+  (`domain/VoiceCatalog`, engine restart on package switch, proven against the watch's real
+  Google + Samsung engines). +19 tests → 350 green.
 
 - **The route follows the link (SPEC §11.6, owner: *"let's make it flawless for discovering what's
   available network wise"*).** Failover was demand-driven: the app discovered a network change by

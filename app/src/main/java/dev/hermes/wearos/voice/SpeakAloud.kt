@@ -35,6 +35,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
 
     private val appContext = context.applicationContext
     private val audio: AudioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val _state = MutableStateFlow(State.None)
     val state: StateFlow<State> = _state
@@ -46,9 +47,19 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private var utterSeq = 0
     private val pending = AtomicInteger(0)
 
-    /** Voice-out config (owner 2026-10-29): engine voice NAME ("" = engine default) + rate. */
+    /**
+     * Voice-out config (owner 2026-10-29): engine voice NAME ("" = engine default) + rate + the
+     * ENGINE package ("" = system default; the watch carries Google AND Samsung engines) + a
+     * fallback voice name tried when the preferred one errors mid-utterance.
+     */
     @Volatile private var rate = TtsConfig.DEFAULT_RATE
     @Volatile private var voiceName = ""
+    @Volatile private var fallbackName = ""
+    @Volatile private var engineName = ""
+    /** Engine package the LIVE tts was built with ("" = system default); null until init runs. */
+    @Volatile private var activeEnginePkg: String? = null
+    /** Voice name currently set on the engine — the cascade snaps back to preferred with it. */
+    @Volatile private var appliedVoice = ""
 
     /** Reply-volume scale for THIS app's speech only (mute-lane double slider): a per-utterance
      *  KEY_PARAM_VOLUME multiplier over the boosted stream. 1 = exactly yesterday's behavior. */
@@ -58,35 +69,85 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
      * Engine voices for the Settings picker — empty until the TTS callback lands (state Ready).
      * `Voice.isPresent()/isDefault()` are @hide on the public SDK (compileSdk rejects them), so
      * availability filtering degrades to "keep everything" and the built-in flag rides on best
-     * effort; `setVoice(Voice)` + name matching are public and carry the real work.
+     * effort; `setVoice(Voice)` + name matching are public and carry the real work. `local`
+     * classifies transport (tier where the ROM exposes it, else the `-local`/`-network` name
+     * convention — domain/VoiceCatalog) so the picker can filter google-vs-samsung cascades.
      */
-    data class VoiceOption(val name: String, val quality: Int, val builtin: Boolean)
+    data class VoiceOption(val name: String, val quality: Int, val builtin: Boolean, val local: Boolean)
+
+    /** One installed TTS engine; pkg "" is the synthetic "system default" head entry. */
+    data class EngineOption(val pkg: String, val label: String, val current: Boolean)
 
     fun availableVoices(): List<VoiceOption> {
         val t = tts ?: return emptyList()
         if (_state.value != State.Ready) return emptyList()
         return runCatching { t.voices.orEmpty() }.getOrNull()
-            ?.map { VoiceOption(it.name, it.quality, hiddenFlag(it, "isDefault")) }
+            ?.map {
+                VoiceOption(
+                    it.name, it.quality, hiddenFlag(it, "isDefault"),
+                    dev.hermes.wearos.domain.VoiceCatalog.classify(it.name, networkTier(it)) ==
+                        dev.hermes.wearos.domain.VoiceCatalog.LOCAL,
+                )
+            }
             ?.sortedWith(compareByDescending<VoiceOption> { it.name == voiceName }
                 .thenByDescending { it.quality }
                 .thenBy { it.name })
             ?: emptyList()
     }
 
+    fun availableEngines(): List<EngineOption> {
+        val t = tts ?: return emptyList()
+        if (_state.value != State.Ready) return emptyList()
+        val installed = runCatching { t.engines.orEmpty() }.getOrNull() ?: emptyList()
+        val head = EngineOption("", "system default", engineName.isEmpty())
+        return listOf(head) + installed.map {
+            EngineOption(
+                it.name,
+                dev.hermes.wearos.domain.VoiceCatalog.friendlyEngine(it.label ?: "", it.name),
+                it.name == engineName,
+            )
+        }
+    }
+
+    /** Label of the engine the user chose (for the picker's collapsed row). */
+    fun currentEngineLabel(): String =
+        if (engineName.isEmpty()) "system default"
+        else runCatching {
+            tts?.engines.orEmpty()?.firstOrNull { it.name == engineName }?.let {
+                dev.hermes.wearos.domain.VoiceCatalog.friendlyEngine(it.label ?: "", it.name)
+            }
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: engineName
+
+    /** Voice.NETWORK_CONNECTION_TIER_*: NEVER=1 IF_NECESSARY=2 REQUIRED=3; 0 = unknown/absent. */
+    private fun networkTier(v: Voice): Int = runCatching {
+        Voice::class.java.getMethod("getNetworkConnectionTier").invoke(v) as? Int
+    }.getOrNull() ?: 0
+
     private fun hiddenFlag(v: Voice, getter: String): Boolean = runCatching {
         Voice::class.java.getMethod(getter).invoke(v) as? Boolean ?: false
     }.getOrDefault(false)
 
-    /** Pull persisted voice+rate and apply to a live engine (cold start + Settings changes). */
+    /** Pull persisted voice+rate+engine+fallback and apply to a live engine (cold start + Settings). */
     suspend fun loadVoiceConfig() {
         // Load through the AppSettings loaders so the SettingsScreen StateFlows see the truth too.
         settings.loadTtsRate()
         settings.loadTtsVoice()
         settings.loadTtsVolume()
+        settings.loadTtsEngine()
+        settings.loadTtsFallback()
         rate = settings.ttsRateValue()
         voiceName = settings.ttsVoiceValue()
         volume = settings.ttsVolumeValue()
-        tts?.let { applyRate(it); applyVoice(it) }
+        fallbackName = settings.ttsFallbackValue()
+        val wantEngine = settings.ttsEngineValue()
+        if (tts == null) {
+            engineName = wantEngine // cold boot: init() will build with it
+        } else if (wantEngine != (activeEnginePkg ?: "")) {
+            engineName = wantEngine
+            restartEngine() // the live engine was built for another package — rebuild on the pick
+            return
+        }
+        tts?.let { applyRate(it); applyVoiceTo(it, voiceName) }
     }
 
     /** Settings ▸ Voice-out: reply speed (clamped in AppSettings/TtsConfig). Applies mid-queue. */
@@ -99,8 +160,38 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     /** Settings ▸ Voice-out: engine voice by name ("" restores the engine's own default). */
     fun setVoice(name: String) {
         voiceName = name.trim()
-        tts?.let { applyVoice(it) }
+        tts?.let { applyVoiceTo(it, voiceName) }
         scope.launch { settings.setTtsVoice(voiceName) }
+    }
+
+    /** Settings ▸ Voice-out: FALLBACK voice by name — second try when preferred errors. */
+    fun setVoiceFallback(name: String) {
+        fallbackName = name.trim()
+        scope.launch { settings.setTtsFallback(fallbackName) }
+    }
+
+    /** Settings ▸ Voice-out: TTS engine package ("" = system default). A real switch rebuilds. */
+    fun setEngine(pkg: String) {
+        val p = pkg.trim()
+        if (p == engineName) return
+        engineName = p
+        scope.launch { settings.setTtsEngine(p) }
+        Log.i(TAG, "tts engine → '${p.ifEmpty { "system default" }}' (engine restart)")
+        restartEngine()
+    }
+
+    /** Tear the live engine down and re-init on the preferred package. Always lands on main:
+     *  TextToSpeech binds its init callback to the creating looper (Application scope is not main). */
+    private fun restartEngine() {
+        mainHandler.post {
+            try { tts?.stop(); tts?.shutdown() } catch (e: Exception) { }
+            tts = null
+            appliedVoice = ""
+            utterances.clear()
+            pending.set(0)
+            restoreVolume()
+            init()
+        }
     }
 
     /** Say a short sample with current settings — the picker's ear-test button. */
@@ -121,18 +212,20 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     /**
      * Name → the engine's `voices` entry → `setVoice`. Matching by NAME (not the stored Voice
      * object) survives engine updates; a vanished voice falls back to the engine default voice
-     * rather than throwing (voices come and go with engine updates — SPEC voice-out).
+     * rather than throwing (voices come and go with engine updates — SPEC voice-out). "" =
+     * engine's own default. [appliedVoice] tracks what the engine globally holds so the
+     * fallback cascade can snap back to the preferred voice.
      */
-    private fun applyVoice(t: TextToSpeech) {
+    private fun applyVoiceTo(t: TextToSpeech, want: String) {
         val voices = runCatching { t.voices.orEmpty() }.getOrNull() ?: return
-        val match = voices.firstOrNull { it.name == voiceName }
-            ?: voices.firstOrNull { hiddenFlag(it, "isDefault") }
-        if (voiceName.isNotEmpty() && match == null) {
-            Log.i(TAG, "tts voice '$voiceName' gone from engine; default voice in use")
-            return
+        val exact = voices.firstOrNull { it.name == want }
+        val match = exact ?: voices.firstOrNull { hiddenFlag(it, "isDefault") }
+        if (want.isNotEmpty() && exact == null) {
+            Log.i(TAG, "tts voice '$want' gone from engine; default voice in use")
         }
         if (match != null) runCatching { t.setVoice(match) }
             .onFailure { Log.w(TAG, "tts setVoice('${match.name}') failed: ${it.message}") }
+        appliedVoice = exact?.name ?: ""
         Log.i(TAG, "tts voice = ${match?.name ?: "(engine default)"}")
     }
 
@@ -143,16 +236,48 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private val spokenPrefix = StringBuilder()
     private var scanFrom = 0
 
+    /** utteranceId → (text, chain-step) so an engine error can retry the SAME sentence next. */
+    private val utterances = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Int>>()
+
+    /** Preferred → fallback (blank-safe, deduped) — domain/VoiceCatalog owns the rule. */
+    private fun voiceChain(): List<String> =
+        dev.hermes.wearos.domain.VoiceCatalog.chain(voiceName, fallbackName)
+
     private val progress = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {}
-        override fun onDone(utteranceId: String?) = utteranceSettled()
-        @Deprecated("kept for API 30") override fun onError(utteranceId: String?) = utteranceSettled()
-        override fun onError(utteranceId: String?, errorCode: Int) = utteranceSettled()
+        override fun onDone(utteranceId: String?) { utterances.remove(utteranceId); utteranceSettled() }
+        @Deprecated("kept for API 30") override fun onError(utteranceId: String?) = fail(utteranceId)
+        override fun onError(utteranceId: String?, errorCode: Int) = fail(utteranceId)
+    }
+
+    /**
+     * The fallback cascade (owner: *"choose network first … then a local fallback"*): a failed
+     * utterance is requeued verbatim on the next chain voice — nothing of it was audible, and
+     * QUEUE_ADD keeps stream order — until the chain runs out. Queue-drain snaps the engine's
+     * global voice back to preferred.
+     */
+    private fun fail(id: String?) {
+        val rec = id?.let { utterances.remove(it) }
+        val t = tts
+        var retried = false
+        if (rec != null && t != null) {
+            val (text, step) = rec
+            val chain = voiceChain()
+            if (step + 1 < chain.size) {
+                Log.i(TAG, "tts voice '${chain[step]}' errored → retry on '${chain[step + 1]}'")
+                speakOne(text, queueAdd = true, step = step + 1)
+                retried = true
+            }
+        }
+        if (!retried && rec != null) Log.w(TAG, "tts utterance failed, voice chain exhausted (id=$id)")
+        utteranceSettled()
     }
 
     fun init() {
         _state.value = State.Initializing
-        tts = TextToSpeech(appContext) { status ->
+        val pkg = engineName.ifEmpty { null }
+        activeEnginePkg = engineName
+        tts = TextToSpeech(appContext, { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val t = tts
                 if (t != null) {
@@ -160,14 +285,14 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
                     val avail = try { t.isLanguageAvailable(Locale.US) } catch (e: Exception) { TextToSpeech.LANG_NOT_SUPPORTED }
                     if (avail >= TextToSpeech.LANG_AVAILABLE) t.language = Locale.US
                     applyRate(t)
-                    applyVoice(t)
+                    applyVoiceTo(t, voiceName)
                     _state.value = State.Ready
                 } else _state.value = State.MissingEngine
             } else {
                 _state.value = State.MissingEngine
             }
-            Log.i(TAG, "tts init status=$status state=${_state.value}")
-        }
+            Log.i(TAG, "tts init status=$status pkg=${pkg ?: "system"} state=${_state.value}")
+        }, pkg)
     }
 
     /** Load the persisted master-mute + voice/rate config (call from a coroutine). */
@@ -231,6 +356,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
 
     fun stop() {
         resetTracking()
+        utterances.clear()
         try { tts?.stop() } catch (e: Exception) { /* engine gone */ }
         pending.set(0)
         restoreVolume()
@@ -242,22 +368,40 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         restoreVolume()
     }
 
-    private fun speak(text: String, queueAdd: Boolean) {
+    private fun speak(text: String, queueAdd: Boolean) = speakOne(text, queueAdd, step = 0)
+
+    /** Speak one utterance at [step] of the voice chain; registers it for fallback retry. */
+    private fun speakOne(text: String, queueAdd: Boolean, step: Int) {
         val t = tts ?: return
         if (_state.value != State.Ready) return
         boostVolume()
         pending.incrementAndGet()
         val mode = if (queueAdd) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
+        // Chain step > 0 means the preferred voice failed: hop the ENGINE-global voice to the
+        // fallback before queueing (the drain-snap in utteranceSettled puts it back).
+        val want = voiceChain().getOrElse(step) { "" }
+        if (want != appliedVoice) applyVoiceTo(t, want)
         // Reply volume rides PER UTTERANCE (KEY_PARAM_VOLUME) — app-scoped by construction, the
         // system stream stays untouched for everything else on the watch.
         val params = if (volume < 0.999f) android.os.Bundle().apply {
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
         } else null
-        t.speak(text, mode, params, "hermes-${++utterSeq}")
+        val id = "hermes-${++utterSeq}"
+        utterances[id] = text to step
+        t.speak(text, mode, params, id)
     }
 
     private fun utteranceSettled() {
-        if (pending.decrementAndGet() <= 0) { pending.set(0); restoreVolume() }
+        if (pending.decrementAndGet() <= 0) {
+            pending.set(0)
+            restoreVolume()
+            // Chain drained: put the engine's global voice back on the preferred one.
+            val t = tts
+            if (t != null) {
+                val head = voiceChain().firstOrNull().orEmpty()
+                if (head != appliedVoice) applyVoiceTo(t, head)
+            }
+        }
     }
 
     private fun resetTracking() { spokenPrefix.setLength(0); scanFrom = 0 }

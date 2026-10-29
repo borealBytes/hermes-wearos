@@ -35,6 +35,8 @@ class AppSettings(private val context: Context) {
         private val KEY_LAST_RUN = stringPreferencesKey("last_run")
         private val KEY_VOICE_OUT = booleanPreferencesKey("voice_out")
         private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
+        private val KEY_TTS_ENGINE = stringPreferencesKey("tts_engine")
+        private val KEY_TTS_FALLBACK = stringPreferencesKey("tts_fallback")
         private val KEY_TTS_RATE = floatPreferencesKey("tts_rate")
         private val KEY_TTS_VOLUME = floatPreferencesKey("tts_volume")
         private val KEY_MARKDOWN = booleanPreferencesKey("markdown_rendering")
@@ -187,6 +189,29 @@ class AppSettings(private val context: Context) {
     suspend fun setTtsVoice(v: String) {
         context.dataStore.edit { it[KEY_TTS_VOICE] = v.trim() }
         _ttsVoice.value = v.trim()
+    }
+
+    /**
+     * TTS engine PACKAGE (owner 2026-10-29: *"choose google/samsung/(other if exists)"*) — blank
+     * = system default. `tts_fallback` is a second VOICE NAME tried when the preferred one errors
+     * mid-utterance (*"network first … local fallback"*), blank = one attempt only.
+     */
+    private val _ttsEngine = MutableStateFlow("")
+    val ttsEngine: StateFlow<String> = _ttsEngine
+    suspend fun ttsEngineValue(): String = context.dataStore.data.first()[KEY_TTS_ENGINE].orEmpty()
+    suspend fun loadTtsEngine() { _ttsEngine.value = ttsEngineValue() }
+    suspend fun setTtsEngine(v: String) {
+        context.dataStore.edit { it[KEY_TTS_ENGINE] = v.trim() }
+        _ttsEngine.value = v.trim()
+    }
+
+    private val _ttsFallback = MutableStateFlow("")
+    val ttsFallback: StateFlow<String> = _ttsFallback
+    suspend fun ttsFallbackValue(): String = context.dataStore.data.first()[KEY_TTS_FALLBACK].orEmpty()
+    suspend fun loadTtsFallback() { _ttsFallback.value = ttsFallbackValue() }
+    suspend fun setTtsFallback(v: String) {
+        context.dataStore.edit { it[KEY_TTS_FALLBACK] = v.trim() }
+        _ttsFallback.value = v.trim()
     }
 
     private val _ttsRate = MutableStateFlow(TtsConfig.DEFAULT_RATE)

@@ -334,7 +334,7 @@ mermaid as fence blocks (the watch renders them). Start the watchkit helper with
 
 ```bash
 source scripts/env.sh
-../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 345 tests
+../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 350 tests
 scripts/emulator.sh                        # optional headless Wear emulator
 scripts/doctor.sh                          # toolchain + link health report
 ```
