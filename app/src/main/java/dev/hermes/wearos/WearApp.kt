@@ -119,6 +119,19 @@ class WearApp : Application() {
          */
         val devModelPicker = MutableStateFlow(false)
 
+        /** Dev hook `-e approvals`: opens the per-chat approvals sheet like the ✅ lane does. */
+        val devApprovals = MutableStateFlow(false)
+
+        /** Dev hook `-e orb_slot "3|approvals"`: remap one dial direction (lane picker driver). */
+        fun devOrbSlot(spec: String) = scope.launch {
+            val bits = spec.split('|').map { it.trim() }
+            val slot = bits.getOrNull(0)?.toIntOrNull()
+            val lane = bits.getOrNull(1)?.let { dev.hermes.wearos.domain.Lane.fromId(it) }
+            if (slot == null || lane == null) { Log.i(TAG, "orb_slot BAD spec '$spec'"); return@launch }
+            settings.setOrbSlot(slot, lane)
+            Log.i(TAG, "orb_slot $slot -> ${lane.id}")
+        }
+
         /** Dev hook `-e search <q>`: types a query into the Sessions search the way a thumb
          *  would (adb `input text` can't traverse the Wear IME), then one-shot clears itself. */
         val devSearchQuery = MutableStateFlow<String?>(null)
@@ -174,6 +187,15 @@ class WearApp : Application() {
         @Volatile
         var isForeground = false
             private set
+
+        /**
+         * What the wrist is actually looking at (owner 2026-10-29 notification rule): a run's
+         * event suppresses the system notification ONLY while ITS chat is the front chat screen.
+         * Another chat open, Sessions/Settings/Chats screens, the watch face, another app, or
+         * screen-off all route to standard Wear OS notifications (approve/open actions wired).
+         * Published by MainActivity; empty whenever nothing chat-shaped is on screen.
+         */
+        @Volatile var viewingChatId: String = ""
         private var resumedActivities = 0
 
         fun init(app: Application) {
@@ -208,6 +230,10 @@ class WearApp : Application() {
                 speak = SpeakAloud(app, settings, scope + SupervisorJob())
                 speak.init()
                 scope.launch { speak.loadEnabled() }
+                // Voice-out config (owner 2026-10-29): engine voice + reply speed. Load AFTER
+                // init posts (callback lands first on this looper) — loadVoiceConfig re-applies
+                // anyway, so order only affects a few-ms window on cold start.
+                scope.launch { speak.loadVoiceConfig() }
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
                 scope.launch { settings.loadIntroVideo() } // Display ▸ launch video (SplashIntro gate)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)

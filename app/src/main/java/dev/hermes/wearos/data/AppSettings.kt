@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.hermes.wearos.domain.FontScale
+import dev.hermes.wearos.domain.TtsConfig
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
 import dev.hermes.wearos.domain.CommandCatalog
@@ -33,6 +34,9 @@ class AppSettings(private val context: Context) {
         private val KEY_SESSION_ID = stringPreferencesKey("session_id")
         private val KEY_LAST_RUN = stringPreferencesKey("last_run")
         private val KEY_VOICE_OUT = booleanPreferencesKey("voice_out")
+        private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
+        private val KEY_TTS_RATE = floatPreferencesKey("tts_rate")
+        private val KEY_TTS_VOLUME = floatPreferencesKey("tts_volume")
         private val KEY_MARKDOWN = booleanPreferencesKey("markdown_rendering")
         private val KEY_CHATS_JSON = stringPreferencesKey("chats_json")
         private val KEY_ACTIVE_CHAT = stringPreferencesKey("active_chat")
@@ -170,6 +174,43 @@ class AppSettings(private val context: Context) {
     /** Master mute for speak-aloud (M2); default on. */
     suspend fun voiceOutEnabled(): Boolean = context.dataStore.data.first()[KEY_VOICE_OUT] ?: true
     suspend fun setVoiceOut(v: Boolean) = context.dataStore.edit { it[KEY_VOICE_OUT] = v }.let { }
+
+    /**
+     * TTS voice + reply speed (owner 2026-10-29, domain/TtsConfig): voice is an engine voice NAME
+     * (blank = engine default), rate is clamped. StateFlow mirrors because SpeakAloud applies both
+     * live the moment Settings changes them (same pattern as fontScale).
+     */
+    private val _ttsVoice = MutableStateFlow("")
+    val ttsVoice: StateFlow<String> = _ttsVoice
+    suspend fun ttsVoiceValue(): String = context.dataStore.data.first()[KEY_TTS_VOICE].orEmpty()
+    suspend fun loadTtsVoice() { _ttsVoice.value = ttsVoiceValue() }
+    suspend fun setTtsVoice(v: String) {
+        context.dataStore.edit { it[KEY_TTS_VOICE] = v.trim() }
+        _ttsVoice.value = v.trim()
+    }
+
+    private val _ttsRate = MutableStateFlow(TtsConfig.DEFAULT_RATE)
+    val ttsRate: StateFlow<Float> = _ttsRate
+    suspend fun ttsRateValue(): Float =
+        TtsConfig.clampRate(context.dataStore.data.first()[KEY_TTS_RATE] ?: TtsConfig.DEFAULT_RATE)
+    suspend fun loadTtsRate() { _ttsRate.value = ttsRateValue() }
+    suspend fun setTtsRate(v: Float) {
+        val r = TtsConfig.clampRate(v)
+        context.dataStore.edit { it[KEY_TTS_RATE] = r }
+        _ttsRate.value = r
+    }
+
+    /** Reply volume scale (mute-lane double slider): 0..1 utterance multiplier, default full. */
+    private val _ttsVolume = MutableStateFlow(TtsConfig.DEFAULT_VOLUME)
+    val ttsVolume: StateFlow<Float> = _ttsVolume
+    suspend fun ttsVolumeValue(): Float =
+        TtsConfig.clampVolume(context.dataStore.data.first()[KEY_TTS_VOLUME] ?: TtsConfig.DEFAULT_VOLUME)
+    suspend fun loadTtsVolume() { _ttsVolume.value = ttsVolumeValue() }
+    suspend fun setTtsVolume(v: Float) {
+        val x = TtsConfig.clampVolume(v)
+        context.dataStore.edit { it[KEY_TTS_VOLUME] = x }
+        _ttsVolume.value = x
+    }
 
     /**
      * Display ▸ "Markdown rendering" (SPEC §4/§5 F3): renders Hermes replies through

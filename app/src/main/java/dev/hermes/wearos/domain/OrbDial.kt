@@ -34,6 +34,12 @@ enum class Lane(val id: String, val glyph: String, val label: String) {
     Chats("chats", "💬", "chats"),
     Sessions("sessions", "≡", "sessions"),
     Agents("agents", "👤", "agents"),
+    /**
+     * Per-chat approval mode (owner 2026-10-29): release → the approvals sheet for THIS chat
+     * (inherit/manual/smart/off, domain/ApprovalMode). One more option than dial directions —
+     * the owner maps whichever direction he wants; Settings ▸ Orb lists every lane.
+     */
+    Approvals("approvals", "✅", "approvals"),
     Settings("settings", "⚙", "settings");
 
     companion object {

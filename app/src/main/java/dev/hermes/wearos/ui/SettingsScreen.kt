@@ -5,15 +5,25 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -32,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -48,6 +59,7 @@ import androidx.wear.compose.material.Text
 import dev.hermes.wearos.WearApp
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.domain.FontScale
+import dev.hermes.wearos.domain.TtsConfig
 import dev.hermes.wearos.domain.Lane
 import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.Gateway
@@ -121,12 +133,21 @@ fun SettingsScreen(
 
     val voiceOut by speak.enabled.collectAsState()
     val ttsState by speak.state.collectAsState()
+    // Voice-out config rows (owner 2026-10-29): flows mirror what SpeakAloud persists on pick.
+    val ttsRate by settings.ttsRate.collectAsState()
+    val ttsVoice by settings.ttsVoice.collectAsState()
+    var voicesOpen by remember { mutableStateOf(false) }
     val markdownOn by settings.markdownEnabled.collectAsState()
     val bodyTools by settings.bodyTools.collectAsState()
     val bodyStatus by BodyTools.status.collectAsState()
     val pushState by WearApp.Graph.pusher.state.collectAsState()
     val gateways by WearApp.Graph.gatewayList.collectAsState()
     val selectedGwId by WearApp.Graph.gatewaySelectedId.collectAsState()
+    // Settings tree (owner 2026-10-29: the flat screen became a "forever scroll"): root is a
+    // hub of nav rows; every section lives on its own page. Sections below are UNCHANGED logic,
+    // just wrapped in `if (page == …)` — same state, same prefs, same behavior.
+    var page by remember { mutableStateOf(SettingsPage.Root) }
+    androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = SettingsPage.Root }
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
     val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
     val sttPresent = remember { VoskStt.isModelPresent(context) }
@@ -162,8 +183,27 @@ fun SettingsScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("Settings", style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
+        Text(page.title, style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
 
+        if (page != SettingsPage.Root) {
+            Column(
+                modifier = Modifier.fillMaxWidth().clickable { page = SettingsPage.Root },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) { Text("‹  all settings", style = MaterialTheme.typography.caption2) }
+            Spacer(Modifier.height(6.dp))
+        }
+        if (page == SettingsPage.Root) {
+            val selGw = gateways.firstOrNull { it.id == selectedGwId }
+            SettingNavRow("🌐", "Gateways", "${gateways.size} saved" + (if (selGw != null) " · ✓ ${selGw.label}" else "")) { page = SettingsPage.Gateways }
+            SettingNavRow("🔑", "Agent keys", "per-agent gateway tokens") { page = SettingsPage.AgentKeys }
+            SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×") { page = SettingsPage.Voice }
+            SettingNavRow("🎛️", "Display", "markdown · splash · orb") { page = SettingsPage.Display }
+            SettingNavRow("⌚", "Watch", "body tools ${bodyTools.size} on · notifications") { page = SettingsPage.Watch }
+            SettingNavRow("ℹ️", "About", "v$version · stt model") { page = SettingsPage.About }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        if (page == SettingsPage.Gateways) {
         // ─── GATEWAYS (owner multi-gateway epic, SPEC §11) ────────────────────────────────
         FieldLabel("Gateways")
 
@@ -263,6 +303,8 @@ fun SettingsScreen(
             )
         }
 
+        }
+        if (page == SettingsPage.AgentKeys) {
         // ─── AGENT KEYS (SPEC §12.2; owner bug: "switching agents gives errors on some agents") ─
         // One Hermes box multiplexes every agent, but `API_SERVER_KEY` resolves PER PROFILE and
         // fails closed for a named profile without one — while the unauthenticated `/v1/health`
@@ -360,6 +402,8 @@ fun SettingsScreen(
             )
         }
 
+        }
+        if (page == SettingsPage.Gateways) {
         FieldLabel("Base URL (active)")
         EditLine(
             value = baseUrl,
@@ -409,6 +453,8 @@ fun SettingsScreen(
 
         // Display (SPEC §4 "Display" node, §5 F3): renders Hermes replies through
         // ui/md/WatchMarkdown instead of raw text. Default ON; StateFlow so the chat re-renders live.
+        }
+        if (page == SettingsPage.Display) {
         FieldLabel("Display")
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -579,6 +625,8 @@ fun SettingsScreen(
         }
 
         // watchkit helper daemon (server/watchkit, tailnet :8651): health probe like the Hermes Test.
+        }
+        if (page == SettingsPage.Gateways) {
         FieldLabel("Watchkit")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
@@ -608,6 +656,8 @@ fun SettingsScreen(
             )
         }
 
+        }
+        if (page == SettingsPage.Watch) {
         // W1-W4 body tools (SPEC §5): per-tool switches, all default OFF (owner-locked),
         // a Push-now button, and the fail-soft Health Services status lines.
         FieldLabel("Body tools")
@@ -651,9 +701,61 @@ fun SettingsScreen(
             Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
         }
 
-        StatusLine("stt model", if (sttPresent) "present ✅" else "missing – get-vosk-model.sh")
-        StatusLine("tts engine", ttsState.toString())
-        StatusLine("version", "v$version")
+        }
+        if (page == SettingsPage.Voice) {
+        // ─── VOICE-OUT CONFIG (owner 2026-10-29: "change voices… and change speed"; the chips
+        // became a DRAG SLIDER the same day: "the buttons don't all fit… a slider would do me
+        // better"). domain/TtsConfig owns the ↔ mapping; SpeakAloud applies mid-queue live and
+        // the release ear-tests the result. Slow (0.5×) left … fast (2.0×) right.
+        RateSlider(
+            rate = ttsRate,
+            onRate = { speak.setSpeechRate(it) },
+            onDone = { if (voiceOut) speak.preview() },
+        )
+        FieldLabel("voice")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = { voicesOpen = !voicesOpen },
+                modifier = Modifier.size(width = 140.dp, height = 34.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) {
+                Text(
+                    (if (ttsVoice.isEmpty()) "engine default" else ttsVoice)
+                        .take(18) + if (voicesOpen) " ▲" else " ▼",
+                    style = MaterialTheme.typography.button, maxLines = 1,
+                )
+            }
+        }
+        if (voicesOpen) {
+            // Engine-supplied list; empty until TTS reports Ready (engine wakes async).
+            val voices = speak.availableVoices()
+            if (voices.isEmpty()) {
+                StatusLine("voices", "engine not ready yet")
+            } else {
+                VoicePickRow("★ engine default", "", ttsVoice, onSelect = {
+                    speak.setVoice("")   // the settings.ttsVoice flow comes back on write
+                    if (voiceOut) speak.preview()
+                })
+                voices.forEach { v ->
+                    VoicePickRow(
+                        v.name.take(30) + if (v.builtin) " (built-in)" else "",
+                        v.name, ttsVoice, onSelect = {
+                            speak.setVoice(v.name)
+                            if (voiceOut) speak.preview()
+                        },
+                    )
+                }
+            }
+        }
+
+        }
+        if (page == SettingsPage.Voice) {
+            StatusLine("tts engine", ttsState.toString())
+        }
+        if (page == SettingsPage.About) {
+            StatusLine("stt model", if (sttPresent) "present ✅" else "missing – get-vosk-model.sh")
+            StatusLine("version", "v$version")
+        }
     }
 }
 
@@ -911,4 +1013,110 @@ private fun SplashChoiceChip(label: String, selected: Boolean, onClick: () -> Un
             contentColor = if (selected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
         ),
     ) { Text(label, style = MaterialTheme.typography.button) }
+}
+
+/** One row in the voice-out engine-voice picker; the stored name highlights itself. */
+@Composable
+private fun VoicePickRow(label: String, name: String, current: String, onSelect: () -> Unit) {
+    val selected = name == current
+    Button(
+        onClick = onSelect,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 34.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = if (selected) MaterialTheme.colors.primary else MaterialTheme.colors.surface.copy(alpha = 0.35f),
+            contentColor = if (selected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+        ),
+    ) { Text(label, style = MaterialTheme.typography.caption1, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+}
+
+/**
+ * REPLY-SPEED SLIDER (owner 2026-10-29, replacing same-day chip buttons that clipped the round
+ * face): a drag-everywhere track — touch anywhere jumps the knob there, keep dragging to fine
+ * tune, release to ear-test. Slow (0.5×) sits left, fast (2.0×) right; the mapping is pure
+ * (`TtsConfig.rateFromFraction`), so what the knob shows and what the engine gets cannot drift.
+ * Deliberately tiny physics: raw gesture loop, no Slider component exists in wear-compose 1.4.1.
+ */
+@Composable
+private fun RateSlider(rate: Float, onRate: (Float) -> Unit, onDone: () -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var trackW by remember { mutableStateOf(1f) }
+    val frac = TtsConfig.fractionFor(rate)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "reply speed · " + String.format(java.util.Locale.US, "%.2f", rate) + "×",
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
+                .onSizeChanged { trackW = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun applyAt(x: Float) = onRate(TtsConfig.rateFromFraction(x / trackW))
+                        applyAt(down.position.x)
+                        down.consume()
+                        while (true) {
+                            val ch = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: break
+                            applyAt(ch.position.x)
+                            ch.consume()
+                        }
+                        onDone()
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            val knob = with(density) { 26.dp.toPx() }
+            Box(
+                modifier = Modifier
+                    .size(with(density) { 26.dp })
+                    .offset { IntOffset(((trackW - knob) * frac).roundToInt(), 0) }
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colors.primary),
+            )
+        }
+        Text(
+            "slow 0.5× ←──→ fast 2.0×",
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.4f),
+        )
+    }
+}
+
+/** Settings tree pages (owner 2026-10-29 anti-forever-scroll restructure). */
+enum class SettingsPage(val title: String) {
+    Root("Settings"),
+    Gateways("Gateways"),
+    AgentKeys("Agent keys"),
+    Display("Display"),
+    Watch("Watch"),
+    Voice("Voice out"),
+    About("About"),
+}
+
+@Composable
+private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.5f)),
+    ) {
+        Column(horizontalAlignment = Alignment.Start) {
+            Text("$emoji  $title", style = MaterialTheme.typography.button)
+            Text(subtitle, style = MaterialTheme.typography.caption2, color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        Text("  ›", style = MaterialTheme.typography.title3)
+    }
+    Spacer(Modifier.height(4.dp))
 }

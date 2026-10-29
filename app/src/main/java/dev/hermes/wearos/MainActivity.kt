@@ -72,6 +72,7 @@ import androidx.wear.compose.material.SwipeToDismissBox
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import dev.hermes.wearos.ui.AgentPickerDialog
+import dev.hermes.wearos.ui.ApprovalModeDialog
 import dev.hermes.wearos.ui.ModelPickerDialog
 import dev.hermes.wearos.ui.ChatScreen
 import dev.hermes.wearos.ui.ChatsScreen
@@ -88,6 +89,7 @@ import dev.hermes.wearos.ui.md.ZoomableMediaViewer
 import dev.hermes.wearos.domain.BackRing
 import dev.hermes.wearos.domain.BottomLayout
 import dev.hermes.wearos.domain.DialSpin
+import dev.hermes.wearos.domain.DialVolume
 import dev.hermes.wearos.domain.FontScale
 import dev.hermes.wearos.domain.SlashCommands
 import dev.hermes.wearos.domain.Lane
@@ -152,6 +154,8 @@ class MainActivity : ComponentActivity() {
                 val activeChatId by session.activeChat.collectAsState()
                 val ttsState by speak.state.collectAsState()
                 val voiceOut by speak.enabled.collectAsState()
+                // Mute-lane double slider anchor + picker mirror (owner 2026-10-29).
+                val replyVol by settings.ttsVolume.collectAsState()
                 val markdownOn by settings.markdownEnabled.collectAsState()
                 val profile by settings.profile.collectAsState()
                 val agentList by agents.agents.collectAsState()
@@ -168,6 +172,7 @@ class MainActivity : ComponentActivity() {
                 var draft by remember { mutableStateOf("") }
                 var showAgents by remember { mutableStateOf(false) }
                 var showModels by remember { mutableStateOf(false) }
+                var approvalsOpen by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
                 // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
                 // the user on an empty list they can see is empty).
@@ -393,6 +398,14 @@ class MainActivity : ComponentActivity() {
                     if (screen == Screen.Sessions) session.refreshGatewaySessions()
                 }
 
+                // Notification routing (owner 2026-10-29): publish what the wrist is looking at.
+                // Only the front Chat screen showing THAT chat suppresses its system
+                // notifications; every other surface posts "" so events always go Wear OS native.
+                val activeChat by session.activeChat.collectAsState()
+                LaunchedEffect(screen, activeChat) {
+                    WearApp.Graph.viewingChatId = if (screen == Screen.Chat) activeChat else ""
+                }
+
                 val voiceStatus = when {
                     sttStatus.value.isNotEmpty() -> sttStatus.value
                     ttsState == SpeakAloud.State.MissingEngine -> "tts: no engine on device"
@@ -484,6 +497,12 @@ class MainActivity : ComponentActivity() {
                         Lane.Commands -> openCommands(null)
                         Lane.Chats -> screen = Screen.Chats
                         Lane.Sessions -> screen = Screen.Sessions
+                        // ✅ per-chat approvals (owner 2026-10-29): lands on the chat, sheet opens —
+                        // same contract as the model lane (the pick belongs to the chat).
+                        Lane.Approvals -> {
+                            screen = Screen.Chat
+                            approvalsOpen = true
+                        }
                         Lane.Agents -> {
                             showAgents = true
                             uiScope.launch { agents.refresh() }
@@ -653,6 +672,11 @@ class MainActivity : ComponentActivity() {
                             onFontScaleReset = { uiScope.launch { settings.setFontScale(FontScale.DEFAULT) } },
                             slots = dialSlots,
                             onDial = { lane -> handleLane(lane) },
+                            replyVolume = replyVol,
+                            onReplyVolume = { v ->
+                                speak.setReplyVolume(v)   // persists via AppSettings mirror
+                                if (voiceOut) speak.preview()
+                            },
                             commands = DialCommands(
                                 open = commandsOpen,
                                 state = overlayState,
@@ -728,6 +752,14 @@ class MainActivity : ComponentActivity() {
                 val devViewerScale by WearApp.Graph.devViewerScale.collectAsState()
                 // `-e model_picker`: open the 🧠 model picker exactly like a lane release would.
                 val devModelPicker by WearApp.Graph.devModelPicker.collectAsState()
+                val devApprovals by WearApp.Graph.devApprovals.collectAsState()
+                LaunchedEffect(devApprovals) {
+                    if (devApprovals) {
+                        WearApp.Graph.devApprovals.value = false
+                        screen = Screen.Chat
+                        approvalsOpen = true
+                    }
+                }
                 LaunchedEffect(devModelPicker) {
                     if (devModelPicker) {
                         WearApp.Graph.devModelPicker.value = false
@@ -743,7 +775,7 @@ class MainActivity : ComponentActivity() {
                 // winner; with nothing open it disables and Sessions/Settings keep their
                 // → Chat handler, and Chat keeps the plain system default (leaving is the exit).
                 val overlayOpen = editor != null || promptSheet != null || manageSheet != null ||
-                    confirmDelete != null || showAgents || showModels || commandsOpen || devViewerScale != null
+                    confirmDelete != null || showAgents || showModels || approvalsOpen || commandsOpen || devViewerScale != null
                 androidx.activity.compose.BackHandler(enabled = overlayOpen) {
                     when {
                         editor != null -> editor = null
@@ -752,6 +784,7 @@ class MainActivity : ComponentActivity() {
                         manageSheet != null -> manageSheet = null
                         // Model picker closes onto the chat (same contract as Agents).
                         showModels -> { showModels = false; screen = Screen.Chat }
+                        approvalsOpen -> { approvalsOpen = false; screen = Screen.Chat }
                         // Agents closes ONTO CHAT (back ring, batch 6): from the ring it is the
                         // Agents→Chat leg; from a dial open it simply goes home to the chat.
                         showAgents -> { showAgents = false; screen = Screen.Chat }
@@ -837,6 +870,26 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDismiss = { showModels = false; screen = Screen.Chat },
+                    )
+                }
+                if (approvalsOpen) {
+                    val uiState by session.state.collectAsState()
+                    ApprovalModeDialog(
+                        current = session.activeChatApprovalMode(),
+                        chatLabel = uiState.activeChatLabel,
+                        agent = profile,
+                        onPick = { m ->
+                            session.setChatApprovalMode(m)
+                            approvalsOpen = false
+                            WearApp.Graph.runOnUi {
+                                Toast.makeText(
+                                    context,
+                                    "✅ approvals: ${m.label} — this chat",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDismiss = { approvalsOpen = false; screen = Screen.Chat },
                     )
                 }
                 promptSheet?.let { msg ->
@@ -998,6 +1051,9 @@ private fun ChatBody(
     /** THE ORB DIAL (SPEC §12.1): the eight lanes as the owner mapped them (Settings ▸ Interface). */
     slots: List<Lane>,
     onDial: (Lane) -> Unit,
+    /** Mute-lane double slider (owner 2026-10-29): current reply volume + commit on release. */
+    replyVolume: Float,
+    onReplyVolume: (Float) -> Unit,
     /** The 6:00 slash overlay, when open (SPEC §12.3). */
     commands: DialCommands,
 ) {
@@ -1143,6 +1199,8 @@ private fun ChatBody(
                 onTap = onOrbTap,
                 onHoldStart = onHoldStart,
                 onHoldEnd = onHoldEnd,
+                replyVolume = replyVolume,
+                onReplyVolume = onReplyVolume,
             )
         }
         // Full-screen prompt editor (asks #5/#6) LAST in the Box = topmost: covers chat + orb bar,
@@ -1224,12 +1282,22 @@ private fun OrbCluster(
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
+    /** THE MUTE-LANE DOUBLE SLIDER (owner 2026-10-29): current reply volume seeds the dwell mode,
+     *  the release commits the new level (domain/DialVolume owns the math). */
+    replyVolume: Float,
+    onReplyVolume: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val scale = OrbDial.scaleFor(minOf(viewportW, viewportH))
     var armed by remember { mutableStateOf(false) }
     var activeSlot by remember { mutableStateOf(-1) }
+    // VOLUME MODE (the double slider's second half): dwelled on the mute lane, lateral travel
+    // now scales TTS reply volume instead of walking lanes; the release commits, no mute toggle.
+    var volumeMode by remember { mutableStateOf(false) }
+    var volumeLevel by remember { mutableStateOf(1f) }
+    var volumeDial by remember { mutableStateOf<DialVolume?>(null) }
+    var spinEngaged by remember { mutableStateOf(false) }
     // SPIN MODE state (domain/DialSpin): the ring's rotation phase, animated so detents read as
     // icons physically travelling around the disc (owner: "those little icons turn around you").
     val spin = remember(scale) { DialSpin(scale) }
@@ -1254,6 +1322,19 @@ private fun OrbCluster(
         androidx.compose.animation.core.tween(110),
         label = "orbRise",
     )
+    // MUTE DWELL → VOLUME MODE (owner: "pause on mute for maybe two seconds, then … swipe back
+    // and forth to change the volume"). Restarted by every aim change, so the timer only ever
+    // completes with the finger still parked on MUTE and no spin engaged.
+    androidx.compose.runtime.LaunchedEffect(armed, activeSlot, spinEngaged, volumeMode) {
+        if (!armed || volumeMode || spinEngaged) return@LaunchedEffect
+        if (activeSlot < 0 || OrbDial.slotFor(slots, activeSlot) != Lane.Mute) return@LaunchedEffect
+        kotlinx.coroutines.delay(DialVolume.DWELL_MS)
+        volumeDial = DialVolume(scale, replyVolume)
+        volumeLevel = replyVolume
+        volumeMode = true
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+        Log.i("HermesWear", "dial volume mode armed (mute dwell, start=$replyVolume)")
+    }
     // RING FIRST so the disc paints over its own center (the caption inside the overlay is the
     // one label that survives every direction, including the crowded lower arc).
     OrbDialOverlay(
@@ -1265,6 +1346,7 @@ private fun OrbCluster(
         visible = armed || dialPreview,
         phaseDeg = spinPhaseAnim,
         voiceOut = voiceOut,
+        volumeBadge = if (volumeMode) "🔊 ${DialVolume.pct(volumeLevel)}%" else null,
     )
     TalkOrb(
         listening = listening,
@@ -1282,8 +1364,22 @@ private fun OrbCluster(
         dialScale = scale,
         onDialArm = {
             armed = true; activeSlot = -1; risen = false; spinPhase = 0f; spin.reset()
+            volumeMode = false; volumeDial = null; spinEngaged = false
         },
         onDialMove = { dx, dy ->
+            // VOLUME MODE owns the stream once armed: lateral travel sets reply volume and the
+            // spin never sees a move (the lit lane stays mute; the ring holds still).
+            if (volumeMode) {
+                val d = volumeDial
+                if (d != null) {
+                    d.move(dx)
+                    if (d.changed) {
+                        volumeLevel = d.level
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    }
+                }
+                return@TalkOrb
+            }
             // AIM is the default (highlight follows the live angle — free re-aim, owner batch 5);
             // a lateral sweep from the top arc engages SPIN (domain/DialSpin): detents walk the
             // lit slot and the ring physically rotates it under the finger.
@@ -1291,20 +1387,31 @@ private fun OrbCluster(
             if (spin.changed) {
                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
             }
+            spinEngaged = spin.spinning
             activeSlot = spin.activeSlot
             spinPhase = spin.phaseDeg
             risen = if (spin.spinning) false else OrbDial.needsRise(dx, dy, scale)
         },
         onDialEnd = { _, _ ->
             armed = false; activeSlot = -1; risen = false; spinPhase = 0f
-            val slot = spin.commit() // spun gesture: the LIT slot commits, wherever the finger rose
-            if (slot != null) {
-                val lane = OrbDial.slotFor(slots, slot)
-                if (lane != Lane.None) {
-                    Log.d("HermesWear", "dial lane=${lane.id} slot=$slot spin=${spin.spinning}")
-                    onDial(lane)
+            if (volumeMode) {
+                // The double slider commits its level — the mute toggle is consumed by the dwell.
+                volumeMode = false
+                val v = volumeLevel
+                volumeDial = null
+                Log.i("HermesWear", "dial volume committed v=$v")
+                onReplyVolume(v)
+            } else {
+                val slot = spin.commit() // spun gesture: the LIT slot commits, wherever the finger rose
+                if (slot != null) {
+                    val lane = OrbDial.slotFor(slots, slot)
+                    if (lane != Lane.None) {
+                        Log.d("HermesWear", "dial lane=${lane.id} slot=$slot spin=${spin.spinning}")
+                        onDial(lane)
+                    }
                 }
             }
+            spinEngaged = false
         },
     )
 }

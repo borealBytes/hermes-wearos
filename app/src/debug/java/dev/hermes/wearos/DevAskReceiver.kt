@@ -72,6 +72,10 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }
+        // -e orb_slot "3|approvals" → remap ONE dial direction (drives the dial UI + shots;
+        // SPEC §12.1), -e approvals → open the per-chat approvals sheet like the lane does.
+        intent?.getStringExtra("orb_slot")?.let { spec -> WearApp.Graph.devOrbSlot(spec); return }
+        if (intent?.hasExtra("approvals") == true) { WearApp.Graph.devApprovals.value = true; return }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
         intent?.getStringExtra("del_gw")?.let { WearApp.Graph.devGwDelete(it); return }

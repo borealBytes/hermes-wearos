@@ -83,6 +83,7 @@ class ChatSession(
     private var currentRunId = ""
     private var lastFinishedRun: String? = null
     private var lastApprovalNotified: String? = null // request_id already notified (dedups SSE vs poll)
+    private var lastAutoApproved: String? = null      // request_id the per-chat mode already answered
     private var gen = 0L
     private var stoppedRunId = ""   // run the user STOPPED (owner ask #3): late events/polls ignored
     private var deltaCount = 0L     // deltas seen for the live run — stop_mid_run logcat proof
@@ -273,6 +274,7 @@ class ChatSession(
         currentRunId = ""
         lastFinishedRun = null
         lastApprovalNotified = null
+        lastAutoApproved = null
         gen++
         // Opening a chat acknowledges it: cancel its notifications + attention flag (M5).
         Notifs.cancelChat(app, meta.id, meta.lastRunId)
@@ -547,7 +549,22 @@ class ChatSession(
     private fun onApprovalArrived(info: ApprovalInfo) {
         Log.i(TAG, "approval arrived run=${info.runId} req=${info.requestId} active=$activeId choices=${info.choices}")
         _state.value = _state.value.copy(approval = info)
-        if (WearApp.Graph.isForeground) return
+        // PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode, SPEC §12.8): this chat's
+        // persisted pick answers for itself — Off always, Smart only while the human is away.
+        // Dedup by request id: the status poll re-reports a pending approval every 3 s.
+        val mode = ApprovalMode.fromId(store.get(activeId)?.approvalMode)
+        if (mode != ApprovalMode.Inherit && mode.autoApprove(viewingThisChat(activeId))) {
+            val key = "${info.requestId ?: info.runId}"
+            if (key != lastAutoApproved && !info.choices.isNullOrEmpty()) {
+                lastAutoApproved = key
+                Log.i(TAG, "approval auto-answered run=${info.runId} mode=${mode.id} chat=$activeId")
+                respondApproval(info.choices.first())
+            }
+            return
+        }
+        // Owner rule 2026-10-29: approvals notify from EVERY surface except the very chat the
+        // approval belongs to (its inline Approve/Deny card is already on screen there).
+        if (viewingThisChat(activeId)) return
         val key = info.requestId ?: info.runId
         if (lastApprovalNotified == key) return
         lastApprovalNotified = key
@@ -556,10 +573,23 @@ class ChatSession(
         Log.i(TAG, "approval notif run=${info.runId} chat=$activeId")
     }
 
+    /** The approvals sheet: read/write the ACTIVE chat's per-chat mode (owner ask 2026-10-29). */
+    fun activeChatApprovalMode(): ApprovalMode =
+        ApprovalMode.fromId(store.get(activeId)?.approvalMode)
+
+    fun setChatApprovalMode(mode: ApprovalMode) {
+        if (activeId.isEmpty()) return
+        store.update(activeId) { it.copy(approvalMode = mode.id) }
+        Log.i(TAG, "approval mode set chat=$activeId mode='${mode.id.ifEmpty { "inherit" }}'")
+    }
+
     fun respondApproval(choice: String) {
         val info = _state.value.approval ?: return
         _state.value = _state.value.copy(approval = null, status = "running…")
         lastApprovalNotified = null
+        // lastAutoApproved deliberately NOT cleared here: the status poll re-reports a pending
+        // approval every 3 s until the gateway drains it — resetting on answer would auto-answer
+        // the same request again. It resets with the next chat open (see openChat path above).
         Notifs.cancelApproval(app, info.runId)
         scope.launch {
             try { api().respondApproval(info.runId, choice, info.requestId) }
@@ -1228,12 +1258,18 @@ class ChatSession(
         store.saveTranscript(chatId, messageLog)
         // First answer settled: pull the gateway's session title into the list label (§3 titles).
         if (!error && messageLog.count { it.role == ChatMessage.Role.Hermes } == 1) enrichLabel(chatId)
-        // M5: settled while backgrounded → watch notification + attention flag (U1).
-        if (chatId.isNotEmpty() && !WearApp.Graph.isForeground) {
+        // M5 + owner rule 2026-10-29: a settle goes to Wear OS notifications unless THIS chat is
+        // the front screen (see Graph.viewingChatId) — another chat open, another surface, or
+        // screen-off all notify; only the chat you're literally watching renders inline instead.
+        if (chatId.isNotEmpty() && !viewingThisChat(chatId)) {
             store.update(chatId) { it.copy(pendingAttention = true) }
             Notifs.settle(app, chatId, store.get(chatId)?.label ?: "", text, error)
         }
     }
+
+    /** Notification suppress gate — true only while [chatId]'s transcript is on screen. */
+    private fun viewingThisChat(chatId: String) =
+        chatId.isNotEmpty() && WearApp.Graph.isForeground && WearApp.Graph.viewingChatId == chatId
 
     /**
      * Gateway label sync (verified probe): `GET {base}/api/sessions` → 200
