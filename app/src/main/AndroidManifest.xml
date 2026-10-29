@@ -8,6 +8,8 @@
          gateway route can be re-picked the moment the link moves, not one failed ask later. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Location tool (owner ask B): fail-soft one-shot fix; NOT required features so the APK
          still installs on images without GPS. Runtime grant via scripts/watch-health.sh grant. -->
@@ -70,10 +72,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- RUN KEEPER (owner 2026-10-29 night): the cached-process FREEZE on Samsung Wear eats
+             wakelocks AND the network; only a foreground service reliably survives the wrist-
+             away window. Started/stopped with each run (notify/RunKeeperService.kt). -->
+        <service
+            android:name=".notify.RunKeeperService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- M5: "Ask Hermes" tile (SPEC §5 U3): full-screen tap launches talk mode. -->
         <service
-            android:name=".tile.AskHermesTileService"
-            android:exported="true"
+            android:name=".tile.AskHermesTileService"            android:exported="true"
             android:label="@string/tile_label"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
