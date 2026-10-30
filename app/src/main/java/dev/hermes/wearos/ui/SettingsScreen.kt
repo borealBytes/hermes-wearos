@@ -190,8 +190,17 @@ fun SettingsScreen(
             // Round discipline (ask #5): plain-scroll settings column gets the safe-circle insets
             // (clock top / chin bottom / 20 dp edges) — an SLC-less screen needs it explicitly.
             .roundSafe()
-            .padding(horizontal = 4.dp)
-            .verticalScroll(rememberScrollState()),
+            .padding(start = 4.dp, end = 4.dp)
+            .verticalScroll(rememberScrollState())
+            // BATCH-4 #6: the rim clearance goes AFTER verticalScroll — as CONTENT padding, not a
+            // viewport band (a band before the scroll squashes the whole column: the root's last
+            // rows fell out of the clipped strip, caught on-device). Content padding means the
+            // LAST row's resting position is the circle-safe line, while the strip in between
+            // still scrolls normally through the rim zone like any Wear list.
+            .padding(
+                bottom = (circleSafeBottomDp(4f, 12f) - roundInsets().bottomDp)
+                    .coerceAtLeast(0f).dp,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -857,6 +866,32 @@ fun SettingsScreen(
         if (page == SettingsPage.About) {
             StatusLine("stt model", if (sttPresent) "present ✅" else "missing – get-vosk-model.sh")
             StatusLine("version", "v$version")
+            // BATCH-4 #10 (owner's credit line, verbatim): MIT · borealBytes (tappable) ·
+            // Superior ByteWorks, LLC · Clayton Young. The org name opens the GitHub on the
+            // companion browser; watches with no browser fail soft to a toast (nothing else
+            // on the watch can render the page anyway).
+            Text(
+                "MIT · 🌐 borealBytes",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.primary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .clickable(onClickLabel = "open github.com/borealBytes") {
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/borealBytes"),
+                        )
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "github.com/borealBytes", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+            StatusLine("made by", "Superior ByteWorks, LLC")
+            StatusLine("author", "Clayton Young")
         }
     }
 }

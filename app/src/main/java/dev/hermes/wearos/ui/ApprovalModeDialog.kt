@@ -48,7 +48,9 @@ fun ApprovalModeDialog(
                 .fillMaxSize()
                 .background(Color.Black)
                 .verticalScroll(rememberScrollState())
-                .padding(top = 30.dp, bottom = 18.dp),
+                // BATCH-4 #6: rim clearance as CONTENT padding after the scroll (see AgentPicker).
+                .padding(top = 30.dp, bottom = 18.dp)
+                .padding(top = 0.dp, bottom = (circleSafeBottomDp(12f, 10f) - 18f).coerceAtLeast(0f).dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

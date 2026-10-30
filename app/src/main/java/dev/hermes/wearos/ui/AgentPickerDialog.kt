@@ -48,9 +48,12 @@ fun AgentPickerDialog(
                 .background(Color.Black)
                 // Explicit circle clearance: window insets aren't delivered inside Dialog windows,
                 // so the safe-circle paddings are spelled out (title out of the clock zone,
-                // content above the chin, edges off the round clip).
+                // content above the chin, edges off the round clip). BATCH-4 #6: the RIM
+                // clearance rides AFTER verticalScroll as content padding (a pre-scroll band
+                // would squash the viewport) — the last chip RESTS on the circle-safe line.
                 .padding(top = 30.dp, bottom = 18.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = (circleSafeBottomDp(12f, 10f) - 18f).coerceAtLeast(0f).dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

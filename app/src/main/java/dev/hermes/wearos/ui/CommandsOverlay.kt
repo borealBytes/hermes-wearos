@@ -133,7 +133,14 @@ fun CommandsOverlay(
             onVoiceStart = onVoiceStart,
             onVoiceStop = onVoiceStop,
         )
-        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+            // BATCH-4 #6: the sheet's last command must scroll clear of the rim band too.
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                top = 4.dp, bottom = 26.dp, start = 10.dp, end = 10.dp,
+            ),
+        ) {
             sections.forEach { (title, rows) ->
                 item {
                     Text(

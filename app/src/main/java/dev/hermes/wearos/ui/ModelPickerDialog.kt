@@ -68,7 +68,10 @@ fun ModelPickerDialog(
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .padding(top = 30.dp, bottom = 18.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(rememberScrollState())
+                    // BATCH-4 #6: rim clearance as CONTENT padding after the scroll (see
+                    // AgentPicker — a pre-scroll band squashes the viewport).
+                    .padding(bottom = (circleSafeBottomDp(12f, 10f) - 18f).coerceAtLeast(0f).dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
