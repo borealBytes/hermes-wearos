@@ -33,7 +33,7 @@ tmp-shots/
 docs/demo/*.mp4
 
 # watchkit dev artifacts (venv/models symlinked per worktree)
-server/watchkit/.venv/
-server/watchkit/.models/
+server/watchkit/.venv
+server/watchkit/.models
 server/watchkit/__pycache__/
 server/watchkit/.transcribe-src/
