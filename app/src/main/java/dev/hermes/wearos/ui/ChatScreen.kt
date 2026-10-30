@@ -148,6 +148,19 @@ fun ChatScreen(
     // thinking dots then stream from the 8:20 line like the first chat; scrolling after that
     // stays manual for the rest of THIS run (next run takes the tail back again).
     val lastBusy = remember { mutableStateOf(state.busy) }
+    // #14 FOCUS HOLD: the render decision the ticker relies on — while an answer is awaited
+    // the transcript collapses to caption + question + status (ChatAnchor hold
+    // constants), which is what makes every hold a top-rest, pixel-truthful layout. Ends
+    // with the first streamed delta, an approval, a finish, or the wearer grabbing the list
+    // (follow off) — scrolling never fights a held view.
+    // The status line BLANKS between engine/tool updates mid-run ("thinking…" → "" →
+    // "🔧 terminal…" measured 2026-10-30) — keying the hold on it FRAGMENTS the wait. The
+    // invariant that never wobbles is: engine busy + newest row is the wearer's question +
+    // nothing streamed yet. The status row therefore always RENDERS during a hold (blank
+    // text when there is nothing to say) — it is the gap's bottom anchor, not a condition.
+    val focusHold = state.busy && state.live.isEmpty() &&
+        state.approval == null && state.messages.lastOrNull()?.role == ChatMessage.Role.User &&
+        follow.value
     LaunchedEffect(
         state.activeChatId, state.messages.size, state.live.length,
         state.busy, state.approval?.requestId, state.status, typeScale, follow.value, slcH,
@@ -183,7 +196,8 @@ fun ChatScreen(
             last.index - first.index + 1 == vis.size &&
             vis.size == info.totalItemsCount - (if (first.index == 0) 0 else 1)
         val contentH = if (allShown && slcH > 0)
-            vis.sumOf { it.size } - (if (first!!.index == 0) first.size else 0) else -1
+            (vis.sumOf { it.size } - (if (first!!.index == 0) first.size else 0)).coerceAtLeast(0)
+        else -1
         val idleEmpty = state.messages.isEmpty() && state.live.isEmpty()
         val slack = if (contentH > 0f && !idleEmpty && state.approval == null)
             (slcH - bottomPadPx - contentH) else 0f
@@ -216,7 +230,7 @@ fun ChatScreen(
         // TOP-LEFT on the 10:00 line. Stable at its result (next pass measures tenY, delta 0);
         // re-decides as the header grows mid-composition.
         val qRow = vis.firstOrNull { it.index == state.messages.size + 1 }
-        if (awaitingAnswer && slack > 1f && state.approval == null && qRow != null &&
+        if (awaitingAnswer && !focusHold && slack > 1f && state.approval == null && qRow != null &&
             qRow.offset >= 0 && slcH > 0 && !listState.canScrollBackward
         ) {
             val tenY = dev.hermes.wearos.domain.RoundScreen.tenOclockY(
@@ -230,13 +244,21 @@ fun ChatScreen(
                     "tenY=${tenY.toInt()} slcTop=${slcTopPx.toInt()} slack=${slack.toInt()}",
             )
         }
-        val idx = ChatAnchor.bottomIndex(
+        val idx = if (focusHold) ChatAnchor.holdBottomIndex() else ChatAnchor.bottomIndex(
             messageCount = state.messages.size,
             hasApproval = state.approval != null,
             hasLive = state.live.isNotEmpty(),
             hasStatus = state.status.isNotEmpty(),
             showEmptyHint = ChatAnchor.showEmptyHint(state.messages.size, state.live, state.approval != null),
         )
+        // #14 FOCUS HOLD rides the SHIPPED rules above: the collapsed list is short content,
+        // so slack>1 owns the view — pad fills to exactly the cluster top and the pass rests
+        // at the list top (the hardware-proven #1/#4 short-transcript branch). Question +
+        // thinking land bottom-aligned on the orb crown, empty runway above for the reply to
+        // grow into. No ticker: hardware 2026-10-30 proved mid-clamp layoutInfo offsets are
+        // not pixel truth (settled rows reported −124/83 while drawn at 272/378), so any
+        // offset-tracking pin converges in a fiction — while the slack rule never measures an
+        // offset at all (spacer = viewport − bottomPad − content, fixed by construction).
         if (state.approval != null && !follow.value) {
             // APPROVAL CENTERED — but only as a RESCUE (owner demo 2026-10-26, reshaped by
             // batch-4 #5): when the user is scrolled away and an approval lands, the in-list
@@ -396,7 +418,12 @@ fun ChatScreen(
                 }
             }
         }
-        items(state.messages, key = { it.id }) { msg -> MessageLine(msg, markdown, onEditPrompt) }
+        // #14 FOCUS HOLD: history above the question hides while the answer is awaited —
+        // the runway belongs to the incoming reply, and the short list keeps the hold in the
+        // pixel-truthful top-rest regime (ChatAnchor hold constants + ticker). The same rows
+        // return, keyed and intact, the moment the first delta answers.
+        val renderMessages = if (focusHold) state.messages.takeLast(1) else state.messages
+        items(renderMessages, key = { it.id }) { msg -> MessageLine(msg, markdown, onEditPrompt) }
         if (state.approval != null) {
             item { ApprovalCard(state.approval, onApprove) }
         }
@@ -414,10 +441,14 @@ fun ChatScreen(
                 )
             }
         }
-        if (state.status.isNotEmpty()) {
+        if (focusHold || state.status.isNotEmpty()) {
+            // #14: during a FOCUS HOLD the status line is PERMANENT (blank between engine/
+            // tool updates keeps its row) — the hold layout never changes height mid-run, so
+            // the slack pad stays exact through "thinking…" → "" → "🔧 terminal…". Outside a
+            // hold the line appears exactly when the text exists, as ever.
             item {
                 Text(
-                    state.status,
+                    state.status.ifBlank { " " },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                     style = MaterialTheme.typography.caption2.scaled(),
                     color = Color(0xFFF5C518),
