@@ -636,6 +636,15 @@ class ChatSession(
     fun approve() = _state.value.approval?.let { respondApproval(it.choices.first()) }
     fun deny() = _state.value.approval?.let { respondApproval(it.choices.last()) }
 
+    /** DEV-only (DevAskReceiver `-e approval_demo`): park a fake approval on the open chat so
+     *  the orb-flanking ✅/❌ (batch-4 #5) and the bottom-only rule are provable on hardware
+     *  without driving gateway state into manual-approval mode. Answering fail-softs like the
+     *  notify_demo cards: the local card clears, the POST to the unknown run no-ops. */
+    fun devInjectApproval(info: ApprovalInfo) {
+        Log.i(TAG, "dev approval injected run=${info.runId} choices=${info.choices}")
+        _state.value = _state.value.copy(approval = info)
+    }
+
     /**
      * STOP (owner ask #3): the moment the user taps the orb while a run streams, we detach from the
      * stream (SSE + polling ignored via stoppedRunId/currentRunId), settle the partial answer and

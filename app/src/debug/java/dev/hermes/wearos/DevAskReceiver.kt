@@ -76,6 +76,18 @@ class DevAskReceiver : BroadcastReceiver() {
         // SPEC §12.1), -e approvals → open the per-chat approvals sheet like the lane does.
         intent?.getStringExtra("orb_slot")?.let { spec -> WearApp.Graph.devOrbSlot(spec); return }
         if (intent?.hasExtra("approvals") == true) { WearApp.Graph.devApprovals.value = true; return }
+        // -e approval_demo 1 → park a PENDING approval on the open chat (batch-4 #5 hardware
+        // proof: the ✅/❌ flanks, the bottom-only rule, mid-scroll arrival). -e approve resolves.
+        if (intent?.hasExtra("approval_demo") == true) {
+            android.util.Log.i("HermesWear", "dev: approval_demo inject (session live)")
+            WearApp.Graph.session.devInjectApproval(
+                dev.hermes.wearos.domain.ApprovalInfo(
+                    "dev-approval", "dev-req-1",
+                    "Run `rm -rf /tmp/scratch`?", listOf("approve", "deny"),
+                ),
+            )
+            return
+        }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
         intent?.getStringExtra("del_gw")?.let { WearApp.Graph.devGwDelete(it); return }

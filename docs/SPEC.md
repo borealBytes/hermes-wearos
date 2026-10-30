@@ -899,8 +899,8 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 | 1 | ✅ | Newest streamed text's bottom-left corner rests at the **"8:20 spot"** — the circle rim ∩ top-of-orb line — so nothing clips on round faces; derived from orb position + screen shape so SQUARE screens (and any vendor round size) work unchanged | FIXED 2026-10-30: `BottomLayout.circleSafeBottomPad` = max(orb-crown, physical-rim at the text gutter) feeds the transcript pad; growing-row lag settled by delayed re-asserts (wear's clamp uses the PREVIOUS layout pass). Circle-masked captures: mid-stream digits fully readable, none shaved (pre-fix: "29"→"9") |
 | 2 | 🛠 | Karaoke's spoken line anchors at the **10-o'clock tick height** (~25 % down — wide rim up there, left edge never clips); no-nudge band re-tuned around it | CODE LANDED: karaoke anchor = `RoundScreen.tenOclockY`, band 12 %–35 % around it. Hardware capture needs a READ-ALoud session — scheduled into the end-of-batch watch pass |
 | 3 | ✅ | The submitted question anchors at that same 10:00 height (ChatAnchor baseline re-base) | FIXED 2026-10-30: while a question awaits its answer the bottom spacer shrinks by the MEASURED row-top minus tick (derived geometry undercounted header chrome — measured 120 vs rendered 258), clamped to `[0, slack]`. Masked capture: question top-left lands upper-left (≈10:00–10:20 depending on header mid-composition), never under the orb; exact-pixel polish logged below |
-| 4 | ☐ | **Follow-up replies scroll-from-orb like the first chat in a new session** — every answer rises from the 8:20 corner regardless of history length (pad recomputed per reply; over-long replies switch to in-reply tail-follow) | `ui/ChatScreen.kt` spacer pad |
-| 5 | ☐ | Approval ✅ **OK = left of the orb**, ❌ **NO = right of the orb** — but **only while scrolled to the chat bottom** (no buttons permanently hanging by the orb → no mis-clicks); also fixes: buttons never appeared when the approval arrived mid-scroll | `ui/ChatScreen.kt` + ApprovalCard |
+| 4 | ✅ | **Follow-up replies scroll-from-orb like the first chat in a new session** — every answer rises from the 8:20 corner regardless of history length (pad recomputed per reply; over-long replies switch to in-reply tail-follow) | PROVEN 2026-10-30: same-session follow-up streamed with the first-chat geometry (masked mid-stream: digits fully readable left of the orb) and settled showing the TRUE end (41–45) clear of the rim — the late-settle re-asserts land the tail at wear's padding-honoring end |
+| 5 | ✅ | Approval ✅ **OK = left of the orb**, ❌ **NO = right of the orb** — but **only while scrolled to the chat bottom** (no buttons permanently hanging by the orb → no mis-clicks); also fixes: buttons never appeared when the approval arrived mid-scroll | SHIPPED 2026-10-30: `ApprovalFlank` pair rides the old agent/sessions spots at 1.45× (big thumb targets), shown only while a live approval waits AND `chatFollow` is true. The in-list card became pure context (its permanent OK/No buttons WERE the vetoed pair); forced-centering survives only as the scrolled-away RESCUE. Mid-scroll arrival now works: scroll to the bottom → card rests on the safe line + flanks appear. `-e approval_demo 1` dev hook drives it. Masked shots: bottom (flanks flank, card readable) / scrolled (both gone) / tap (responds, clears) |
 | 6 | ☐ | **Top/bottom buffer padding on EVERY list** (Settings tree, Voice lists, Sessions, Chats, Commands, search) — any last row scrolls into the meat of the circle | shared content-padding helper (reuses #1's rim math) |
 | 7 | ☐ | **Edge-circle scrolling everywhere** — finger circling the screen edge CW/CCW scrolls; chat first as the pattern, then every #6 surface; `edgeRotate` + `rotaryScrollable` covers touch-only round AND square via Wear's bezel-emulation | one shared modifier over every SLC |
 | 8 | ☐ | Settings ▸ Voice ▸ **Speech input provider picker**: Local Vosk default/offline · System (Google/Samsung) via `SpeechRecognizer`, honestly labeled **OFF-DEVICE** when networked, auto-detected per vendor (Pixel/OnePlus → Google) | `voice/` abstraction + `SettingsScreen` |
@@ -950,6 +950,18 @@ pure (`SplashIntro.launcherShaped`) and JVM-tested.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **Orb-flanking approvals (batch item 5, 2026-10-30, watch-proven).** A live approval while the
+  transcript rests at its tail paints ✅ on the old agent spot and ❌ on the sessions spot at
+  1.45× radius (`ApprovalFlank`), driven by `chatAtBottom = chatFollow` — so the buttons exist
+  exactly when they can be understood and never dangle by the orb (owner: *"no permanent
+  mis-click bait"*). The in-list card became pure context — its permanent OK/No pair WAS the
+  vetoed pattern — and forced-centering now runs only as the scrolled-away rescue, which is also
+  the fix for "buttons never appeared when the approval arrived mid-scroll": scroll to the
+  bottom and the card + flanks appear together. Both UIs resolve the gateway verb vocabulary
+  through one pure helper (`domain/ApprovalChoices`, 3 tests). Dev hook: `-e approval_demo 1`.
+  Proof trio (circle-masked): bottom (✅ left, orb, ❌ right, question fully readable), scrolled
+  away (both gone), ✅ tapped (approval clears, chat returns). 367 green (was 364).
 
 - **The circle-meat geometry family + the round-detection bug batch 4 was hiding (items 1–3,
   2026-10-30).** `BottomLayout.circleSafeBottomPad` is the new one-source-of-truth bottom line —

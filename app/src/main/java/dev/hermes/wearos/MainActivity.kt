@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -65,6 +66,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.wear.compose.material.MaterialTheme
@@ -1302,6 +1304,9 @@ private fun ChatBody(
                 onHoldEnd = onHoldEnd,
                 replyVolume = replyVolume,
                 onReplyVolume = onReplyVolume,
+                approval = state.approval,
+                chatAtBottom = chatFollow.value,
+                onApproveChoice = onApprove,
             )
         }
         // Full-screen prompt editor (asks #5/#6) LAST in the Box = topmost: covers chat + orb bar,
@@ -1389,6 +1394,12 @@ private fun OrbCluster(
      *  the release commits the new level (domain/DialVolume owns the math). */
     replyVolume: Float,
     onReplyVolume: (Float) -> Unit,
+    /** BATCH-4 #5 (owner: *"OK should be to the LEFT of the orb, NO to the RIGHT — but only when
+     *  I'm looking at the bottom of the chat, not permanently hanging there"*): a live approval
+     *  while the transcript rests at its tail paints ✅/❌ on the old agent/sessions spots. */
+    approval: dev.hermes.wearos.domain.ApprovalInfo? = null,
+    chatAtBottom: Boolean = false,
+    onApproveChoice: (String) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -1518,6 +1529,50 @@ private fun OrbCluster(
             spinEngaged = false
         },
     )
+    // THE APPROVAL FLANKS (batch-4 #5, owner: *"✅ OK to the LEFT of the orb, ❌ NO to the RIGHT,
+    // but only when I'm at the bottom of the chat"*): shown ONLY while a live approval waits AND
+    // the transcript rests at its tail (chatFollow) — they never dangle by the orb while the user
+    // reads history, so there is no permanent mis-click bait. This also fixes the reported bug
+    // (buttons invisible when the approval lands mid-scroll): scrolling to the bottom re-engages
+    // follow and the flanks appear instantly; the in-list card still carries the question text.
+    val appr = approval
+    if (appr != null && chatAtBottom) {
+        ApprovalFlank(cluster.agent, Color(0xFF1B5E20), "✅") {
+            onApproveChoice(dev.hermes.wearos.domain.ApprovalChoices.approveName(appr.choices))
+        }
+        ApprovalFlank(cluster.sessions, Color(0xFF7F1D1D), "❌") {
+            onApproveChoice(dev.hermes.wearos.domain.ApprovalChoices.denyName(appr.choices))
+        }
+    }
+}
+
+/** One round ✅/❌ action riding a BottomLayout spot's CENTER at 1.45× the spot radius — big
+ *  enough for a thumb at the rim, centered so the geometry stays BottomLayout-owned. */
+@Composable
+private fun ApprovalFlank(
+    spot: BottomLayout.Spot,
+    bg: Color,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val r = spot.r * 1.45f
+    Box(
+        modifier = Modifier
+            .size(with(LocalDensity.current) { (r * 2f).toDp() })
+            .offset {
+                IntOffset((spot.cx - r).roundToInt(), (spot.cy - r).roundToInt())
+            }
+            .clip(CircleShape)
+            .background(bg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.title3,
+            fontSize = 26.sp,
+        )
+    }
 }
 
 /** Offset a child so it EXACTLY covers a BottomLayout circle (top-left = center − r, in px). */

@@ -223,11 +223,14 @@ fun ChatScreen(
             hasStatus = state.status.isNotEmpty(),
             showEmptyHint = ChatAnchor.showEmptyHint(state.messages.size, state.live, state.approval != null),
         )
-        if (state.approval != null) {
-            // APPROVAL CENTERS (owner demo 2026-10-26): the card is the actionable row and the
-            // list may already sit at its end (lazy tail) — the tail push can't lift a card that
-            // was inserted ABOVE the viewport. scrollToItem(idx, 0) lands idx on the list's
-            // center anchor = dead-center in the circle, every time (measured on-device).
+        if (state.approval != null && !follow.value) {
+            // APPROVAL CENTERED — but only as a RESCUE (owner demo 2026-10-26, reshaped by
+            // batch-4 #5): when the user is scrolled away and an approval lands, the in-list
+            // card would sit unreachable below the fold, so pull it to the Middle anchor —
+            // "Middle" = dead-center in the circle, every time (measured on-device). When the
+            // chat is FOLLOWING, the card is a plain tail row: it rests on the circle-safe
+            // line and the ✅/❌ flanks flank the orb beneath it (the centering used to park
+            // the card ON TOP of those flanks — the reshaped rule keeps both readable).
             listState.scrollToItem((state.messages.size + 1).coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
         } else if (slack > 1f) {
             // SHORT TRANSCRIPT: the spacer fills to exactly the cluster top — rest at the list
@@ -493,17 +496,13 @@ private fun ApprovalCard(info: ApprovalInfo, onApprove: (String) -> Unit) {
     ) {
         Text("⚠ Approve?", style = MaterialTheme.typography.body1, color = Color(0xFFF5C518))
         Text(info.question, style = MaterialTheme.typography.caption1, fontSize = 13.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            val approveName = info.choices.firstOrNull { !it.contains("deny", true) && !it.equals("no", true) } ?: "approve"
-            val denyName = info.choices.firstOrNull { it.contains("deny", true) || it.equals("no", true) } ?: "deny"
-            Button(
-                onClick = { onApprove(approveName) },
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF2E7D32)),
-            ) { Text("OK") }
-            Button(
-                onClick = { onApprove(denyName) },
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF7F1D1D)),
-            ) { Text("No") }
-        }
+        // BATCH-4 #5: the ACTION moved to the orb flanks (✅ left / ❌ right, bottom-only — see
+        // MainActivity.ApprovalFlank). The card is pure context now; in-flow OK/No buttons here
+        // were exactly the "permanently hanging" pair the owner vetoed next to a fresh flank pair.
+        // onApprove stays for callers that drive it programmatically (notification taps).
     }
 }
+
+@Suppress("unused")
+private val approvalCardNoButtonJustification =
+    "card actions live on the orb flanks (batch-4 #5); onApprove param kept for API stability"
