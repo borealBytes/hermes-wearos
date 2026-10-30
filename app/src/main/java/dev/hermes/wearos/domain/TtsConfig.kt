@@ -40,6 +40,16 @@ object TtsConfig {
         if (v.isNaN()) DEFAULT_VOLUME else v.coerceIn(0f, 1f)
 
     /**
+     * MUTE IS MUTE (batch-5 #19, owner 2026-10-30: *"I have it muted, but it still seems like
+     * it's talking to me from the orb … if it's muted, the talking shit shouldn't happen"*). At
+     * 0 % reply volume the old code still QUEUED every sentence with KEY_PARAM_VOLUME=0 — no
+     * sound, but the orb pulsed its STOP/"mute" face and the karaoke cursor marched, so the watch
+     * silently lip-synced like it was shouting. 0 % therefore means: speak NOTHING — no queue, no
+     * `_speaking`, no orb mouth, no follow. The 5 % grid makes equality the honest test.
+     */
+    fun muted(volume: Float): Boolean = clampVolume(volume) <= 0f
+
+    /**
      * PER-AGENT REPLY VOLUME (owner 2026-10-29): each agent may ride its own level (the wear
      * agent polite at 40 %, the work agent loud at 100 %); unset agents inherit the global
      * slider. Stored as a 5 % grid so a wrist-sized slider can never land on a phantom value:

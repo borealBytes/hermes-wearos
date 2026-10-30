@@ -217,6 +217,9 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
      */
     fun setReplyVolume(v: Float) {
         volume = TtsConfig.clampVolume(v)
+        // BATCH-5 #19: dialing to 0 MID-utterance cuts the live queue — the rest of the answer
+        // would be queued-silent anyway, and the orb drops its STOP face the moment you mute.
+        if (TtsConfig.muted(volume)) stop()
         scope.launch { settings.setTtsVolumeFor(settings.profileSync(), volume) }
     }
 
@@ -376,15 +379,19 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
      * Feed the growing streaming answer (ChatUiState.live). Speaks every completed sentence
      * (>= MIN_CHUNK chars) that hasn't been spoken yet. A shorter-than-consumed buffer means a
      * new run started, so offsets reset.
+     *
+     * BATCH-5 #19: at 0 % reply volume every sentence is CONSUMED but never QUEUED — mute means
+     * silent AND still (no `_speaking`, so the orb keeps its face and the karaoke cursor sleeps).
      */
     fun feed(textSoFar: String) {
         if (!_enabled.value || _state.value != State.Ready) return
+        val mute = dev.hermes.wearos.domain.TtsConfig.muted(settings.ttsVolumeForSync())
         if (textSoFar.length < scanFrom) resetTracking()
         var segStart = scanFrom
         var i = scanFrom
         while (i < textSoFar.length) {
             if (textSoFar[i] in SENTENCE_ENDS && i + 1 - segStart >= MIN_CHUNK) {
-                speak(textSoFar.substring(segStart, i + 1), queueAdd = true, offset = segStart)
+                if (!mute) speak(textSoFar.substring(segStart, i + 1), queueAdd = true, offset = segStart)
                 consumeTo(textSoFar, i + 1)
                 segStart = scanFrom
             }
@@ -403,6 +410,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     /** Final settled text arrived: flush whatever the stream never reached. */
     fun finish(fullText: String) {
         if (!_enabled.value || _state.value != State.Ready || fullText.isBlank()) { resetTracking(); return }
+        if (dev.hermes.wearos.domain.TtsConfig.muted(settings.ttsVolumeForSync())) { resetTracking(); return }
         val prefix = spokenPrefix.toString()
         if (fullText.startsWith(prefix)) {
             val rest = fullText.drop(prefix.length).trim()
@@ -415,9 +423,10 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         resetTracking()
     }
 
-    /** Speak a standalone text (dev `speak` broadcast, notices). */
+    /** Speak a standalone text (dev `speak` broadcast, notices). Mute is mute: silent. */
     fun speakFinal(text: String) {
         if (!_enabled.value || _state.value != State.Ready) return
+        if (dev.hermes.wearos.domain.TtsConfig.muted(settings.ttsVolumeForSync())) return
         stop()
         speak(text, queueAdd = false, offset = -1)
     }

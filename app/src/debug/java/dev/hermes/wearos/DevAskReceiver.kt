@@ -307,6 +307,10 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         intent?.getStringExtra("speak")?.let { WearApp.Graph.speak.speakFinal(it); return }
+        // BATCH-5 #19 proof hook: set the CURRENT AGENT's reply volume (0 = mute) without a wrist.
+        intent?.getStringExtra("set_vol")?.toFloatOrNull()?.let {
+            WearApp.Graph.speak.setReplyVolume(it); return
+        }
         intent?.getStringExtra("play_url")?.let { MediaPlayerHolder.play(context!!, it); return }
         val text = intent?.getStringExtra("text") ?: return
         WearApp.Graph.session.ask(text)

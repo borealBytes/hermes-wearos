@@ -1,6 +1,8 @@
 package dev.hermes.wearos.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -59,5 +61,14 @@ class TtsConfigTest {
         assertEquals(mapOf("wear" to 45), TtsConfig.decodeVolumes("wear=47,junk,=30,code,,wear=x"))
         assertEquals(0, TtsConfig.decodeVolumes("a=-9")?.get("a")) // negative clamps home
         assertEquals(100, TtsConfig.decodeVolumes("a=140")?.get("a"))
+    }
+
+    // ── batch-5 #19: MUTE IS MUTE — 0 % reply volume speaks NOTHING (no queue, no orb mouth) ──
+    @Test fun `zero volume is mute, any sound is not`() {
+        assertTrue(TtsConfig.muted(0f))
+        assertTrue(TtsConfig.muted(-0.5f))          // clamps to 0 → mute
+        assertTrue(!TtsConfig.muted(0.05f))         // one 5 % step is audible
+        assertTrue(!TtsConfig.muted(1f))
+        assertTrue(!TtsConfig.muted(Float.NaN))     // NaN → default (full), never "muted"
     }
 }
