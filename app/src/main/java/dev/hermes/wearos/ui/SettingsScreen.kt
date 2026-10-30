@@ -1012,6 +1012,30 @@ fun SettingsScreen(
                     }
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
+            // BATCH-5 #22 (owner: *"we should also have a tappable link to this repo for the main
+            // branch just so people can get right there … I like having one go my main borealBytes
+            // GitHub profile first though"*): the profile link above stays primary; this second
+            // chip opens THE PROJECT itself (root shows the default branch, main).
+            Text(
+                "🌐 hermes-wearos — this repo",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.primary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .clickable(onClickLabel = "open github.com/borealBytes/hermes-wearos") {
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/borealBytes/hermes-wearos"),
+                        )
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "github.com/borealBytes/hermes-wearos", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
             StatusLine("made by", "Superior ByteWorks, LLC")
             StatusLine("author", "Clayton Young")
         }
