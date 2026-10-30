@@ -119,6 +119,10 @@ class WearApp : Application() {
          */
         val devModelPicker = MutableStateFlow(false)
 
+        /** Dev hook `-e agents 1`: open the agent picker like the agents lane does (batch-4 #6
+         *  dialog-padding proof without hunting the chip under SLC centering). */
+        val devAgents = MutableStateFlow(false)
+
         /** Dev hook `-e approvals`: opens the per-chat approvals sheet like the ✅ lane does. */
         val devApprovals = MutableStateFlow(false)
 

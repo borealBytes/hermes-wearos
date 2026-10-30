@@ -1,5 +1,7 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
@@ -184,23 +186,22 @@ fun SettingsScreen(
         settings.loadBodyTools()
     }
 
+    val settingsScroll = androidx.compose.foundation.rememberScrollState()
+    val edgeScope = rememberCoroutineScope()
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            // Round discipline (ask #5): plain-scroll settings column gets the safe-circle insets
-            // (clock top / chin bottom / 20 dp edges) — an SLC-less screen needs it explicitly.
-            .roundSafe()
-            .padding(start = 4.dp, end = 4.dp)
-            .verticalScroll(rememberScrollState())
-            // BATCH-4 #6: the rim clearance goes AFTER verticalScroll — as CONTENT padding, not a
-            // viewport band (a band before the scroll squashes the whole column: the root's last
-            // rows fell out of the clipped strip, caught on-device). Content padding means the
-            // LAST row's resting position is the circle-safe line, while the strip in between
-            // still scrolls normally through the rim zone like any Wear list.
-            .padding(
-                bottom = (circleSafeBottomDp(4f, 12f) - roundInsets().bottomDp)
-                    .coerceAtLeast(0f).dp,
-            ),
+            // BATCH-4 #6, owner-corrected: NO viewport band (roundSafe removed) and no pre-scroll
+            // padding either — the scroll strip is the WHOLE face, exactly like chat ("cutting off
+            // stuff at the top and the bottom of the screen, which is dumb… like you did on the
+            // chat window initially"). The buffer is CONTENT padding after the scroll: think of a
+            // web page with extra blank lines at the end — the text flows through the rim zone
+            // while you read, and the LAST line comes to rest in the meat of the circle.
+            // BATCH-4 #7: finger-circling the edge scrolls the settings tree too.
+            .edgeCircleScroll { total -> edgeScope.launch { settingsScroll.scrollBy(total) } }
+            .padding(horizontal = 20.dp)
+            .verticalScroll(settingsScroll)
+            .padding(top = 12.dp, bottom = circleSafeBottomDp(20f, 12f).dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

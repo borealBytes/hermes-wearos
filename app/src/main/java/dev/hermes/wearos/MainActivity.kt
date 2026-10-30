@@ -786,6 +786,14 @@ class MainActivity : ComponentActivity() {
                 // `-e model_picker`: open the 🧠 model picker exactly like a lane release would.
                 val devModelPicker by WearApp.Graph.devModelPicker.collectAsState()
                 val devApprovals by WearApp.Graph.devApprovals.collectAsState()
+                val devAgents by WearApp.Graph.devAgents.collectAsState()
+                LaunchedEffect(devAgents) {
+                    if (devAgents) {
+                        WearApp.Graph.devAgents.value = false
+                        screen = Screen.Chat
+                        showAgents = true; uiScope.launch { agents.refresh() }
+                    }
+                }
                 LaunchedEffect(devApprovals) {
                     if (devApprovals) {
                         WearApp.Graph.devApprovals.value = false

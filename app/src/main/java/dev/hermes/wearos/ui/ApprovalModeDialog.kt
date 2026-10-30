@@ -1,5 +1,9 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -43,14 +47,17 @@ fun ApprovalModeDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
+        val edgeScope = rememberCoroutineScope()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .verticalScroll(rememberScrollState())
-                // BATCH-4 #6: rim clearance as CONTENT padding after the scroll (see AgentPicker).
-                .padding(top = 30.dp, bottom = 18.dp)
-                .padding(top = 0.dp, bottom = (circleSafeBottomDp(12f, 10f) - 18f).coerceAtLeast(0f).dp),
+                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } }
+                .verticalScroll(edgeDlgScroll)
+                // Owner correction (batch-4 #6): buffer as CONTENT lines inside the scroll, not
+                // a viewport band (see AgentPickerDialog for the full lesson).
+                .padding(top = 34.dp, bottom = circleSafeBottomDp(12f, 10f).dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

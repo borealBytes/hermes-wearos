@@ -1,5 +1,9 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,18 +46,19 @@ fun AgentPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
+        val edgeScope = rememberCoroutineScope()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                // Explicit circle clearance: window insets aren't delivered inside Dialog windows,
-                // so the safe-circle paddings are spelled out (title out of the clock zone,
-                // content above the chin, edges off the round clip). BATCH-4 #6: the RIM
-                // clearance rides AFTER verticalScroll as content padding (a pre-scroll band
-                // would squash the viewport) — the last chip RESTS on the circle-safe line.
-                .padding(top = 30.dp, bottom = 18.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = (circleSafeBottomDp(12f, 10f) - 18f).coerceAtLeast(0f).dp),
+                // Owner correction (batch-4 #6): the old 30/18 band sat OUTSIDE the scroll and
+                // shrank the viewport — content visibly cut off at top and bottom. Whole face
+                // scrolls; the buffer is blank CONTENT lines at the ends (top so the title clears
+                // the clock at rest, bottom = the circle-safe rim line).
+                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } }
+                .verticalScroll(edgeDlgScroll)
+                .padding(top = 34.dp, bottom = circleSafeBottomDp(12f, 10f).dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

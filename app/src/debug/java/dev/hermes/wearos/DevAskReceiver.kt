@@ -76,6 +76,8 @@ class DevAskReceiver : BroadcastReceiver() {
         // SPEC §12.1), -e approvals → open the per-chat approvals sheet like the lane does.
         intent?.getStringExtra("orb_slot")?.let { spec -> WearApp.Graph.devOrbSlot(spec); return }
         if (intent?.hasExtra("approvals") == true) { WearApp.Graph.devApprovals.value = true; return }
+        // -e agents 1 → open the agent picker dialog (batch-4 #6 dialog-padding proof).
+        if (intent?.hasExtra("agents") == true) { WearApp.Graph.devAgents.value = true; return }
         // -e approval_demo 1 → park a PENDING approval on the open chat (batch-4 #5 hardware
         // proof: the ✅/❌ flanks, the bottom-only rule, mid-scroll arrival). -e approve resolves.
         if (intent?.hasExtra("approval_demo") == true) {

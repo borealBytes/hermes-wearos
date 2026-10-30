@@ -902,7 +902,7 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 | 4 | ✅ | **Follow-up replies scroll-from-orb like the first chat in a new session** — every answer rises from the 8:20 corner regardless of history length (pad recomputed per reply; over-long replies switch to in-reply tail-follow) | PROVEN 2026-10-30: same-session follow-up streamed with the first-chat geometry (masked mid-stream: digits fully readable left of the orb) and settled showing the TRUE end (41–45) clear of the rim — the late-settle re-asserts land the tail at wear's padding-honoring end |
 | 5 | ✅ | Approval ✅ **OK = left of the orb**, ❌ **NO = right of the orb** — but **only while scrolled to the chat bottom** (no buttons permanently hanging by the orb → no mis-clicks); also fixes: buttons never appeared when the approval arrived mid-scroll | SHIPPED 2026-10-30: `ApprovalFlank` pair rides the old agent/sessions spots at 1.45× (big thumb targets), shown only while a live approval waits AND `chatFollow` is true. The in-list card became pure context (its permanent OK/No buttons WERE the vetoed pair); forced-centering survives only as the scrolled-away RESCUE. Mid-scroll arrival now works: scroll to the bottom → card rests on the safe line + flanks appear. `-e approval_demo 1` dev hook drives it. Masked shots: bottom (flanks flank, card readable) / scrolled (both gone) / tap (responds, clears) |
 | 6 | ✅ | **Top/bottom buffer padding on EVERY list** (Settings tree, Voice lists, Sessions, Chats, Commands, search) — any last row scrolls into the meat of the circle | SHIPPED 2026-10-30: `roundListPadding` folds the #1 rim math into every SLC it feeds (Chat/Sessions/Chats); Settings + Agent/Model/Approval dialogs got rim clearance as CONTENT padding AFTER `verticalScroll` (the first cut put it before the scroll — a viewport band that amputated the settings tree's lower rows, caught by the masked sweep and reverted); `circleSafeBottomDp` reads the VIEW's display metrics so it is right inside Dialog windows too; Commands sheet padded. Proofs (masked): settings root whole again + scrollable; About page LAST line resting in the meat with the buffer band beneath it |
-| 7 | ☐ | **Edge-circle scrolling everywhere** — finger circling the screen edge CW/CCW scrolls; chat first as the pattern, then every #6 surface; `edgeRotate` + `rotaryScrollable` covers touch-only round AND square via Wear's bezel-emulation | one shared modifier over every SLC |
+| 7 | ✅ | **Edge-circle scrolling everywhere** — finger circling the screen edge CW/CCW scrolls; chat first as the pattern, then every #6 surface; `edgeRotate` + `rotaryScrollable` covers touch-only round AND square via Wear's bezel-emulation | SHIPPED 2026-10-30: Wear's `edgeRotate` does NOT exist in compose-foundation 1.4.1 (verified against the shipped jar), so `domain/EdgeScroll` owns the math (ring ≥ 0.80 r, 7°/step, LOCK at 2.5°/event separating circles from rim-drags) and `ui/edgeCircleScroll` the gesture — **CW = forward, CCW = back, verified end-to-end on the SM-L705U**. The hard-won part is the RELEASE-APPLY rule: wear 1.4.1 cannot scroll an SLC mid-touch (`scrollBy` returns `used=0` while the finger is down; `animateScrollBy` reports full distance yet lands only after UP), so the circle banks travel and lands it on release via `edgeScrollWalk` — absolute ≤120px steps in `centerItemScrollOffset` space (the info `visibleItemsInfo.offset` is its SIGN MIRROR for anchored items, caught on-device) against the fixed center item, one frame apart. Wired: Chat (hands off the tail-follow per `ChatFollow` before walking), Sessions, Chats via the walk; Settings + Agent/Model/Approval dialogs via plain `ScrollState.scrollBy`. Proofs (masked): chat 86-90 → CCW 74-81 → CW 86-90 → CW clamps at tail; sessions bottom ↔ top; settings both ways; agent dialog scrolls; straight drags untouched. 373 green (+6 EdgeScroll tests) |
 | 8 | ☐ | Settings ▸ Voice ▸ **Speech input provider picker**: Local Vosk default/offline · System (Google/Samsung) via `SpeechRecognizer`, honestly labeled **OFF-DEVICE** when networked, auto-detected per vendor (Pixel/OnePlus → Google) | `voice/` abstraction + `SettingsScreen` |
 | 9 | ☐ | **Gateway streaming STT**: watch streams the mic frames it already captures (16 kHz mono PCM16 ≈ 256 kbps; 10 s ≈ 320 KB; optional 8 kHz μ-law ≈ 64 kbps) over watchkit `/stt/stream` WS; engine in watchkit `config.json` (`whisper` today, **`parakeet` = NeMo Unified-EN-6B streaming**, partials streamed back WHILE talking); `/health` reports the engine, Settings shows it; auto-fallback to local | `server/watchkit/watchkit.mjs` + `scripts/whisper-env.sh` + watch side |
 | 10 | ✅ | About ▸ **"MIT · borealBytes (github.com/borealBytes, tappable) · Superior ByteWorks, LLC · Clayton Young"** | SHIPPED 2026-10-30: About reads `MIT · 🌐 borealBytes` (ACTION_VIEW to github.com/borealBytes, toast fail-soft on watches with no browser) + `made by: Superior ByteWorks, LLC` + `author: Clayton Young`. Masked capture: full block resting clear of the rim |
@@ -950,6 +950,28 @@ pure (`SplashIntro.launcherShaped`) and JVM-tested.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **Edge-circle scrolling (batch item 7, 2026-10-30, watch-proven).** Circling the rim scrolls
+  every list: `domain/EdgeScroll` (pure math: ring ≥ 0.80 r, `ANGLE_STEP_DEG` 7°, gain 0.65,
+  cap 60 px/event, `LOCK_DELTA_DEG` 2.5°/event) + `ui/edgeCircleScroll` (Initial-pass pointer
+  claim, angular-velocity lock so straight rim-drags stay with the list) + `edgeScrollWalk`
+  (the release-apply mechanism). Three on-device findings are encoded in their KDoc the hard
+  way: mid-touch `scrollBy` is dead (SLC touch channel, `used=0` per tick), `animateScrollBy`
+  lies (full distance, lands only after UP), and `visibleItemsInfo.offset` is the SIGN MIRROR
+  of `scrollToItem`'s space for anchored items (`got=-want`, 8/8 samples) — so the walk issues
+  absolute steps against the CENTER item in `centerItemScrollOffset` space, last-write-wins,
+  one frame apart. Sign truth: screen-CW = positive = forward. Chat hands off the tail-follow
+  (`ChatFollow` rule) before walking. Dev hook `-e agents 1` opens the picker for dialog proofs.
+  Masked proofs: chat round-trip 86-90 ↔ 74-81 + tail clamp, sessions both ends, settings both
+  ends, agent dialog, straight drags untouched. 373 green (+6 EdgeScroll).
+- **#6 owner-correction: buffer = CONTENT, not viewport (2026-10-30, watch-proven).** The first
+  #6 cut still shrank the scroll *window* on Settings root + the three dialogs (`roundSafe()` /
+  pre-scroll `padding(top=30,bottom=18)`). Owner veto ("cutting off stuff at the top and bottom
+  … like you did on the chat window"): the scroll strip is now the WHOLE face — content padding
+  only, after `verticalScroll` (settings root: `.padding(horizontal=20)` → `verticalScroll` →
+  `.padding(top=12, bottom=circleSafeBottomDp(20,12))`; dialogs top 34 / bottom circle-safe).
+  Masked proofs: settings root, Watch page, About page END (last row rests in the meat with the
+  blank buffer beneath), agent dialog top + end.
 
 - **Orb-flanking approvals (batch item 5, 2026-10-30, watch-proven).** A live approval while the
   transcript rests at its tail paints ✅ on the old agent spot and ❌ on the sessions spot at

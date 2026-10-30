@@ -1,5 +1,9 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,15 +67,17 @@ fun ModelPickerDialog(
                 .fillMaxSize()
                 .background(Color.Black),
         ) {
-            Column(
+            val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
+        val edgeScope = rememberCoroutineScope()
+        Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .padding(top = 30.dp, bottom = 18.dp)
-                    .verticalScroll(rememberScrollState())
-                    // BATCH-4 #6: rim clearance as CONTENT padding after the scroll (see
-                    // AgentPicker — a pre-scroll band squashes the viewport).
-                    .padding(bottom = (circleSafeBottomDp(12f, 10f) - 18f).coerceAtLeast(0f).dp),
+                    .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } }
+                .verticalScroll(edgeDlgScroll)
+                    // Owner correction (batch-4 #6): buffer = blank content lines INSIDE the
+                    // scroll (title clears the clock at rest, last row rests on the rim line).
+                    .padding(top = 34.dp, bottom = circleSafeBottomDp(12f, 10f).dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {

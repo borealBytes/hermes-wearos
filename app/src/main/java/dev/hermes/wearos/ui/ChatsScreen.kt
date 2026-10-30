@@ -1,5 +1,8 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +17,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,8 +55,13 @@ fun ChatsScreen(
     var renaming by remember { mutableStateOf<ChatMeta?>(null) }
     var draft by remember { mutableStateOf("") }
 
+    val edgeChatsState = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
+    val edgeScope = rememberCoroutineScope()
     ScalingLazyColumn(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth()
+            // BATCH-4 #7: edge-circle scrolling on every list surface.
+            .edgeCircleScroll { total -> edgeScope.launch { edgeChatsState.edgeScrollWalk(total) } },
+        state = edgeChatsState,
         contentPadding = roundListPadding(bottomExtraDp = 12f),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {

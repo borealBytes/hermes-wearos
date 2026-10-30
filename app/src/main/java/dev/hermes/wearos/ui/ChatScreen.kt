@@ -1,5 +1,8 @@
 package dev.hermes.wearos.ui
 
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -18,6 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -305,10 +310,24 @@ fun ChatScreen(
                 scrolling = now
             }
     }
+    val edgeScope = rememberCoroutineScope()
+    // BATCH-4 #7: the edge gesture banks travel while the finger rides the rim and lands it as
+    // ONE animateScrollBy on release (why not mid-touch scrolls: see ui/EdgeScrollGesture).
+    val edgeDriving = remember { mutableStateOf(false) }
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxWidth().onSizeChanged { slcH = it.height }
             .onGloballyPositioned { slcTopPx = it.positionInRoot().y }
+            // BATCH-4 #7: circling the screen EDGE scrolls the transcript (domain/EdgeScroll).
+            .edgeCircleScroll(driving = edgeDriving) { total ->
+                edgeScope.launch {
+                    // Same re-engagement rule the drag path uses (domain/ChatFollow): travel
+                    // while forward is still available means the user left the tail.
+                    if (listState.canScrollForward) follow.value = false
+                    programmaticScrollAt.value = android.os.SystemClock.elapsedRealtime()
+                    listState.edgeScrollWalk(total)
+                }
+            }
             .pointerInput(listState) {
             // OBSERVER-ONLY gesture watch (Initial pass, consumes nothing → the list scrolls and
             // the orb keeps its own lane). While the end is reached (no forward scroll left),
