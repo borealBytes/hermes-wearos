@@ -886,10 +886,91 @@ mutex rather than opening a second capture.
    open `/v1/health` is a trap for every client, not just the watch (§12.2).
 
 
+## 14. Owner batch 4 (2026-10-29/30 night): circle-meat geometry, orb-flanking approvals, STT backends, edge scroll
+
+Reviewed by the owner as a numbered table (agree/veto by number, 2026-10-30); the numbers below
+ARE the contract. One commit per item; `:app:testDebugUnitTest` stays green throughout;
+emulator-proven where possible; one chunked watch install at the end with screenshot proof each.
+Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED by the owner** —
+*"out of scope… cancel that shit"* — zero Hermes-gateway changes ride with this batch.
+
+| # | Status | Ask (owner language distilled) | Where it lands |
+|---|--------|------------------------------|----------------|
+| 1 | ☐ | Newest streamed text's bottom-left corner rests at the **"8:20 spot"** — the circle rim ∩ top-of-orb line — so nothing clips on round faces; derived from orb position + screen shape so SQUARE screens (and any vendor round size) work unchanged | `domain/BottomLayout.kt` rim math + `ui/ChatScreen.kt` bottom-anchor |
+| 2 | ☐ | Karaoke's spoken line anchors at the **10-o'clock tick height** (~25 % down — wide rim up there, left edge never clips); no-nudge band re-tuned around it | `MainActivity` karaoke effect + `domain/KaraokeCursor` |
+| 3 | ☐ | The submitted question anchors at that same 10:00 height (ChatAnchor baseline re-base) | `domain/ChatAnchor` + ChatScreen |
+| 4 | ☐ | **Follow-up replies scroll-from-orb like the first chat in a new session** — every answer rises from the 8:20 corner regardless of history length (pad recomputed per reply; over-long replies switch to in-reply tail-follow) | `ui/ChatScreen.kt` spacer pad |
+| 5 | ☐ | Approval ✅ **OK = left of the orb**, ❌ **NO = right of the orb** — but **only while scrolled to the chat bottom** (no buttons permanently hanging by the orb → no mis-clicks); also fixes: buttons never appeared when the approval arrived mid-scroll | `ui/ChatScreen.kt` + ApprovalCard |
+| 6 | ☐ | **Top/bottom buffer padding on EVERY list** (Settings tree, Voice lists, Sessions, Chats, Commands, search) — any last row scrolls into the meat of the circle | shared content-padding helper (reuses #1's rim math) |
+| 7 | ☐ | **Edge-circle scrolling everywhere** — finger circling the screen edge CW/CCW scrolls; chat first as the pattern, then every #6 surface; `edgeRotate` + `rotaryScrollable` covers touch-only round AND square via Wear's bezel-emulation | one shared modifier over every SLC |
+| 8 | ☐ | Settings ▸ Voice ▸ **Speech input provider picker**: Local Vosk default/offline · System (Google/Samsung) via `SpeechRecognizer`, honestly labeled **OFF-DEVICE** when networked, auto-detected per vendor (Pixel/OnePlus → Google) | `voice/` abstraction + `SettingsScreen` |
+| 9 | ☐ | **Gateway streaming STT**: watch streams the mic frames it already captures (16 kHz mono PCM16 ≈ 256 kbps; 10 s ≈ 320 KB; optional 8 kHz μ-law ≈ 64 kbps) over watchkit `/stt/stream` WS; engine in watchkit `config.json` (`whisper` today, **`parakeet` = NeMo Unified-EN-6B streaming**, partials streamed back WHILE talking); `/health` reports the engine, Settings shows it; auto-fallback to local | `server/watchkit/watchkit.mjs` + `scripts/whisper-env.sh` + watch side |
+| 10 | ☐ | About ▸ **"MIT · borealBytes (github.com/borealBytes, tappable) · Superior ByteWorks, LLC · Clayton Young"** | `SettingsPage.About` |
+| 12 | ☐ | **Video splash must actually play on a real app-drawer cold start** when VIDEO is selected (and STATIC must work when selected) — *"I close out all the apps and then I open Hermes… it shows the static image instead of the video"* | see root cause below |
+
+**Build order:** 12 → 1→3 (one geometry family, JVM rim math) → 4 → 5 → 6 → 10 → 7 → 8→9.
+(12 leads because review nailed its root cause with a system-log line, below — one-line fix, and
+the owner's next launch should already look right.)
+
+### 14.12 Why the film skipped the owner's launch (ROOT CAUSE, proven 2026-10-30)
+
+The gate (§Appendix A, night audit) required `ACTION_MAIN + CATEGORY_LAUNCHER` to call a launch
+"from the app grid". The One UI Watch app grid does not send the category — its cold start is,
+verbatim from the watch's own logcat:
+
+```
+ActivityTaskManager: START u0 {act=android.intent.action.MAIN flg=0x10200000 cmp=dev.hermes.wearos/.MainActivity}
+HermesWear: intro gate: mode=video custom= source=built-in
+HermesWear: intro skipped: NotLauncher
+```
+
+So the SETTING WAS READ CORRECTLY (`mode=video`) and the gate still skipped the film into the
+static spirit flash on every real drawer launch. The adb proofs that "worked" launched with an
+explicit `-c android.intent.category.LAUNCHER` — a fingerprint the real launcher never produces.
+(The same log ruled out the warm-start suspect: close-all really does kill the process —
+`Killing 25243:dev.hermes.wearos … remove task` — so `IntroClaimed` was fresh.)
+
+Fix: a launch is **launcher-shaped unless it proves otherwise** — the dev-harness marker
+(intent extra `dev_no_intro`) or a bare component start (`action == null`, what `am start -n`
+= every `scripts/*.sh` + docs/screens shot produces) decline; any `ACTION_MAIN` (with or without
+the category — AOSP launcher, One UI grid, monkey) plays the owner's chosen mode. Classifier is
+pure (`SplashIntro.launcherShaped`) and JVM-tested.
+
+
 ---
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **The run survives the wrist — notification wake-tier trio (2026-10-29 night, owner live-fire:
+  *"wait thirty seconds, then send a haiku and immediately went to the watchface… i did not get a
+  notification"*).** Three stacked causes, each proven by forensics then fixed: **(1) the gate
+  never knew the wrist left** — `viewingChatId`/`isForeground` cleared only on STOP, but a watch
+  going to the face/screen-off just PAUSES (Samsung ambient can hold STOP off for minutes) ⇒
+  `onActivityPaused` now clears the published view and MainActivity's lifecycle observer
+  re-publishes on ON_RESUME (wrist-up-over-the-same-chat still correctly stays silent);
+  **(2) the radio slept with the screen** — the SSE died at the transition and status-poll ate
+  `failed to connect … after 15000ms` rounds: a PARTIAL_WAKE_LOCK keeps DeviceIdle-ACTIVE but does
+  NOT stop Wi-Fi power-save ⇒ `RunWakeLock` now holds `WIFI_MODE_FULL_LOW_LATENCY` alongside the
+  CPU lock, same run scope, same 10-min auto-expiry. **(3) Samsung FREEZES the cached process** —
+  post-transition a dev broadcast sat enqueued, unprocessed: a frozen process cannot poll, stream,
+  or notify, and no lock unfreezes it ⇒ **`notify/RunKeeperService`** (silent ongoing
+  "answer in flight" card, `dataSync` FGS type) started by `RunWakeLock.acquire` and stopped by
+  `release` — run-scoped by construction. Watch-proven end-to-end with screen off: `wakelock
+  acquired` → `run keeper in foreground` → `finish run` → `notif posted`, card living in Wear's
+  `Aggregate_AlertingSection` (DND verified off).
+
+- **Karaoke day-two + the film's patience (2026-10-29 evening).** The spoken line now FOLLOWS the
+  voice: self-calibrating in-utterance cursor (`domain/KaraokeCursor`, EMA chars/sec, JVM-tested),
+  hand-off to the SETTLED message row when the live item vanishes, and `programmaticScrollAt`
+  (400 ms stamp) so karaoke's own scrolls never trip ChatFollow's user-scroll detector
+  (wear-compose raises `isScrollInProgress` even for instant `scrollToItem` — measured). Splash:
+  `FIRST_FRAME_BUDGET_MS` 8 s → **12 s** after a same-session cold start logged a 5.49 s first
+  frame that WOULD have played — the poster makes waiting invisible, so the only thing a bigger
+  ceiling costs is patience on a bad boot. Both modes hardware-proven via adb LAUNCHER cold
+  starts (`mode=video` blue film; `mode=static` holds 1.2 s then lifts).
+
+- **Voice-out config + dial volume + per-chat approvals + notif routing + the settings tree
 
 - **Voice-out config + dial volume + per-chat approvals + notif routing + the settings tree
   (SPEC §12.8–§12.10, owner batch 2026-10-29, all emulator-proven).** Engine voice picker +
