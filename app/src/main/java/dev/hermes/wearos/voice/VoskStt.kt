@@ -39,7 +39,7 @@ sealed class VoskEvent {
  * AudioRecord 16 kHz PCM16 mono, pull-API (`acceptWaveForm` + result polling — the Maven AAR has no
  * callback/stream API). One session at a time (mutex); model + recognizer cached across sessions.
  */
-class VoskStt(private val context: Context) {
+class VoskStt(private val context: Context) : SttSource {
 
     companion object {
         private const val TAG = "HermesWear"
@@ -73,7 +73,7 @@ class VoskStt(private val context: Context) {
      * and/or on stop (flush), Error for model-missing / busy / no-permission / mic failures.
      * [scope] is used to warm the model load concurrently.
      */
-    fun start(scope: CoroutineScope): Flow<VoskEvent> = flow {
+    override fun start(scope: CoroutineScope): Flow<VoskEvent> = flow {
         // sync.Mutex.tryLock() *throws* when another coroutine holds it: treat as busy.
         val locked = try { mutex.tryLock(); true } catch (e: IllegalMonitorStateException) { false }
         if (!locked) { emit(VoskEvent.Error("busy")); return@flow }
@@ -127,7 +127,7 @@ class VoskStt(private val context: Context) {
         .flowOn(Dispatchers.IO)
 
     /** Release native session handles; model/recognizer are reused, released with the process. */
-    fun stop() { stopping = true }
+    override fun stop() { stopping = true }
 
     private suspend fun ensureRecognizer(): Recognizer? = withContext(Dispatchers.IO) {
         val m = ensureModel() ?: return@withContext null

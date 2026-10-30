@@ -11,6 +11,7 @@ import dev.hermes.wearos.domain.FontScale
 import dev.hermes.wearos.domain.TtsConfig
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
+import dev.hermes.wearos.domain.SttProviders
 import dev.hermes.wearos.domain.CommandCatalog
 import dev.hermes.wearos.domain.CommandStat
 import dev.hermes.wearos.domain.CommandUsage
@@ -35,6 +36,8 @@ class AppSettings(private val context: Context) {
         private val KEY_SESSION_ID = stringPreferencesKey("session_id")
         private val KEY_LAST_RUN = stringPreferencesKey("last_run")
         private val KEY_VOICE_OUT = booleanPreferencesKey("voice_out")
+        // SPEECH-INPUT PROVIDER (batch-4 #8): "local" (default, offline Vosk) | "system".
+        private val KEY_STT_PROVIDER = stringPreferencesKey("stt_provider")
         private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
         private val KEY_TTS_ENGINE = stringPreferencesKey("tts_engine")
         private val KEY_TTS_FALLBACK = stringPreferencesKey("tts_fallback")
@@ -184,6 +187,23 @@ class AppSettings(private val context: Context) {
     /** Master mute for speak-aloud (M2); default on. */
     suspend fun voiceOutEnabled(): Boolean = context.dataStore.data.first()[KEY_VOICE_OUT] ?: true
     suspend fun setVoiceOut(v: Boolean) = context.dataStore.edit { it[KEY_VOICE_OUT] = v }.let { }
+
+    /**
+     * SPEECH-INPUT PROVIDER (batch-4 #8): persisted id ("local"/"system"); the in-memory truth
+     * is `SttProviders.current` (voice/UI read it synchronously — same-moment switch promise),
+     * seeded here at startup and rewritten by setSttProvider. Default LOCAL even when the system
+     * recognizer exists: the watch keeps listening in airplane mode (SPEC §5 offline rule).
+     */
+    suspend fun sttProviderValue(): String =
+        context.dataStore.data.first()[KEY_STT_PROVIDER] ?: SttProviders.ID_LOCAL
+    suspend fun loadSttProvider() {
+        SttProviders.current = sttProviderValue()
+    }
+    suspend fun setSttProvider(v: String) {
+        val id = if (v == SttProviders.ID_SYSTEM) SttProviders.ID_SYSTEM else SttProviders.ID_LOCAL
+        context.dataStore.edit { it[KEY_STT_PROVIDER] = id }
+        SttProviders.current = id
+    }
 
     /**
      * TTS voice + reply speed (owner 2026-10-29, domain/TtsConfig): voice is an engine voice NAME

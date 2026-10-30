@@ -225,13 +225,15 @@ class MainActivity : ComponentActivity() {
                 val voiceCancel = remember { mutableStateOf(false) }
 
                 fun endListening() {
-                    WearApp.Graph.stt.stop()
+                    // Both engines get the stop: the pick cannot change mid-session, but an
+                    // idle sibling stop is free (flag set / null-recognizer no-op).
+                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop()
                     voiceSink.value = null
                 }
 
                 fun cancelListening() {
                     voiceCancel.value = true
-                    WearApp.Graph.stt.stop()
+                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop()
                     voiceSink.value = null
                 }
 
@@ -245,7 +247,7 @@ class MainActivity : ComponentActivity() {
                         vad.value = Vad.start(System.currentTimeMillis())
                         listening.value = true
                         sttJob.value = uiScope.launch {
-                            WearApp.Graph.stt.start(lifecycleScope).collect { ev ->
+                            WearApp.Graph.sttNow().start(lifecycleScope).collect { ev ->
                                 when (ev) {
                                     is VoskEvent.Partial -> {
                                         val sink = voiceSink.value

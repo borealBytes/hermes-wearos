@@ -61,6 +61,9 @@ import androidx.wear.compose.material.Text
 import dev.hermes.wearos.WearApp
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.domain.FontScale
+import dev.hermes.wearos.domain.SttProvider
+import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.domain.TtsConfig
 import dev.hermes.wearos.domain.Lane
 import dev.hermes.wearos.domain.OrbDial
@@ -731,6 +734,31 @@ fun SettingsScreen(
             Text("🔊 voice out", style = MaterialTheme.typography.body2)
             Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
         }
+        // SPEECH INPUT PROVIDER (batch-4 #8, owner: picker in Settings ▸ Voice, the system
+        // recognizer "honestly labeled OFF-DEVICE … auto-detected per vendor"). Two buttons,
+        // HONEST subtitles from domain/SttProviders (pure + JVM-tested); Vosk stays default —
+        // airplane mode must keep listening (SPEC §5). The mic path resolves the pick on every
+        // startListening (WearApp.Graph.sttNow), so a pick is live immediately, no restart.
+        FieldLabel("🎙 speech input")
+        val sysAvailable = remember { SystemStt.isAvailable(context) }
+        val sysPkg = remember { SystemStt.recognizerPackage(context) }
+        var sttProv by remember { mutableStateOf(SttProviders.fromId(SttProviders.current)) }
+        VoicePickRow(
+            "🎙️ Local Vosk · " + SttProviders.subtitle(SttProvider.LOCAL, sttPresent, sysAvailable, sysPkg),
+            SttProviders.id(SttProvider.LOCAL), SttProviders.id(sttProv),
+            onSelect = {
+                sttProv = SttProvider.LOCAL
+                scope.launch { settings.setSttProvider(SttProviders.ID_LOCAL) }
+            },
+        )
+        VoicePickRow(
+            "📡 System · " + SttProviders.subtitle(SttProvider.SYSTEM, sttPresent, sysAvailable, sysPkg),
+            SttProviders.id(SttProvider.SYSTEM), SttProviders.id(sttProv),
+            onSelect = {
+                sttProv = SttProvider.SYSTEM
+                scope.launch { settings.setSttProvider(SttProviders.ID_SYSTEM) }
+            },
+        )
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.

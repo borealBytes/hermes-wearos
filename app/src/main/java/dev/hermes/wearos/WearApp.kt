@@ -19,6 +19,10 @@ import dev.hermes.wearos.net.NetworkMonitor
 import dev.hermes.wearos.net.SnapshotPusher
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
+import dev.hermes.wearos.domain.SttProvider
+import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.voice.SttSource
+import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.voice.VoskStt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -50,6 +54,15 @@ class WearApp : Application() {
             private set
         lateinit var stt: VoskStt
             private set
+        /** Batch-4 #8: the SYSTEM recognizer behind the same SttSource seam (picker switch). */
+        lateinit var sttSystem: SystemStt
+            private set
+
+        /** Which engine the mic flow gets NOW (batch-4 #8 picker; offline-safe default). */
+        fun sttNow(): SttSource =
+            if (SttProviders.fromId(SttProviders.current) == SttProvider.SYSTEM &&
+                SystemStt.isAvailable(app)
+            ) sttSystem else stt
         lateinit var agents: AgentsRepo
             private set
 
@@ -291,6 +304,8 @@ class WearApp : Application() {
                     agents.refresh()
                 }
                 stt = VoskStt(app)
+                sttSystem = SystemStt(app)
+                scope.launch { settings.loadSttProvider() } // seed the #8 picker mirror
                 session.resume() // loads registry (migrates legacy keys), restores active chat + in-flight run
                 network.start() // LAST: its hook reaches into every other Graph member
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).

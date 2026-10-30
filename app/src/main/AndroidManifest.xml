@@ -32,6 +32,20 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
 
+        <!-- BATCH-4 #8: the speech-input picker names the vendor behind the SYSTEM recognizer;
+         Android 11+ package visibility hides it from resolveService without this. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.SpeechRecognition" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".WearApp"
         android:allowBackup="false"
