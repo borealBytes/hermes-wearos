@@ -87,6 +87,11 @@ fun ChatScreen(
     // reset to following the moment the owner's answer arrives, which is precisely when his
     // scroll position matters most.
     follow: MutableState<Boolean> = remember { mutableStateOf(true) },
+    // BATCH-5 #20: the voice is reading an answer RIGHT NOW (SpeakAloud.speaking). While it is,
+    // the karaoke anchor (MainActivity) owns the scroll and this effect STANDS DOWN entirely —
+    // hardware logs showed the two fighting every tick (tail-pin vs teleprompter: dy froze at
+    // its floor then diverged). Re-engaged the moment speech ends: `speaking` is an effect key.
+    speaking: Boolean = false,
     // KARAOKE's "WE MOVED IT" STAMP (owner 2026-10-29 night): the follow-disengage edge detector
     // below reads any RISE-then-fall of isScrollInProgress as the user's gesture — but wear-
     // compose raises that flag for programmatic scrollToItem too (measured: an animated karaoke
@@ -164,6 +169,7 @@ fun ChatScreen(
     LaunchedEffect(
         state.activeChatId, state.messages.size, state.live.length,
         state.busy, state.approval?.requestId, state.status, typeScale, follow.value, slcH,
+        speaking,
     ) {
         val switched = state.activeChatId != lastChatKey.value
         if (switched) lastChatKey.value = state.activeChatId
@@ -174,6 +180,10 @@ fun ChatScreen(
         lastBusy.value = state.busy
         if (switched || newAsk || runStarted) follow.value = ChatFollow.reengaged()
         if (!follow.value) return@LaunchedEffect // manual mode: the stream holds its hands off
+        // BATCH-5 #20 TELEPHER: while the voice reads, the karaoke anchor owns the scroll —
+        // tail-pinning here froze every spoken-line request against the orb clamp (the block
+        // "stayed exactly" while the voice walked away from it — owner's live complaint).
+        if (speaking) return@LaunchedEffect
         // Wait (bounded) for a frame the list has FULLY composed — wear lays the tail lazily,
         // and a chat opened mid-transition reports an empty/stale layoutInfo. Without a whole
         // frame there is no truthful content height to pad against; the classic rocket is the

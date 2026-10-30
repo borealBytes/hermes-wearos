@@ -112,6 +112,7 @@ import dev.hermes.wearos.domain.CommandUsage
 import dev.hermes.wearos.domain.SplashIntro
 import dev.hermes.wearos.ui.CommandsOverlay
 import dev.hermes.wearos.ui.IntroVideo
+import dev.hermes.wearos.ui.edgeScrollWalk
 import dev.hermes.wearos.ui.CommandOverlayState
 import dev.hermes.wearos.ui.OrbDialOverlay
 import dev.hermes.wearos.net.GatewaySessions
@@ -1178,17 +1179,30 @@ private fun ChatBody(
         val tailIdx = 2 + state.messages.size + (if (state.approval != null) 1 else 0)
         // Last row of the transcript sits at 2+size-1 regardless of a trailing approval card.
         val wantIdx = if (settling) 1 + state.messages.size else tailIdx
-        val item = chatListState.layoutInfo.visibleItemsInfo
-            .firstOrNull { it.index == wantIdx } ?: return@LaunchedEffect
+        val item = chatListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == wantIdx }
+        if (item == null) {
+            // BATCH-5 #20: the spoken row is OFF-SCREEN (the voice started while the view still
+            // rode elsewhere) — and while speaking, the tail-pin effect stands down, so "bail
+            // and wait" dead-locks the view exactly where it was (hardware: the whole read ran
+            // with the screen parked on an old answer). Bring THE ROW to the top once; the
+            // next cursor tick finds it and the relative walk takes over.
+            chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
+            chatListState.scrollToItem(wantIdx, 0)
+            return@LaunchedEffect
+        }
         val yOfSpoken = off.toFloat() / textLen * item.size
-        // THE 10 O'CLOCK ANCHOR (batch-4 #2, owner: *"the beginning of the speech should start
-        // at the 10 o'clock spot"*): the spoken line rides RoundScreen.tenOclockY (~25 % down,
-        // rim wide open up there → left edge never clipped). The no-nudge band runs from just
-        // under the clock (~12 %) to the 8:20 rim∩orb line (~60 %): anything already inside is
-        // comfortably readable, anything outside is lifted back to the tick.
+        // BATCH-5 #20 — TELETHER (owner live review 2026-10-30: *"it's not scrolling with the
+        // talking… it stays exactly and scrolls line by line. It's kind of like a block of
+        // text that's speaking is visible… the meat of it is in the center, not quite what I
+        // would like"*): the old no-nudge band ran from ~13 % to ~60 % of the face — half the
+        // screen — so the block sat frozen while the voice walked through it, then lurched one
+        // line at a time. Now the spoken line rides [RoundScreen.tenOclockY] CONTINUOUSLY:
+        // every cursor tick re-anchors, so the answer scrolls up WITH the voice like a
+        // teleprompter. A 12 px dead zone kills jitter; the anchor itself is batch-2 #2's
+        // 10-o'clock line (rim wide open up there → the left gutter never clips on round).
         val anchorY = dev.hermes.wearos.domain.RoundScreen.tenOclockY(vpW, vpH)
-        val onScreen = item.offset + yOfSpoken
-        if (onScreen in (anchorY - vpH * 0.12f)..(anchorY + vpH * 0.35f)) return@LaunchedEffect
+        val deltaPx = item.offset + yOfSpoken - anchorY
+        if (kotlin.math.abs(deltaPx) < 12f) return@LaunchedEffect
         // INSTANT, not animateScrollToItem: the follow-disengage detector reads a RISE of
         // isScrollInProgress as the user grabbing the list, and wear-compose raises it for
         // ANIMATED scrolls too — an animated karaoke nudge disengaged tail-follow on its first
@@ -1197,7 +1211,14 @@ private fun ChatBody(
         // edges settling within the guard window are ours (ChatScreen skips them). The 180 ms
         // ticker + the ~12–60 % no-nudge band keep the jumps rare and small.
         chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
-        chatListState.scrollToItem(wantIdx, (yOfSpoken - anchorY).roundToInt().coerceAtLeast(0))
+        // RELATIVE, not absolute (batch-5 #20, hardware): the spoken line is delta px from
+        // the tick — walk THAT distance in the state's own offset space (the on-device-proven
+        // edge-scroll walker: positive = forward, honest clamps). The old absolute
+        // scrollToItem(wantIdx, yOfSpoken - anchorY) mixed coordinate spaces: it rewound the
+        // view toward the TOP whenever the line sat above the anchor (shots showed OLD answers
+        // reappear under the voice), and pinned it at offset 0 whenever below — the frozen
+        // block the owner reviewed live.
+        chatListState.edgeScrollWalk(deltaPx)
     }
     // #16: the overlay's engine label reads from watchkit's /health inventory — cold starts
     // (and the beat after a watchkit restart) have never probed, and "engine ?" would then
@@ -1323,6 +1344,7 @@ private fun ChatBody(
                     onEditPrompt = onEditPrompt,
                     listState = chatListState,
                     follow = chatFollow,
+                    speaking = speaking,
                     programmaticScrollAt = chatScrollStamp,
                     contentPadBottomDp = if (hasViewport) barPadDp else null,
                     viewportW = vpW,

@@ -22,6 +22,7 @@ fun VoiceHost(session: ChatSession, speak: SpeakAloud) {
     val ttsState by speak.state.collectAsState()
     val lastSpokenId = remember { mutableLongStateOf(-1L) }
     val lastGen = remember { mutableLongStateOf(-1L) }
+    val lastUserId = remember { mutableLongStateOf(-1L) }
 
     LaunchedEffect(Unit) {
         Log.i("HermesWear", "voice host up tts=$ttsState voiceOut=${speak.enabled.value}")
@@ -38,11 +39,23 @@ fun VoiceHost(session: ChatSession, speak: SpeakAloud) {
         }
     }
     // Progressive: speak each completed sentence as the answer streams in.
+    // BATCH-5 #20 (hardware, 2026-10-30): the newest USER message ENDS the previous answer's
+    // speech — a new ask means the wearer moved on, and the voice must follow the ask (the old
+    // queue kept reading an already-replaced reply across two fresh questions — watch logcat:
+    // hermes-11 of the PREVIOUS answer still starting mid-hold — "talking from the orb" unasked).
     LaunchedEffect(state.live, state.busy) {
+        val u = state.messages.lastOrNull { it.role == ChatMessage.Role.User }
+        if (u != null && u.id != lastUserId.longValue) speak.stop() // new ask cuts old speech
         if (state.busy && state.live.isNotEmpty()) speak.feed(state.live)
     }
     // Settled: flush the remainder exactly once per Hermes message.
     LaunchedEffect(state.messages) {
+        val u = state.messages.lastOrNull { it.role == ChatMessage.Role.User }
+        val uid = u?.id ?: -1L
+        if (uid != lastUserId.longValue) {
+            lastUserId.longValue = uid
+            speak.stop()
+        }
         if (state.messages.isEmpty()) {
             speak.stop(); lastSpokenId.longValue = -1L
             return@LaunchedEffect
