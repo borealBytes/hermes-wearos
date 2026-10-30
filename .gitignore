@@ -31,3 +31,8 @@ tmp-shots/
 
 # vertical film master: generated locally, published on YouTube (not tracked)
 docs/demo/*.mp4
+
+# watchkit dev artifacts (venv/models symlinked per worktree)
+server/watchkit/.venv/
+server/watchkit/.models/
+server/watchkit/__pycache__/

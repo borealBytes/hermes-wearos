@@ -897,16 +897,19 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 | # | Status | Ask (owner language distilled) | Where it lands |
 |---|--------|------------------------------|----------------|
 | 1 | ✅ | Newest streamed text's bottom-left corner rests at the **"8:20 spot"** — the circle rim ∩ top-of-orb line — so nothing clips on round faces; derived from orb position + screen shape so SQUARE screens (and any vendor round size) work unchanged | FIXED 2026-10-30: `BottomLayout.circleSafeBottomPad` = max(orb-crown, physical-rim at the text gutter) feeds the transcript pad; growing-row lag settled by delayed re-asserts (wear's clamp uses the PREVIOUS layout pass). Circle-masked captures: mid-stream digits fully readable, none shaved (pre-fix: "29"→"9") |
-| 2 | 🛠 | Karaoke's spoken line anchors at the **10-o'clock tick height** (~25 % down — wide rim up there, left edge never clips); no-nudge band re-tuned around it | CODE LANDED: karaoke anchor = `RoundScreen.tenOclockY`, band 12 %–35 % around it. Hardware capture needs a READ-ALoud session — scheduled into the end-of-batch watch pass |
+| 2 | ✅ | Karaoke's spoken line anchors at the **10-o'clock tick height** (~25 % down — wide rim up there, left edge never clips); no-nudge band re-tuned around it | SHIPPED 2026-10-30, HARDWARE-PROVEN on the SM-L705U: anchor = `RoundScreen.tenOclockY` (y≈120 on the 480 face), band 12 %–35 % around it. Masked mid-read captures of a 1-to-20 voice-out: the spoken line ("6" at that moment) rode y≈125 at the left text edge — ON the tick; later captures showed the viewport advancing WITH the speech, then clamping at the answer's tail (spoken line inside the no-nudge band → no yank; last number at the 8:20 spot per #1, which wins where the list cannot scroll further) |
 | 3 | ✅ | The submitted question anchors at that same 10:00 height (ChatAnchor baseline re-base) | FIXED 2026-10-30: while a question awaits its answer the bottom spacer shrinks by the MEASURED row-top minus tick (derived geometry undercounted header chrome — measured 120 vs rendered 258), clamped to `[0, slack]`. Masked capture: question top-left lands upper-left (≈10:00–10:20 depending on header mid-composition), never under the orb; exact-pixel polish logged below |
 | 4 | ✅ | **Follow-up replies scroll-from-orb like the first chat in a new session** — every answer rises from the 8:20 corner regardless of history length (pad recomputed per reply; over-long replies switch to in-reply tail-follow) | PROVEN 2026-10-30: same-session follow-up streamed with the first-chat geometry (masked mid-stream: digits fully readable left of the orb) and settled showing the TRUE end (41–45) clear of the rim — the late-settle re-asserts land the tail at wear's padding-honoring end |
 | 5 | ✅ | Approval ✅ **OK = left of the orb**, ❌ **NO = right of the orb** — but **only while scrolled to the chat bottom** (no buttons permanently hanging by the orb → no mis-clicks); also fixes: buttons never appeared when the approval arrived mid-scroll | SHIPPED 2026-10-30: `ApprovalFlank` pair rides the old agent/sessions spots at 1.45× (big thumb targets), shown only while a live approval waits AND `chatFollow` is true. The in-list card became pure context (its permanent OK/No buttons WERE the vetoed pair); forced-centering survives only as the scrolled-away RESCUE. Mid-scroll arrival now works: scroll to the bottom → card rests on the safe line + flanks appear. `-e approval_demo 1` dev hook drives it. Masked shots: bottom (flanks flank, card readable) / scrolled (both gone) / tap (responds, clears) |
 | 6 | ✅ | **Top/bottom buffer padding on EVERY list** (Settings tree, Voice lists, Sessions, Chats, Commands, search) — any last row scrolls into the meat of the circle | SHIPPED 2026-10-30: `roundListPadding` folds the #1 rim math into every SLC it feeds (Chat/Sessions/Chats); Settings + Agent/Model/Approval dialogs got rim clearance as CONTENT padding AFTER `verticalScroll` (the first cut put it before the scroll — a viewport band that amputated the settings tree's lower rows, caught by the masked sweep and reverted); `circleSafeBottomDp` reads the VIEW's display metrics so it is right inside Dialog windows too; Commands sheet padded. Proofs (masked): settings root whole again + scrollable; About page LAST line resting in the meat with the buffer band beneath it |
 | 7 | ✅ | **Edge-circle scrolling everywhere** — finger circling the screen edge CW/CCW scrolls; chat first as the pattern, then every #6 surface; `edgeRotate` + `rotaryScrollable` covers touch-only round AND square via Wear's bezel-emulation | SHIPPED 2026-10-30: Wear's `edgeRotate` does NOT exist in compose-foundation 1.4.1 (verified against the shipped jar), so `domain/EdgeScroll` owns the math (ring ≥ 0.80 r, 7°/step, LOCK at 2.5°/event separating circles from rim-drags) and `ui/edgeCircleScroll` the gesture — **CW = forward, CCW = back, verified end-to-end on the SM-L705U**. The hard-won part is the RELEASE-APPLY rule: wear 1.4.1 cannot scroll an SLC mid-touch (`scrollBy` returns `used=0` while the finger is down; `animateScrollBy` reports full distance yet lands only after UP), so the circle banks travel and lands it on release via `edgeScrollWalk` — absolute ≤120px steps in `centerItemScrollOffset` space (the info `visibleItemsInfo.offset` is its SIGN MIRROR for anchored items, caught on-device) against the fixed center item, one frame apart. Wired: Chat (hands off the tail-follow per `ChatFollow` before walking), Sessions, Chats via the walk; Settings + Agent/Model/Approval dialogs via plain `ScrollState.scrollBy`. Proofs (masked): chat 86-90 → CCW 74-81 → CW 86-90 → CW clamps at tail; sessions bottom ↔ top; settings both ways; agent dialog scrolls; straight drags untouched. 373 green (+6 EdgeScroll tests) |
 | 8 | ✅ | Settings ▸ Voice ▸ **Speech input provider picker**: Local Vosk default/offline · System (Google/Samsung) via `SpeechRecognizer`, honestly labeled **OFF-DEVICE** when networked, auto-detected per vendor (Pixel/OnePlus → Google) | SHIPPED 2026-10-30: `voice/SttSource` seam (`start(scope): Flow<SttEvent>` + `stop()` with flush-close semantics) + `voice/SystemStt` (`SpeechRecognizer`, main-thread, silence errors quiet, stop=stopListening→FINAL-on-results); `domain/SttProviders` owns the pure labelling (6 tests): default LOCAL even when the system engine exists (airplane-mode rule), system row reads **OFF-DEVICE · <vendor>**. Vendor auto-detect needed a real fix: the activity action resolves to NOTHING on real watches (measured SM-L705U) — the lookup iterates `android.speech.RecognitionService` → activity action → `SpeechRecognition` over `queryIntentServices`, with manifest `<queries>` for Android 11+ visibility. Resolved on every `startListening` (`WearApp.Graph.sttNow`), so picks are live, no restart. On-device: picker honest (`Local Vosk · offline · on-watch` / `System · OFF-DEVICE · Google`), highlight follows the pick, mic overlays + recognizer session on SYSTEM, Vosk reloads clean on the way back |
-| 9 | ✅ | ☐ | SHIPPED 2026-10-30 (gateway + emulator-proven; SM-L705U listen pending device reconnect): watchkit `WS /stt/stream` (hand-rolled RFC6455 in `stt_stream_ws.mjs` — zero framework holds) takes BINARY 16 kHz mono PCM16 frames + `{"end":true}`, answers JSONL `{"partial"}* / {"final"} / {"error"}` from an engine adapter (`stt_stream.py`: whisper = buffered final-only on the existing venv; parakeet = NeMo per-window re-decode partials, honest error when nemo is absent). config.json `stt_stream_engine` picks it, `/health` reports `stt:{engine,ready}` and Settings ▸ Voice NAMES it in the third picker row (0001F6F0 Gateway · streaming · whisper · auto-local). Watch side `voice/GatewayStt`: one WS + the same 100 ms frames, buffered from the first read — if the socket is not OPEN in 2.5 s or dies unheard, the WHOLE buffer replays into `VoskStt.eventsFromFrames` (nothing spoken lost; measured takeover 450 ms, overlay never notices). Proofs: node WS probe → final + clean close 1000; emulator streamed listen → 630,400 bytes engine-received + whisper final + client-close; watchkit STOPPED → ws-failed→local-fallback log pair with vosk feed live; 401 on bad token. 384 tests green (+5). |
+| 9 | ✅ | **Streaming gateway STT** — mic frames ride a WS to watchkit while speaking; engine (whisper/parakeet) streams partials back where capable; auto-fallback to local Vosk with full-buffer replay, never a lost sentence | SHIPPED 2026-10-30 (gateway + emulator + SM-L705U hardware-proven): watchkit `WS /stt/stream` (hand-rolled RFC6455 in `stt_stream_ws.mjs` — zero framework holds) takes BINARY 16 kHz mono PCM16 frames + `{"end":true}`, answers JSONL `{"partial"}* / {"final"} / {"error"}` from an engine adapter (`stt_stream.py`: whisper = buffered final-only on the existing venv; parakeet = NeMo per-window re-decode partials, honest error when nemo is absent). config.json `stt_stream_engine` picks it, `/health` reports `stt:{engine,ready}` and Settings ▸ Voice in NAMES it in the third picker row. Watch side `voice/GatewayStt`: one WS + the same 100 ms frames, buffered from the first read — if the socket is not OPEN in 2.5 s or dies unheard, the WHOLE buffer replays into `VoskStt.eventsFromFrames` (nothing spoken lost; measured takeover 450 ms, overlay never notices). Proofs: node WS probe → final + clean close 1000; **real watch** streamed listens → 630,400 B and 230,400 B engine-received, both `exit 0` (masked capture: red listening orb live on the SM-L705U); watchkit STOPPED → ws-failed→local-fallback log pair with vosk feed live; 401 on bad token. 384 tests green (+5). |
 | 10 | ✅ | About ▸ **"MIT · borealBytes (github.com/borealBytes, tappable) · Superior ByteWorks, LLC · Clayton Young"** | SHIPPED 2026-10-30: About reads `MIT · 🌐 borealBytes` (ACTION_VIEW to github.com/borealBytes, toast fail-soft on watches with no browser) + `made by: Superior ByteWorks, LLC` + `author: Clayton Young`. Masked capture: full block resting clear of the rim |
 | 12 | ✅ | **Video splash must actually play on a real app-drawer cold start** when VIDEO is selected (and STATIC must work when selected) — *"I close out all the apps and then I open Hermes… it shows the static image instead of the video"* | FIXED 2026-10-30: `SplashIntro.launcherShaped` + gate log now carries `launcher=`/`deepLink=`. Watch-proven: MAIN-alone launch → `launcher=true` → pocket-watch film frame captured; bare `am start -n` → `intro skipped: NotLauncher`; static mode holds then lifts |
+| 13 | ✅ | **Nested Voice-in settings page + listening-overlay honesty** — *"we need a voice in settings so we can set the default one we want to use on the orb"* + *"on the screen where you are entering voice … very top small … voice input provider listed, and … if it's streaming the text back … or not … really simple, like maybe a checkbox … I don't know if it's hearing me or not"* | SHIPPED 2026-10-30, watch-proven: Settings ▸ **Voice in** is its own nested page (picker moved out of Voice out; root row names the orb's engine). The listening overlay prints a top line — masked capture: **"🛰 Gateway · whisper · text streaming ✗ · final when you stop"** at y 64–111 live on the SM-L705U; labels pure (`SttProviders.overlayName/streamsText/streamsLabel/navSummary` — honesty JVM-tested, unknown engine prints `engine ?`). Proof-of-life meter: `domain/MicLevel` (√-compressed RMS + dB mapping) published by ALL THREE engines' mic loops into `voice/SttLevel`; the overlay dot rides it — a buffered engine (whisper) still visibly proves the mic reads. Masked proofs: root row ("Voice in · Gateway · streaming"), picker page, gateway pick + honest preview, listening overlay. 392 green (+8) |
+| 14 | 🛠 | **Streaming-from-orb is the default for every new message** — *"anytime we get a brand new message in that we're waiting on it to complete, the text will stream from the bottom, including that little thinking thing … the only time you turn that off is within the chat session turn if I start scrolling"* | LANDED (re-arm) 2026-10-30: a run start (busy false→true) re-engages tail-follow — a mid-run scroll still owns the current turn, the NEXT run takes the tail back. The "including that little thinking thing" half (status row resting at the ORB line while awaiting, question staying on the 10:00 tick) is the hard part: three on-device iterations proved wear renders mid-clamp `layoutInfo` offsets at different PIXELS than reported (§14.13 has the measurements + the stash pointer). Re-arm behavior confirmed on hardware via wear-demo; the runway lands when the pixel-truth regime is pinned |
+| 15 | ✅ | **Developer testing rides the `wear-demo` agent** — *"from this point forward, all of your testing should be done in that wear demo agent… put the developer notes in the contributions stuff"* | SHIPPED 2026-10-30: `CONTRIBUTING.md` carries the developer contract (demo-agent setup recipe with its own key, the hand-back rule, dev quick card, mask discipline); AGENTS.md §0 points developers there and keeps the file as the pure install contract. All §14 hardware work after this line ran against `/p/wear-demo` |
 
 **Build order:** 12 → 1→3 (one geometry family, JVM rim math) → 4 → 5 → 6 → 10 → 7 → 8→9.
 (12 leads because review nailed its root cause with a system-log line, below — one-line fix, and
@@ -946,12 +949,71 @@ the category — AOSP launcher, One UI grid, monkey) plays the owner's chosen mo
 pure (`SplashIntro.launcherShaped`) and JVM-tested.
 
 
+### 14.13 The thinking-runway investigation — wear renders mid-clamp offsets at different
+pixels than they report (measurements 2026-10-30; WIP in `git stash` "thinking-runway WIP")
+
+Goal (#14): while an answer is awaited, the status ("thinking…") row rests on the orb-crown
+line and the question holds the 10:00 tick, so the reply grows upward from exactly where the
+dots sit (*"including that little thinking thing"*). Findings, all SM-L705U, all on
+`/p/wear-demo`:
+
+- **The mega-anchor effect is recompose-driven and goes SILENT through the whole wait.**
+  `anchor-pass` logs stopped at run-accept and resumed only at the first streamed delta
+  (12 s / 31 s / 44 s gaps measured) — no composition key changes while the engine thinks, so
+  a key-driven pass can never hold a waiting view. Fix: a self-healing ticker (120 ms clock,
+  `rememberUpdatedState` for fresh state, live `layoutInfo` reads).
+- **Mid-clamp `visibleItemsInfo.offset` is NOT pixel truth.** The ticker converged to
+  `offset=119, tick=120` and HELD it (stable for seconds across `runway-sees` logs) while
+  uiautomator reported the same row rendered at `bounds=[54,309]…` — the row draws ~90–190 px
+  away from its reported offset depending on scroll regime. `scrollBy` converges the LAYOUT,
+  not the pixels. Regimes where layoutInfo IS pixel-truthful (both hardware-proven earlier):
+  top-rest (item 0 at viewport top — the #3 q-lift proof) and the settled end-clamp of
+  VIEWPORT-TALLER rows (#1/#4 padding-honoring rest).
+- **The 4096 tail-push overshoots for SHORT tail rows**: status row measured resting at
+  y≈479 (half off-glass) after the mega push — wear's clamp honors contentPadding only in the
+  settled-tall-row case; a short final row lets it blow past the padding-honoring end.
+- **Top-rest SPACER pin** (the one regime whose pixels are truthful) is right for SHORT chats —
+  but for long chats the history above the question cannot fit above the tick, so blindly
+  growing the head spacer blanks the hold. Candidate next moves: hide-above-question during
+  the hold (make every hold a short-chat case by construction), or keep the end-clamp and
+  nudge BACK by (drawnBottom − crown) with the drawn position captured through the
+  one-calibrated regime constant. Re-arm itself (runStarted → ChatFollow.reengaged) shipped,
+  confirmed on hardware: every ask after a mid-run scroll streamed from the orb by itself.
+
 ---
 
 
 ## Appendix A — Landed slices (build log, newest first)
 
-- **Gateway streaming STT (batch item 9, 2026-10-30, gateway+emulator-proven).** The mic frames
+- **Voice-in page + listening honesty (batch item 13, 2026-10-30, watch-proven).** Settings
+  gained a nested **Voice in** page (the STT picker moved out of Voice out — the owner's framing:
+  the orb's default engine is a VOICE-IN decision). The listening overlay now carries a very-top
+  status line — provider name (+ the live gateway engine) and the streaming truth as a checkbox
+  sentence: `text streaming ✓` vs `text streaming ✗ · final when you stop` (buffered whisper is
+  honestly labelled, and the wearer learns to expect the silence). Below it rides the
+  proof-of-life dot: `domain/MicLevel` √-compressed RMS from the real mic frames (Vosk/Gateway
+  AudioRecord loops; SpeechRecognizer's `onRmsChanged` dB window for System) published through
+  `voice/SttLevel` — the dot moves while you speak even when the engine withholds text until
+  the stop, which is the exact complaint this entry closes ("I don't know if it's hearing me").
+  Labels are pure and JVM-tested; unknown engine prints `engine ?`, never a guess. Masked proofs:
+  root row, picker page, gateway preview, live overlay line (uiautomator bounds y 64–111).
+  392 green (+8: 4 MicLevel, 4 SttProviders).
+
+- **Developer contract split (batch item 15, 2026-10-30).** CONTRIBUTING.md now carries the
+  developer rules — headline: **test traffic rides the `wear-demo` profile** (a copy of `wear`
+  with its own key, reset freely; setup recipe included), the dev-session hand-back rule, and
+  the circle-mask discipline. AGENTS.md keeps the install contract and §0 points at it.
+
+- **Thinking runway (§14 #14, 2026-10-30, WIP stashed — full measurements in §14.13).** Goal:
+  status row on the orb crown while awaiting, question on the 10:00 tick. The mega pass cannot
+  hold it (silent through the whole wait — key-driven recompose), the ticker proved
+  wear's mid-clamp offsets are NOT pixel truth (stable `offset=119` while the row drew at
+  y≈309), and the 4096 tail-push over-scrolls past the padding-honoring end when the tail row
+  is short. Re-arm half shipped + hardware-confirmed (new run → orb-streaming by itself); the
+  runway half lives in `git stash` "thinking-runway WIP" with the candidate regimes next to the
+  numbers. All traffic on `/p/wear-demo` per CONTRIBUTING.
+
+- **Gateway streaming STT (batch item 9, 2026-10-30, gateway+emulator+watch-proven).** The mic frames
   the watch already captures now ride a WebSocket to the gateway while the wearer talks:
   watchkit `WS /stt/stream` (hand-rolled RFC6455 subset — masked text/binary + close — to keep
   the zero-framework vow) pipes binary PCM16 into an engine adapter process and relays its JSONL.
@@ -965,7 +1027,9 @@ pure (`SplashIntro.launcherShaped`) and JVM-tested.
   normalize bug this work exposed (setSttProvider collapsing gateway→local) is pinned by a test.
   Proof set: node WS probe (final + close 1000, 401 for bad token), emulator streamed listen
   (630,400 bytes engine-received, whisper final, clean client-close), watchkit-stopped fallback
-  (masked screenshot: still `listening…`). 384 green (+5).
+  (masked screenshot: still `listening…`), and the REAL WATCH closed the set: two streamed
+  listens from the SM-L705U — 630,400 B and 230,400 B engine-received, both `exit 0`, one with
+  the masked red listening orb on the round glass. 384 green (+5).
 
 - **Speech-input provider picker (batch item 8, 2026-10-30, watch-proven).** Settings ▸ Voice
   grew a `🎙 speech input` section: **Local Vosk** (default, `offline · on-watch`) and
