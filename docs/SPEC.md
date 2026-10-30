@@ -1011,9 +1011,68 @@ tail rows (§14.13 bullet 3) — that is the tail-push's problem, not the hold's
 ---
 
 
+## 15. Owner batch 5 (2026-10-30): the live-review fix list — mute is mute, scroll everywhere,
+   hold seated at pixels
+
+Batch 4's review ran on the owner's own wrist, live, and produced six numbered defects (17–22 —
+the table continues batch 4's numbering; 11 stays cancelled). Every one shipped hardware-proven
+on the SM-L705U over the `wear-demo` profile.
+
+| # | Defect (owner's live words) | Fix | Proof |
+|---|---|---|---|
+| 17 | *"if we have video selected, the static image should not show at all… it's still fine to have that noose icon that is on the orb"* | VIDEO-mode curtain = the system-splash twin (orb icon on `#07070C`), never the self-portrait; the portrait stays reserved for STATIC mode | `p17_curtain_c.png` (orb curtain) → `p17_film_c.png` (film frame 1, first-frame log 4759 ms) |
+| 18 | *"it's not working on the agent screen… the settings screens… it's not working there… voice out… not working there either"* | The edge gesture lived ON the scrolled Column — a CONTENT-tall node, so the ring ellipse was computed against a ~900 px box on a 480 px face. Re-hosted on viewport-sized Box wrappers (Settings tree, Agent/Approval/Model dialogs); Chat/Sessions already rode viewport-sized lists | rim-arc `input swipe 345 58 345 422 350` → `edge circle release: 324px` + row-set change on Settings root, Voice-out, Agents dialog |
+| 19 | *"I have it muted, but it still seems like it's talking to me from the orb… if it's muted, the talking shit shouldn't happen"* | `TtsConfig.muted(volume)` (0 % = mute, the 5 % grid makes equality honest): sentences are CONSUMED but never QUEUED — no `_speaking`, no orb mouth, no karaoke cursor; dialing to 0 mid-answer stops the live queue | ask at `set_vol 0`: finish logged, ZERO karaoke lines, silent TTS queue (log-proven); `-e set_vol` dev hook |
+| 20 | *"it stays exactly and scrolls line by line… kind of like a block of text that's speaking is visible"* | Teleprompter: the no-nudge band (half the face) is gone — every cursor tick walks the spoken line to the 10-o'clock tick via the on-device-proven `edgeScrollWalk` (relative px, honest clamps); off-screen target rows are brought into view first; the tail-pin effect stands down entirely while `speaking`; a NEW user ask cuts the previous answer's speech queue | `p20_f_a_c.png` vs `p20_f_b_c.png` — rows flow upward WITH the voice (numbers/sec matches speech rate) |
+| 21 | *"the question should start at that 10 o'clock spot… the answer gets the runway… I don't think it quite worked"* | THE HOLD SCRIM (§15.1): the seat is DRAWN, not scrolled — question at the tick px, engine status at the crown px, empty runway between | `p21_scrim_c.png`: uiautomator truth — question top y=120 = tenOclockY, status bottom y=294 = crown; haiku hold `p21_haiku_hold_c.png`, settled `p21_after_c.png` (answer on the crown, unclipped) |
+| 22 | *"we should also have a tappable link to this repo… I like having one go my main borealBytes GitHub profile first though"* | About: profile chip stays first/primary; new chip opens `github.com/borealBytes/hermes-wearos` (root = default branch), browser-or-toast fallback | `p22_about_c.png` — both chips, credits intact |
+
+### 15.1 The hold seat moved from scroll math to pixels (#21, the batch's hardest)
+
+Three scroll-engine shapes chased the 10-o'clock seat through the collapsed hold list —
+the slack-pad formula (batch-4 #14 shape), a dedicated RUNWAY row + fixed-point integrator,
+and a measured-derivative integrator on pixel probes (`onGloballyPositioned`). All three
+converged 60–180 px OFF on glass, and the device explained why: with the transcript collapsed,
+wear-compose 1.4.1 centers its own short content — `layoutInfo` row offsets report container
+positions the ink never occupies (uiautomator: container y=121, ink y=299), and the auto-centering
+filler makes pad/runway derivatives regime-dependent (pad 0 → ink 295; pad 90 → ink ≈120 — a −2
+slope that no static formula models across BOTH regimes). `scrollToItem(0, 0)` parks row 0's TOP
+at the viewport CENTER; the min-scroll clamp swallows spacer growth whole.
+
+The seat therefore stopped being a scroll problem. While the hold is active (the transcript was
+hidden anyway), ChatScreen paints an opaque panel on the face: the question's text block starts
+exactly on `RoundScreen.tenOclockY` (x = the 14 dp left pad, top = 120 px of 480), the engine
+status row's BOTTOM rests exactly on the crown line (`viewport − circle-safe bottom`, the same
+line settled answers rest on — batch-4 #1), and everything between is the owner's empty runway.
+The orb and clock ride ABOVE the panel (MainActivity's own overlay), the panel passes touches,
+and the first streamed delta lifts it into the proven streaming paths — the look the owner
+accepted in #14, finally seated where #3 always asked. `ChatAnchor` lost its hold-row constants;
+`ChatAnchorTest` keeps only the transcript-math contracts. 401 green.
+
+Hardware (SM-L705U): `p21_scrim_c.png` — question ink top at y=120 (tick=120), "🔧 terminal…"
+bottom at y=294 (crown=293), orb pulsing between, clock legible above; after the answer, the
+tail rests unclipped (`p21_after_c.png`); speech teleprompters through it (`p21_haiku_after_c.png`
+caught mid-read, last line riding the tick) and the tail-pin recovers when speech ends.
+
+---
+
+
 ## Appendix A — Landed slices (build log, newest first)
 
-- **Voice-in page + listening honesty (batch item 13, 2026-10-30, watch-proven).** Settings
+-- **Batch 5 — the live-review fix list (#17–#22, 2026-10-30, watch-proven).** Video splash shows
+  the orb-icon system-splash twin instead of the static portrait; the edge-circle gesture re-hosted
+  on viewport-sized hosts so Settings/Voice-out/Agents/Approvals/Models scroll by rim as chat does;
+  0 % reply volume now speaks NOTHING (queue skipped, live queue cut, orb face silent —
+  `TtsConfig.muted` + gates in `SpeakAloud`); karaoke became a teleprompter (relative
+  `edgeScrollWalk` toward the tick each cursor tick, tail-pin yields while `speaking`, a new ask
+  cuts the previous answer's speech); the focus-hold seat became the DRAWN HOLD SCRIM — question
+  ink pixel-exact on the 10-o'clock tick, engine status bottom pixel-exact on the 8:20 crown,
+  runway empty between (SPEC §15.1); About gained the repo chip under the profile chip.
+  Proofs: `p17_*`, `p19_*` (log), `p20_f_*`, `p21_scrim_c`/`p21_haiku_hold_c`/`p21_after_c`,
+  `p22_about_c` in the session shots dir. 401 green (hold-row row-math tests retired with their
+  layout; +1 `TtsConfig.muted` test).
+
+ **Voice-in page + listening honesty (batch item 13, 2026-10-30, watch-proven).** Settings
   gained a nested **Voice in** page (the STT picker moved out of Voice out — the owner's framing:
   the orb's default engine is a VOICE-IN decision). The listening overlay now carries a very-top
   status line — provider name (+ the live gateway engine) and the streaming truth as a checkbox
