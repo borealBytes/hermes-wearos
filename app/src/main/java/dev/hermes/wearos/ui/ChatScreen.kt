@@ -141,6 +141,13 @@ fun ChatScreen(
         with(anchorDensity) { 10.dp.toPx() }
     val lastChatKey = remember { mutableStateOf(state.activeChatId) }
     val lastAskCount = remember { mutableStateOf(state.messages.size) }
+    // #14 (owner: *"anytime we get a brand new message in that we're waiting on it to complete,
+    // the text will stream from the bottom … the only time you turn that off is within the
+    // chat session turn if I start scrolling"*): a NEW RUN — busy false→true — re-engages the
+    // tail even when the last scroll left the view parked mid-transcript. The run's own
+    // thinking dots then stream from the 8:20 line like the first chat; scrolling after that
+    // stays manual for the rest of THIS run (next run takes the tail back again).
+    val lastBusy = remember { mutableStateOf(state.busy) }
     LaunchedEffect(
         state.activeChatId, state.messages.size, state.live.length,
         state.busy, state.approval?.requestId, state.status, typeScale, follow.value, slcH,
@@ -150,7 +157,9 @@ fun ChatScreen(
         val newAsk = state.messages.size > lastAskCount.value &&
             state.messages.lastOrNull()?.role == ChatMessage.Role.User
         lastAskCount.value = state.messages.size
-        if (switched || newAsk) follow.value = ChatFollow.reengaged()
+        val runStarted = state.busy && !lastBusy.value
+        lastBusy.value = state.busy
+        if (switched || newAsk || runStarted) follow.value = ChatFollow.reengaged()
         if (!follow.value) return@LaunchedEffect // manual mode: the stream holds its hands off
         // Wait (bounded) for a frame the list has FULLY composed — wear lays the tail lazily,
         // and a chat opened mid-transition reports an empty/stale layoutInfo. Without a whole
