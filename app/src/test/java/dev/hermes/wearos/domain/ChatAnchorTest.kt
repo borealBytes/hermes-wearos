@@ -52,17 +52,5 @@ class ChatAnchorTest {
     }
 
 
-    // ── #14 FOCUS HOLD: the thinking-hold render is fixed chrome — the ticker chases these
-    // exact rows, never message-count math (drift here is what made the first pass fail).
-    @Test fun `hold layout pins question and status rows`() {
-        assertEquals(2, ChatAnchor.HOLD_Q_INDEX)      // spacer · caption · QUESTION
-        assertEquals(3, ChatAnchor.HOLD_STATUS_INDEX) // · STATUS (permanent during a hold)
-        assertEquals(3, ChatAnchor.holdBottomIndex())
-    }
-
-    @Test fun `single-message chat agrees with the hold constants`() {
-        // one question + status: full bottomIndex and the hold math must say the same row
-        // spacer · caption · question · status — same bottom row by both counts
-        assertEquals(ChatAnchor.holdBottomIndex(), ChatAnchor.bottomIndex(messageCount = 1, hasStatus = true))
-    }
 }
+

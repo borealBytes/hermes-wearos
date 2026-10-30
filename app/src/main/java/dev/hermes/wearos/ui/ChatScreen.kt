@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -179,8 +180,11 @@ fun ChatScreen(
         val runStarted = state.busy && !lastBusy.value
         lastBusy.value = state.busy
         if (switched || newAsk || runStarted) follow.value = ChatFollow.reengaged()
+        // Fresh ask → fresh runway: the integrator re-measures from scratch for the new
+        // question's height (batch-5 #21); stale runway never rides into the next hold.
+
         if (!follow.value) return@LaunchedEffect // manual mode: the stream holds its hands off
-        // BATCH-5 #20 TELEPHER: while the voice reads, the karaoke anchor owns the scroll —
+        // BATCH-5 #20 TELETHER: while the voice reads, the karaoke anchor owns the scroll —
         // tail-pinning here froze every spoken-line request against the orb clamp (the block
         // "stayed exactly" while the voice walked away from it — owner's live complaint).
         if (speaking) return@LaunchedEffect
@@ -254,7 +258,7 @@ fun ChatScreen(
                     "tenY=${tenY.toInt()} slcTop=${slcTopPx.toInt()} slack=${slack.toInt()}",
             )
         }
-        val idx = if (focusHold) ChatAnchor.holdBottomIndex() else ChatAnchor.bottomIndex(
+        val idx = ChatAnchor.bottomIndex(
             messageCount = state.messages.size,
             hasApproval = state.approval != null,
             hasLive = state.live.isNotEmpty(),
@@ -355,6 +359,19 @@ fun ChatScreen(
     // BATCH-4 #7: the edge gesture banks travel while the finger rides the rim and lands it as
     // ONE animateScrollBy on release (why not mid-touch scrolls: see ui/EdgeScrollGesture).
     val edgeDriving = remember { mutableStateOf(false) }
+    // BATCH-5 #21 THE HOLD SCRIM (owner retest of #3/#1: *"the question should start at that 10
+    // o'clock spot… the answer gets the runway… I don't think it quite worked"*). Three scroll
+    // engines chased that seat through wear's centering geometry (slack pad, runway row,
+    // measured-derivatives) and every one landed 60–180 px off: with the transcript collapsed
+    // there is nothing tall enough to push against, so the list centers its own short content
+    // and layoutInfo reports pixels the glass never shows. The seat is therefore drawn, not
+    // scrolled: during a hold an opaque panel covers the (hidden-anyway) transcript and paints
+    // the question EXACTLY on the 10-o'clock tick and the engine status EXACTLY on the 8:20
+    // crown — pixel arithmetic, zero scroll dependence — and the whole circle between them is
+    // the empty runway the reply grows into when the panel lifts on the first delta. The orb
+    // and clock ride ABOVE this layer (MainActivity's own overlay), so the running face —
+    // orb pulsing, amber status, blue question up top — is identical to the #14 look, seated.
+    Box(modifier = Modifier.fillMaxSize()) {
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxWidth().onSizeChanged { slcH = it.height }
@@ -432,8 +449,7 @@ fun ChatScreen(
         // the runway belongs to the incoming reply, and the short list keeps the hold in the
         // pixel-truthful top-rest regime (ChatAnchor hold constants + ticker). The same rows
         // return, keyed and intact, the moment the first delta answers.
-        val renderMessages = if (focusHold) state.messages.takeLast(1) else state.messages
-        items(renderMessages, key = { it.id }) { msg -> MessageLine(msg, markdown, onEditPrompt) }
+        items(state.messages, key = { it.id }) { msg -> MessageLine(msg, markdown, onEditPrompt) }
         if (state.approval != null) {
             item { ApprovalCard(state.approval, onApprove) }
         }
@@ -451,14 +467,10 @@ fun ChatScreen(
                 )
             }
         }
-        if (focusHold || state.status.isNotEmpty()) {
-            // #14: during a FOCUS HOLD the status line is PERMANENT (blank between engine/
-            // tool updates keeps its row) — the hold layout never changes height mid-run, so
-            // the slack pad stays exact through "thinking…" → "" → "🔧 terminal…". Outside a
-            // hold the line appears exactly when the text exists, as ever.
+        if (state.status.isNotEmpty()) {
             item {
                 Text(
-                    state.status.ifBlank { " " },
+                    state.status,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                     style = MaterialTheme.typography.caption2.scaled(),
                     color = Color(0xFFF5C518),
@@ -466,6 +478,49 @@ fun ChatScreen(
             }
         }
     }
+    if (focusHold) {
+        val qText = state.messages.lastOrNull()?.text.orEmpty()
+        // The panel measures the FACE, and the SLC fills the face (slcTop ≈ 0 — measured), so
+        // screen px == panel px; the paddings below are the two proven anchors.
+        val tickPx = dev.hermes.wearos.domain.RoundScreen.tenOclockY(
+            if (viewportW > 0f) viewportW else slcH.toFloat(), slcH.toFloat(),
+        )
+        val crownPx = slcTopPx + slcH - bottomPadPx
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colors.background),
+        ) {
+            Spacer(Modifier.height(with(anchorDensity) { (tickPx - slcTopPx).coerceAtLeast(0f).toDp() }))
+            Text(
+                qText,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                style = MaterialTheme.typography.body2.scaled(),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colors.primary,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Fill to the crown: the status row's BOTTOM rests on the 8:20 line — where the
+            // settled answer's last line will rest, so the panel lifts and the reply simply
+            // continues the sentence the status was holding.
+            Spacer(Modifier.weight(1f))
+            Text(
+                state.status.ifBlank { " " },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
+                    .padding(bottom = with(anchorDensity) {
+                        (slcH - (crownPx - slcTopPx)).coerceAtLeast(0f).toDp()
+                    }),
+                style = MaterialTheme.typography.caption2.scaled(),
+                color = Color(0xFFF5C518),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    } // Box (batch-5 #21 hold-scrim host)
 }
 
 /**

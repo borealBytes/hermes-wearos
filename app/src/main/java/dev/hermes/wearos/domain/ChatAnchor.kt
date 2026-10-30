@@ -11,21 +11,12 @@ package dev.hermes.wearos.domain
 object ChatAnchor {
 
 
-    // ── #14 FOCUS HOLD (thinking-runway) ──────────────────────────────────────────────────
-    // While an answer is awaited (engine busy, newest message is the wearer's question,
-    // nothing streamed yet), ChatScreen renders ONLY —
-    //   anchor spacer(0) · caption(1) · QUESTION(2) · status(3) —
-    // hiding the history above the question. The collapsed list is short content, so the
-    // shipped slack rule (spacer = viewport − bottomPad − content, rest at list top) owns
-    // the view: question + thinking rest bottom-aligned on the orb crown with the whole
-    // upper circle as the reply's runway. The status row is PERMANENT during a hold (blank
-    // text between engine/tool updates keeps its measured height — the hold never jitters).
-    // History returns, keyed and intact, the moment the first delta answers.
-    const val HOLD_Q_INDEX = 2
-    const val HOLD_STATUS_INDEX = 3
-
-    /** Bottom row while focused (== HOLD_STATUS_INDEX): the value the hold scrolls against. */
-    fun holdBottomIndex(): Int = HOLD_STATUS_INDEX
+    // #14 FOCUS HOLD / batch-5 #21 (owner: *"the question should start at that 10 o'clock
+    // spot… the answer gets the runway"*) lives in ChatScreen as the HOLD SCRIM — a drawn
+    // panel (question at the tick px, status at the crown px), not a row layout, so no row
+    // constants here. History: three scroll-engine shapes were tried and measured off by
+    // 60–180 px on the SM-L705U (wear centers short content; layoutInfo offsets are fiction
+    // there) before the seat moved to pixels.
 
     fun bottomIndex(
         messageCount: Int,
