@@ -171,6 +171,8 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 - `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints/failover).
 - `CONTRIBUTING.md` — developer rules: the `wear-demo` test-agent policy, dev workflow quick card,
   mask-before-analysis discipline, watch connection gotchas.
+- `scripts/parakeet.sh` — one-shot installer for watchkit's streaming STT engine (transcribe.cpp +
+  its own parakeet GGUF); idempotent, folder-local, no GPU required.
 - `app/src/debug/java/dev/hermes/wearos/DevAskReceiver.kt` — every dev broadcast hook (the comment lists them).
 - `server/watchkit/watchkit.mjs` — helper daemon; its header comment is the endpoint reference (also `scripts/watchkit.sh`).
 - `scripts/` — `setup.sh` (this contract) · `env.sh` · `bootstrap.sh` · `doctor.sh` · `emulator.sh` ·

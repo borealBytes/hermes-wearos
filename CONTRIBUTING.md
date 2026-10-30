@@ -54,6 +54,7 @@ gradle --offline --console=plain :app:assembleDebug :app:testDebugUnitTest   # J
 scripts/setup.sh --dry-run && scripts/setup.sh           # build → chunked install → config → health
 scripts/circle-shot.sh /tmp/opencode/shots/x_c.png       # MANDATORY before ANY visual analysis
 scripts/watchkit.sh status                               # helper daemon (mermaid/img/whisper + /stt/stream)
+scripts/parakeet.sh                                      # install the streaming parakeet engine (watchkit-owned GGUF)
 ```
 
 Screenshots from `adb screencap` are the SQUARE panel buffer — mask them (`circle-shot.sh`) or
