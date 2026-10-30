@@ -312,7 +312,7 @@ class WearApp : Application() {
                 stt = VoskStt(app)
                 sttSystem = SystemStt(app)
                 sttGateway = GatewayStt(app, stt)
-                scope.launch { settings.loadSttProvider() } // seed the #8 picker mirror
+                scope.launch { settings.loadSttProvider(); settings.loadSttGatewayEngine() } // seed the #8 picker mirror + #16 engine pick
                 session.resume() // loads registry (migrates legacy keys), restores active chat + in-flight run
                 network.start() // LAST: its hook reaches into every other Graph member
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).

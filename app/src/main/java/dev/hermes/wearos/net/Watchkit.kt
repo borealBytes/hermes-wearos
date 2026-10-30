@@ -43,11 +43,20 @@ object Watchkit {
 
     /**
      * BATCH-4 #9: which STT engine watchkit's `/health` says will answer `/stt/stream`
-     * (null = offline/unreachable). Settings ▸ Voice names it in the Gateway picker row;
+     * (null = offline/unreachable). Settings ▸ Voice in names it in the Gateway picker row;
      * the endpoint is PUBLIC, so no bearer is spent on the probe.
      */
     private val _sttEngine = MutableStateFlow<String?>(null)
     val sttEngine: StateFlow<String?> = _sttEngine.asStateFlow()
+
+    /**
+     * #16 ENGINE SELECTION (owner: *"clicking … should let you select … installed models …
+     * set up to expand in the future"*): the FULL inventory /health reports — every engine the
+     * watchkit box has, with its honest streaming + ready flags. Empty = never answered yet
+     * (the picker then shows only the single-engine name, the pre-#16 behavior).
+     */
+    private val _sttEngines = MutableStateFlow<List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo>>(emptyList())
+    val sttEngines: StateFlow<List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo>> = _sttEngines.asStateFlow()
 
     suspend fun refreshSttEngine() = withContext(Dispatchers.IO) {
         runCatching {
@@ -57,7 +66,26 @@ object Watchkit {
             fun flag(o: kotlinx.serialization.json.JsonObject, k: String) =
                 (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
             _sttEngine.value = stt?.let { s -> flag(s, "engine")?.takeIf { flag(s, "ready") == "true" } }
-        }.onFailure { _sttEngine.value = null }
+            _sttEngines.value = parseSttEngines(stt)
+        }.onFailure { _sttEngine.value = null; _sttEngines.value = emptyList() }
+    }
+
+    /** Pure-ish (kotlinx JSON only → JVM testable): /health `stt.engines[]` → rows. */
+    internal fun parseSttEngines(
+        stt: kotlinx.serialization.json.JsonObject?,
+    ): List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo> {
+        val arr = stt?.get("engines") as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        return arr.mapNotNull { row ->
+            val o = row as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            fun f(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val id = f("engine")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            dev.hermes.wearos.domain.SttProviders.SttEngineInfo(
+                id = id,
+                streaming = f("streaming") == "true",
+                ready = f("ready") == "true",
+                missing = f("missing").orEmpty(),
+            )
+        }
     }
 
     /**

@@ -66,14 +66,18 @@ class GatewayStt(
         /** Replay ring: 20 s max (≈640 KB) — a longer press talks to whisper anyway. */
         private const val BUFFER_MAX_BYTES = 20 * SAMPLE_RATE * 2
 
-        /** http→ws / https→wss, watchkit base minus its trailing slash. Pure + tested. */
-        fun wsUrl(base: String): String {
+        /** http→ws / https→wss, watchkit base minus its trailing slash. Pure + tested.
+         *  [engine] ( wearer's Settings ▸ Voice in pick) rides as `?engine=` — the bearer stays
+         *  in the header, watchkit validates the id and folds unknowns to its own default. */
+        fun wsUrl(base: String, engine: String? = null): String {
             val b = base.trim().trimEnd('/')
-            return when {
+            val u = when {
                 b.startsWith("https://") -> "wss://" + b.removePrefix("https://")
                 b.startsWith("http://") -> "ws://" + b.removePrefix("http://")
                 else -> b // already ws(s):// — pass through
             } + "/stt/stream"
+            val e = engine?.trim().orEmpty()
+            return if (e.isEmpty()) u else "$u?engine=${java.net.URLEncoder.encode(e, "utf-8")}"
         }
     }
 
@@ -122,7 +126,7 @@ class GatewayStt(
         }
 
         val request = Request.Builder()
-            .url(wsUrl(cfg.baseUrl))
+            .url(wsUrl(cfg.baseUrl, dev.hermes.wearos.domain.SttProviders.gatewayEnginePick))
             .header("Authorization", "Bearer ${cfg.token}")
             .build()
         val listener = object : WebSocketListener() {
@@ -172,7 +176,7 @@ class GatewayStt(
 
         val frame = ByteArray(FRAME_BYTES)
         record.startRecording()
-        Log.i(TAG, "gateway stt listening (ws=${wsUrl(cfg.baseUrl)})")
+        Log.i(TAG, "gateway stt listening (ws=${wsUrl(cfg.baseUrl, dev.hermes.wearos.domain.SttProviders.gatewayEnginePick)})")
         try {
             while (!stopping) {
                 val n = record.read(frame, 0, frame.size)

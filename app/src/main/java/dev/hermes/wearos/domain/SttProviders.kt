@@ -133,4 +133,53 @@ object SttProviders {
         false -> "text streaming ✗ · final when you stop"
         null -> "text streaming ?"
     }
+
+    // ── GATEWAY ENGINE SELECTION (owner 2026-10-30: *"it should let you … select … installed
+    // models … we have two and we're set up to expand in the future"*) ────────────────────────
+
+    /** One row of watchkit's /health `stt.engines[]` inventory. */
+    data class SttEngineInfo(
+        val id: String,
+        val streaming: Boolean,
+        val ready: Boolean,
+        val missing: String = "",
+    )
+
+    /**
+     * In-memory wearer pick for the GATEWAY provider ("" = use watchkit's configured default).
+     * Same synchronous-moment contract as [current]: GatewayStt reads it when the mic opens.
+     */
+    @Volatile
+    var gatewayEnginePick: String = ""
+
+    /** Which engine the mic will ACTUALLY talk to right now (overlay/label truth). A pick only
+     *  counts when /health says that engine is installed-ready; otherwise the server default. */
+    fun effectiveEngine(
+        pick: String = gatewayEnginePick,
+        healthDefault: String?,
+        engines: List<SttEngineInfo> = emptyList(),
+    ): String? {
+        val p = pick.trim().lowercase()
+        if (p.isNotEmpty() && engines.any { it.id.lowercase() == p && it.ready }) return p
+        return healthDefault
+    }
+
+    /**
+     * Streaming truth for a gateway engine. /health's `streaming` flag is authoritative (a new
+     * engine needs no watch update); the hardcoded map is only the offline fallback for the
+     * two engines that predate the inventory. Unknown = null, never a lie.
+     */
+    fun engineStreams(id: String?, engines: List<SttEngineInfo> = emptyList()): Boolean? {
+        val e = engines.firstOrNull { it.id.equals(id, ignoreCase = true) }
+        if (e != null) return e.streaming
+        return when (id) { "parakeet" -> true; "whisper" -> false; else -> null }
+    }
+
+    /** One engine-pick row label: name + what it will do (installed state honest). */
+    fun engineRowLabel(e: SttEngineInfo): String =
+        e.id + " · " + if (!e.ready) "not installed" else streamsLabel(engineStreams(e.id))
+
+    /** Whether a pick is currently in effect (row selection marker). */
+    fun pickMatches(pick: String, id: String?): Boolean =
+        pick.trim().isNotEmpty() && pick.trim().equals(id, ignoreCase = true)
 }

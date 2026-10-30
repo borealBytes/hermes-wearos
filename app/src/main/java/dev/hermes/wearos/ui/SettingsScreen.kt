@@ -900,10 +900,18 @@ fun SettingsScreen(
             // names the engine watchkit's /health reports (refreshed while this page is open),
             // which is also the #9 "Settings shows it" contract. Auto-fallback = never stranded.
             val gwEngine by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
-            LaunchedEffect(page) { dev.hermes.wearos.net.Watchkit.refreshSttEngine() }
+            val gwEngines by dev.hermes.wearos.net.Watchkit.sttEngines.collectAsState()
+            var gwPick by remember { mutableStateOf(SttProviders.gatewayEnginePick) }
+            LaunchedEffect(page, sttProv) {
+                dev.hermes.wearos.net.Watchkit.refreshSttEngine()
+                gwPick = SttProviders.gatewayEnginePick
+            }
+            // #16: the EFFECTIVE engine (pick when /health says installed-ready, else the
+            // watchkit default) — the row name and the streaming preview both tell THIS truth.
+            val effEngine = SttProviders.effectiveEngine(gwPick, gwEngine, gwEngines.toList())
             VoicePickRow(
                 "🛰 Gateway · " + SttProviders.subtitle(
-                    SttProvider.GATEWAY, sttPresent, sysAvailable, sysPkg, gwEngine,
+                    SttProvider.GATEWAY, sttPresent, sysAvailable, sysPkg, effEngine,
                 ),
                 SttProviders.id(SttProvider.GATEWAY), SttProviders.id(sttProv),
                 onSelect = {
@@ -913,7 +921,10 @@ fun SettingsScreen(
             )
             // #13: the SAME truth the listening overlay prints up top, previewed here so the
             // wearer learns what each row means before they rely on it mid-sentence.
-            SttProviders.streamsText(sttProv, gwEngine)?.let { streams ->
+            val streamsFor: Boolean? = if (sttProv == SttProvider.GATEWAY)
+                SttProviders.engineStreams(effEngine, gwEngines.toList())
+            else SttProviders.streamsText(sttProv, effEngine)
+            streamsFor?.let { streams ->
                 Text(
                     SttProviders.streamsLabel(streams) + if (!streams) " (stays 'listening…' while you talk)" else "",
                     style = MaterialTheme.typography.caption3,
@@ -921,6 +932,42 @@ fun SettingsScreen(
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+            // #16 ENGINE PICKER (owner: *"we should have the option to select the model …
+            // if you click on it, it should let you … select … installed models … Whisper is
+            // working okay, I just don't like that it doesn't live transcribe … at least we
+            // have two and we're set up to expand"*): the gateway row CLICKS OPEN its installed
+            // engines — the list is exactly what watchkit's /health reports, so an engine nobody
+            // installed reads "not installed" instead of silently 404-ing mid-sentence.
+            if (sttProv == SttProvider.GATEWAY) {
+                FieldLabel("🛰 gateway engine")
+                VoicePickRow(
+                    "★ gateway default" + (gwEngine?.let { " · $it" } ?: " · watchkit offline"),
+                    "", gwPick,
+                    onSelect = {
+                        gwPick = ""
+                        scope.launch { settings.setSttGatewayEngine("") }
+                    },
+                )
+                if (gwEngines.isEmpty()) {
+                    Text(
+                        if (gwEngine == null) "watchkit offline — no engines listed"
+                        else "$gwEngine (only one reported)",
+                        style = MaterialTheme.typography.caption3,
+                        color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                gwEngines.forEach { e ->
+                    VoicePickRow(
+                        SttProviders.engineRowLabel(e), e.id.lowercase(), gwPick,
+                        onSelect = {
+                            gwPick = e.id.lowercase()
+                            scope.launch { settings.setSttGatewayEngine(e.id) }
+                        },
+                    )
+                }
             }
         }
         if (page == SettingsPage.Voice) {

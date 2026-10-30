@@ -30,9 +30,9 @@
  *   POST /stt/whisper     → {text}     multipart "audio" wav/webm ≤10MB     (faster-whisper CPU)
  *   WS   /stt/stream      ← BINARY 16 kHz mono PCM16 mic frames from the watch, TEXT {"end":true}
  *        (bearer)          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
- *        Engine from config.json `stt_stream_engine`: "whisper" (default, buffered — final only)
- *        | "parakeet" (NeMo — partials WHILE talking; honest error when nemo is absent).
- *        GET /health reports it as stt:{engine,ready,missing}.
+ *        Engine default from config.json `stt_stream_engine`: "whisper" (buffered — final only)
+ *        | "parakeet" (transcribe.cpp GGUF — partials WHILE talking). The watch may override per
+ *        session via ?engine=<id>; GET /health reports stt:{engine,ready,missing,engines[]}.
  *
  * Zero framework: node:http + node:crypto only. Everything folder-local under
  * server/watchkit/ (.cache for renders+npx+puppeteer, .models for whisper weights).

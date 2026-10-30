@@ -38,6 +38,7 @@ class AppSettings(private val context: Context) {
         private val KEY_VOICE_OUT = booleanPreferencesKey("voice_out")
         // SPEECH-INPUT PROVIDER (batch-4 #8): "local" (default, offline Vosk) | "system".
         private val KEY_STT_PROVIDER = stringPreferencesKey("stt_provider")
+    private val KEY_STT_GATEWAY_ENGINE = stringPreferencesKey("stt_gateway_engine")
         private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
         private val KEY_TTS_ENGINE = stringPreferencesKey("tts_engine")
         private val KEY_TTS_FALLBACK = stringPreferencesKey("tts_fallback")
@@ -203,6 +204,23 @@ class AppSettings(private val context: Context) {
         val id = SttProviders.normalize(v) // any unknown collapses to local (offline default)
         context.dataStore.edit { it[KEY_STT_PROVIDER] = id }
         SttProviders.current = id
+    }
+
+    /**
+     * GATEWAY STT ENGINE pick (owner 2026-10-30: *"clicking … should let you select … installed
+     * models"*). "" = follow watchkit's configured default; a non-empty id rides on every
+     * /stt/stream as ?engine=. Readiness is watchkit's call (it errors honestly, and the
+     * GatewayStt local fallback always catches the wearer), so this stores the WORD, not a guess.
+     */
+    suspend fun sttGatewayEngineValue(): String =
+        context.dataStore.data.first()[KEY_STT_GATEWAY_ENGINE]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: ""
+    suspend fun loadSttGatewayEngine() {
+        SttProviders.gatewayEnginePick = sttGatewayEngineValue()
+    }
+    suspend fun setSttGatewayEngine(v: String) {
+        val id = v.trim().lowercase().take(32) // engine ids are short slugs; blank = gateway default
+        context.dataStore.edit { it[KEY_STT_GATEWAY_ENGINE] = id }
+        SttProviders.gatewayEnginePick = id
     }
 
     /**

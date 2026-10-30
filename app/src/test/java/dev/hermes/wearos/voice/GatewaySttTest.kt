@@ -38,4 +38,17 @@ class GatewaySttTest {
         assertEquals("wss://box.ts.net:8651/stt/stream", wsUrl("https://box.ts.net:8651/"))
         assertEquals("ws://h:8651/stt/stream", wsUrl("  ws://h:8651  "))
     }
+
+    @Test fun `engine pick rides as a query param blank stays clean`() {
+        // #16: the wearer's Settings ▸ Voice in pick reaches watchkit as ?engine=…
+        assertEquals(
+            "ws://box:8651/stt/stream?engine=parakeet",
+            wsUrl("http://box:8651", "parakeet"),
+        )
+        assertEquals("ws://box:8651/stt/stream", wsUrl("http://box:8651", ""))
+        assertEquals("ws://box:8651/stt/stream", wsUrl("http://box:8651", null))
+        assertEquals("ws://box:8651/stt/stream", wsUrl("http://box:8651", "   "))
+        // odd ids (shouldn't happen — watchkit validates) must not break the URL
+        assertTrue(wsUrl("http://box:8651", "a b").startsWith("ws://box:8651/stt/stream?engine="))
+    }
 }

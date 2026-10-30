@@ -98,4 +98,49 @@ class SttProvidersTest {
         assertTrue(SttProviders.navSummary(SttProvider.SYSTEM).contains("System"))
         assertTrue(SttProviders.navSummary(SttProvider.GATEWAY).contains("Gateway"))
     }
+
+    // ── batch-4 #16: gateway ENGINE selection (owner: *"clicking … should let you select …
+    // installed models … set up to expand in the future"*) ──────────────────────────────────
+
+    private val par = SttProviders.SttEngineInfo("parakeet", streaming = true, ready = true)
+    private val whis = SttProviders.SttEngineInfo("whisper", streaming = false, ready = true)
+    private val future = SttProviders.SttEngineInfo("cricket", streaming = true, ready = true)
+    private val missing = SttProviders.SttEngineInfo("k2", streaming = true, ready = false, missing = "model missing")
+
+    @Test fun `effective engine honors the pick only when health says it is ready`() {
+        assertEquals("parakeet", SttProviders.effectiveEngine("parakeet", "whisper", listOf(par, whis)))
+        // picked an engine the box never reported ready → the gateway default answers, honestly
+        assertEquals("whisper", SttProviders.effectiveEngine("k2", "whisper", listOf(whis, missing)))
+        assertEquals("whisper", SttProviders.effectiveEngine("", "whisper", listOf(par)))
+        assertEquals(null, SttProviders.effectiveEngine("", null, emptyList()))
+        // an uninstalled pick with no health default is still unknown — not a fake name
+        assertEquals(null, SttProviders.effectiveEngine("k2", null, listOf(missing)))
+    }
+
+    @Test fun `pick matching is case and space proof`() {
+        assertTrue(SttProviders.pickMatches("Parakeet ", "parakeet"))
+        assertTrue(!SttProviders.pickMatches("", "whisper"))
+        assertTrue(!SttProviders.pickMatches("whisper", null))
+    }
+
+    @Test fun `engine streaming truth comes from the inventory first, known map second`() {
+        val engines = listOf(par, whis, future, missing)
+        assertEquals(true, SttProviders.engineStreams("parakeet", engines))
+        assertEquals(false, SttProviders.engineStreams("whisper", engines))
+        // a FUTURE engine needs no watch update: /health's flag is the truth
+        assertEquals(true, SttProviders.engineStreams("cricket", engines))
+        // no inventory (offline) falls back to the two engines that predate it…
+        assertEquals(true, SttProviders.engineStreams("parakeet", emptyList()))
+        assertEquals(false, SttProviders.engineStreams("whisper", emptyList()))
+        // …and anything else stays an honest question mark
+        assertEquals(null, SttProviders.engineStreams("cricket", emptyList()))
+        assertEquals(null, SttProviders.engineStreams(null, engines))
+    }
+
+    @Test fun `engine row labels say installed streaming or not installed`() {
+        assertTrue(SttProviders.engineRowLabel(par).contains("text streaming ✓"))
+        assertTrue(SttProviders.engineRowLabel(whis).contains("final when you stop"))
+        assertTrue("uninstalled must say so: ${SttProviders.engineRowLabel(missing)}",
+            SttProviders.engineRowLabel(missing).contains("not installed"))
+    }
 }

@@ -7,9 +7,15 @@
  *     server → client : TEXT frames, JSON lines from the engine adapter:
  *                       {"partial":"…"} (engine-dependent), {"final":"…"}, {"error":"…"}
  *
- * Engine = config.json `stt_stream_engine`: "whisper" (default; buffered — final only,
- * CPU-friendly) | "parakeet" (NeMo Unified-EN-6B streaming — partials WHILE talking; needs
- * nemo in the watchkit venv, honestly errors out when it is not).
+ * Engine: config.json `stt_stream_engine` picks the DEFAULT ("whisper" buffered — final only,
+ * CPU-friendly | "parakeet" — transcribe.cpp GGUF streaming, partials WHILE talking). The watch
+ * may override PER SESSION with `?engine=<id>` (Settings ▸ Voice in ▸ Gateway picker lists the
+ * engines /health reports, owner 2026-10-30: "it should let you … select … installed models").
+ * Unknown engine ids fall back to the configured default, never an error mid-sentence.
+ *
+ * /health shape: stt:{engine, ready, missing, engines:[{engine,ready,streaming,missing},…]}.
+ * The engines[] list comes from `stt_stream.py --check`, run CACHED in the background (a probe
+ * loads a 731 MB model — the failover probe must not pay that per hit).
  *
  * Zero framework: the RFC6455 subset here is exactly what the watch (okhttp WebSocket) and
  * curl/wscat probes send — masked text/binary + close. Keep it that small.
@@ -22,10 +28,46 @@ import { spawn } from 'node:child_process';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const HARD_CAP_MS = 120_000; // one streamed utterance may never outlive this
 
+export const STT_ENGINES = ['whisper', 'parakeet']; // mirrors stt_stream.py --engine choices
+
+// ── engine inventory (owner: the picker must list what is INSTALLED, honestly) ──────────────
+// `stt_stream.py --check` prints one JSON line per engine; it loads the parakeet GGUF (~1–2 s,
+// 731 MB), so /health serves the CACHE and this refreshes it in the background at most every
+// STT_PROBE_TTL_MS. First health beat may show engines:[] — the watch handles that by falling
+// back to the single-engine label (pre-selection behavior), never a wrong answer.
+const STT_PROBE_TTL_MS = 120_000;
+let sttEngines = null;
+let sttEnginesAt = 0;
+let sttProbeLive = false;
+
+function sttProbe(venvPy, wkDir) {
+  if (sttProbeLive || !fs.existsSync(venvPy) || !fs.existsSync(path.join(wkDir, 'stt_stream.py'))) return;
+  sttProbeLive = true;
+  const child = spawn(venvPy, [path.join(wkDir, 'stt_stream.py'), '--check'],
+    { cwd: wkDir, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '', timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { } }, 30_000);
+  child.stdout.on('data', (d) => { out += d.toString('utf8'); });
+  child.on('exit', () => {
+    clearTimeout(timer);
+    sttProbeLive = false;
+    sttEnginesAt = Date.now();
+    try {
+      const rows = out.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      if (rows.length) sttEngines = rows; // keep the old list on a broken probe (never blank the picker)
+    } catch { /* malformed probe output: keep cache */ }
+  });
+  child.on('error', () => { clearTimeout(timer); sttProbeLive = false; });
+}
+
 export function sttEngineStatus(cfg, venvPy, wkDir) {
   const engine = cfg.stt_stream_engine || 'whisper';
   const ready = fs.existsSync(venvPy) && fs.existsSync(path.join(wkDir, 'stt_stream.py'));
-  return { engine, ready, missing: ready ? null : 'run scripts/whisper-env.sh' };
+  if (ready && Date.now() - sttEnginesAt > STT_PROBE_TTL_MS) sttProbe(venvPy, wkDir);
+  return {
+    engine, ready,
+    missing: ready ? null : 'run scripts/whisper-env.sh',
+    engines: sttEngines || [], // [] until the first probe lands — honest "don't know yet"
+  };
 }
 
 export function attachSttStream(server, ctx) {
@@ -48,7 +90,11 @@ export function attachSttStream(server, ctx) {
       'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     );
-    pipeSession(socket, head, ctx, (req.socket.remoteAddress || '').replace('::ffff:', ''));
+    // Per-session engine pick (watch Settings ▸ Voice in ▸ Gateway). Unknown ids are NOT an
+    // error — they fold to the configured default so an old watch or a typo still transcribes.
+    const want = (q.get('engine') || '').trim().toLowerCase();
+    const engine = STT_ENGINES.includes(want) ? want : null;
+    pipeSession(socket, head, ctx, (req.socket.remoteAddress || '').replace('::ffff:', ''), engine);
   });
 }
 
@@ -99,10 +145,11 @@ export function decodeFrames(buf, acc) {
 
 /* ── session plumbing ─────────────────────────────────────────────────────── */
 
-function pipeSession(socket, head, ctx, ip) {
+function pipeSession(socket, head, ctx, ip, engineOverride) {
   const status = sttEngineStatus(ctx.cfg, ctx.venvPy, ctx.wkDir);
+  const engine = engineOverride || status.engine;
   const t0 = Date.now();
-  ctx.logLine({ ev: 'stt-stream', ip, ep: '/stt/stream', engine: status.engine, status: 101, ms: 0 });
+  ctx.logLine({ ev: 'stt-stream', ip, ep: '/stt/stream', engine, status: 101, ms: 0 });
 
   const sendText = (s) => { try { socket.write(encodeFrame(s)); } catch { /* gone */ } };
   let child = null, stdinOpen = false, ended = false, closed = false, bytesIn = 0, sawFinal = false;
@@ -121,7 +168,7 @@ function pipeSession(socket, head, ctx, ip) {
 
   const startEngine = () => {
     if (!status.ready) { sendText(JSON.stringify({ error: status.missing })); cleanup('not-ready'); return; }
-    child = spawn(ctx.venvPy, [path.join(ctx.wkDir, 'stt_stream.py'), '--engine', status.engine],
+    child = spawn(ctx.venvPy, [path.join(ctx.wkDir, 'stt_stream.py'), '--engine', engine],
       { cwd: ctx.wkDir, env: ctx.CHILD_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
     stdinOpen = true;
     let outBuf = '', errTail = '';

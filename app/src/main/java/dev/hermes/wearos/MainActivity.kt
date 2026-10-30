@@ -1199,12 +1199,27 @@ private fun ChatBody(
         chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
         chatListState.scrollToItem(wantIdx, (yOfSpoken - anchorY).roundToInt().coerceAtLeast(0))
     }
+    // #16: the overlay's engine label reads from watchkit's /health inventory — cold starts
+    // (and the beat after a watchkit restart) have never probed, and "engine ?" would then
+    // shadow a perfectly good answer. Refresh WHEN THE MIC OPENS: the LAN probe answers in
+    // ~100 ms, faster than the wearer finishes a sentence, and collectAsState re-labels the
+    // line the moment it lands (the mic itself never waits on this).
+    LaunchedEffect(listening) {
+        if (listening) dev.hermes.wearos.net.Watchkit.refreshSttEngine()
+    }
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewport = it }) {
         if (listening) {
             // #13 provider + streaming honesty line for the overlay top (pure labels,
-            // domain/SttProviders). The engine name rides watchkit's live /health report.
+            // domain/SttProviders). #16: the engine shown is the EFFECTIVE one — the wearer's
+            // Settings ▸ Voice in pick when /health says it is installed-ready, else the
+            // watchkit default; the streaming flag comes from the same inventory, so a future
+            // engine needs no watch update to be labeled honestly.
             val sttProvNow = SttProviders.fromId(SttProviders.current)
             val gwEngineNow by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
+            val gwEnginesNow by dev.hermes.wearos.net.Watchkit.sttEngines.collectAsState()
+            val effEngineNow = SttProviders.effectiveEngine(
+                SttProviders.gatewayEnginePick, gwEngineNow, gwEnginesNow,
+            )
             val ctxNow = androidx.compose.ui.platform.LocalContext.current
             val sysPkgNow = remember { SystemStt.recognizerPackage(ctxNow) }
             val sttEmoji = when (sttProvNow) {
@@ -1217,8 +1232,11 @@ private fun ChatBody(
                 handsFree = handsFree,
                 onKeyboard = onKeyboard,
                 history = pttHistory,
-                statusLine = sttEmoji + " " + SttProviders.overlayName(sttProvNow, sysPkgNow, gwEngineNow) +
-                    " · " + SttProviders.streamsLabel(SttProviders.streamsText(sttProvNow, gwEngineNow)),
+                statusLine = sttEmoji + " " + SttProviders.overlayName(sttProvNow, sysPkgNow, effEngineNow) +
+                    " · " + SttProviders.streamsLabel(
+                        if (sttProvNow == SttProvider.GATEWAY) SttProviders.engineStreams(effEngineNow, gwEnginesNow)
+                        else SttProviders.streamsText(sttProvNow, effEngineNow),
+                    ),
                 modifier = Modifier.padding(bottom = barPadDp),
             )
         } else {
