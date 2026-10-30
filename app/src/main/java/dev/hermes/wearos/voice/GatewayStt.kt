@@ -177,6 +177,7 @@ class GatewayStt(
             while (!stopping) {
                 val n = record.read(frame, 0, frame.size)
                 if (n <= 0) continue
+                SttLevel.publish(SttLevel.fromPcm16(frame, n)) // "it IS hearing you" meter (#13)
                 val chunk = frame.copyOf(n)
                 buffer.addLast(chunk)
                 bufferBytes += n
@@ -190,6 +191,7 @@ class GatewayStt(
         } finally {
             try { record.stop() } catch (_: Exception) { }
             record.release()
+            SttLevel.reset()
         }
         live.close()
 

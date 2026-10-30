@@ -88,4 +88,49 @@ object SttProviders {
         // GATEWAY is ALWAYS usable: its contract is the local auto-fallback (voice/GatewayStt).
         SttProvider.GATEWAY -> true
     }
+
+    // ── LISTENING-OVERLAY LABELS (batch-4 #13, owner: *"on the screen where you are entering
+    // voice … very top small … voice input provider listed, and … if it's streaming the text
+    // back … or not … really simple, like maybe a checkbox"*) — pure so the honesty is tested.
+
+    /** Short provider NAME for the overlay's top line; gateway names the live engine. */
+    fun overlayName(
+        provider: SttProvider,
+        recognizerPackage: String? = null,
+        gatewayEngine: String? = null,
+    ): String = when (provider) {
+        SttProvider.LOCAL -> "Local Vosk"
+        SttProvider.SYSTEM -> "System · ${vendor(recognizerPackage)}"
+        SttProvider.GATEWAY -> "Gateway · " + (gatewayEngine ?: "engine ?")
+    }
+
+    /**
+     * Can this provider stream PARTIAL text while talking? LOCAL/SYSTEM yes (both emit
+     * Partials); GATEWAY depends on the ENGINE — parakeet re-decodes per window (partials),
+     * whisper is buffered (final only at stop). Unknown engine = unknown (null), never a lie.
+     */
+    fun streamsText(provider: SttProvider, gatewayEngine: String? = null): Boolean? =
+        when (provider) {
+            SttProvider.LOCAL, SttProvider.SYSTEM -> true
+            SttProvider.GATEWAY -> when (gatewayEngine) {
+                "parakeet" -> true
+                "whisper" -> false
+                else -> null
+            }
+        }
+
+    /** Settings ▸ root row subtitle (#13): which engine the orb will use. No env probes —
+     *  static per provider so the hub never lies while availability refreshes in the page. */
+    fun navSummary(provider: SttProvider): String = when (provider) {
+        SttProvider.LOCAL -> "Local Vosk · offline"
+        SttProvider.SYSTEM -> "System recognizer"
+        SttProvider.GATEWAY -> "Gateway · streaming"
+    }
+
+    /** The #13 "checkbox" sentence: ✓ when text streams, ✗ + what to expect instead. */
+    fun streamsLabel(streams: Boolean?): String = when (streams) {
+        true -> "text streaming ✓"
+        false -> "text streaming ✗ · final when you stop"
+        null -> "text streaming ?"
+    }
 }

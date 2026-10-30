@@ -101,6 +101,7 @@ class VoskStt(private val context: Context) : SttSource {
                 while (currentCoroutineContext().isActive && !stopping) {
                     val n = record.read(buf, 0, buf.size)
                     if (n <= 0) continue
+                    SttLevel.publish(dev.hermes.wearos.domain.MicLevel.fromShorts(buf, n)) // #13 meter
                     if (rec.acceptWaveForm(buf, n)) {
                         val text = field(rec.result, "text")
                         if (text.isNotBlank()) emit(VoskEvent.Final(text))
@@ -117,6 +118,7 @@ class VoskStt(private val context: Context) : SttSource {
             } finally {
                 try { record.stop() } catch (e: Exception) { }
                 record.release()
+                SttLevel.reset()
                 Log.i(TAG, "stt stopped")
             }
         } finally {

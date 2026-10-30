@@ -63,4 +63,39 @@ class SttProvidersTest {
         assertTrue(SttProviders.usable(SttProvider.SYSTEM, false, true))
         assertFalse(SttProviders.usable(SttProvider.SYSTEM, true, false))
     }
+
+    // ── batch-4 #13: the listening overlay's provider + streaming honesty ─────────────────────
+
+    @Test fun `overlay names the provider and the live engine, never invents one`() {
+        assertEquals("Local Vosk", SttProviders.overlayName(SttProvider.LOCAL))
+        assertEquals(
+            "System · Google",
+            SttProviders.overlayName(SttProvider.SYSTEM, "com.google.android.tts"),
+        )
+        assertEquals("Gateway · whisper", SttProviders.overlayName(SttProvider.GATEWAY, null, "whisper"))
+        // Engine unknown (health never answered) says "engine ?" — an honest question mark.
+        assertEquals("Gateway · engine ?", SttProviders.overlayName(SttProvider.GATEWAY))
+    }
+
+    @Test fun `streamsText tells the truth per engine — buffered whisper is NOT streaming`() {
+        assertTrue(SttProviders.streamsText(SttProvider.LOCAL)!!)
+        assertTrue(SttProviders.streamsText(SttProvider.SYSTEM)!!)
+        assertEquals(false, SttProviders.streamsText(SttProvider.GATEWAY, "whisper"))
+        assertEquals(true, SttProviders.streamsText(SttProvider.GATEWAY, "parakeet"))
+        assertEquals(null, SttProviders.streamsText(SttProvider.GATEWAY))
+        assertEquals(null, SttProviders.streamsText(SttProvider.GATEWAY, "mystery-engine"))
+    }
+
+    @Test fun `streamsLabel pairs the checkbox with what to expect instead`() {
+        assertEquals("text streaming ✓", SttProviders.streamsLabel(true))
+        assertTrue(SttProviders.streamsLabel(false).contains("✗"))
+        assertTrue("buffered must say WHEN the text lands", SttProviders.streamsLabel(false).contains("stop"))
+        assertEquals("text streaming ?", SttProviders.streamsLabel(null))
+    }
+
+    @Test fun `nav summary names the orb default without probing the environment`() {
+        assertTrue(SttProviders.navSummary(SttProvider.LOCAL).contains("Vosk"))
+        assertTrue(SttProviders.navSummary(SttProvider.SYSTEM).contains("System"))
+        assertTrue(SttProviders.navSummary(SttProvider.GATEWAY).contains("Gateway"))
+    }
 }

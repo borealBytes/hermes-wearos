@@ -91,7 +91,10 @@ class SystemStt(private val context: Context) : SttSource {
         val best = object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                // The engine's own level readout drives the #13 "hearing you" meter.
+                dev.hermes.wearos.voice.SttLevel.publish(dev.hermes.wearos.domain.MicLevel.fromDb(rmsdB))
+            }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
@@ -127,7 +130,7 @@ class SystemStt(private val context: Context) : SttSource {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
         rec.startListening(intent)
-        awaitClose { runCatching { rec.destroy() }; recognizer = null }
+        awaitClose { runCatching { rec.destroy() }; recognizer = null; SttLevel.reset() }
     }
 
     /** Flush-and-close: the engine delivers its FINAL via onResults; the flow ends there. */

@@ -221,6 +221,9 @@ fun SettingsScreen(
             val selGw = gateways.firstOrNull { it.id == selectedGwId }
             SettingNavRow("🌐", "Gateways", "${gateways.size} saved" + (if (selGw != null) " · ✓ ${selGw.label}" else "")) { page = SettingsPage.Gateways }
             SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×") { page = SettingsPage.Voice }
+            // #13: voice-IN gets its own page (was buried in Voice out); subtitle names the
+            // provider the orb will use, straight from the same in-memory truth the mic reads.
+            SettingNavRow("🎤", "Voice in", SttProviders.navSummary(SttProviders.fromId(SttProviders.current))) { page = SettingsPage.VoiceIn }
             SettingNavRow("🎛️", "Display", "markdown · splash · orb") { page = SettingsPage.Display }
             SettingNavRow("⌚", "Watch", "body tools ${bodyTools.size} on · notifications") { page = SettingsPage.Watch }
             SettingNavRow("ℹ️", "About", "v$version · stt model") { page = SettingsPage.About }
@@ -734,46 +737,9 @@ fun SettingsScreen(
             Text("🔊 voice out", style = MaterialTheme.typography.body2)
             Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
         }
-        // SPEECH INPUT PROVIDER (batch-4 #8, owner: picker in Settings ▸ Voice, the system
-        // recognizer "honestly labeled OFF-DEVICE … auto-detected per vendor"). Two buttons,
-        // HONEST subtitles from domain/SttProviders (pure + JVM-tested); Vosk stays default —
-        // airplane mode must keep listening (SPEC §5). The mic path resolves the pick on every
-        // startListening (WearApp.Graph.sttNow), so a pick is live immediately, no restart.
-        FieldLabel("🎙 speech input")
-        val sysAvailable = remember { SystemStt.isAvailable(context) }
-        val sysPkg = remember { SystemStt.recognizerPackage(context) }
-        var sttProv by remember { mutableStateOf(SttProviders.fromId(SttProviders.current)) }
-        VoicePickRow(
-            "🎙️ Local Vosk · " + SttProviders.subtitle(SttProvider.LOCAL, sttPresent, sysAvailable, sysPkg),
-            SttProviders.id(SttProvider.LOCAL), SttProviders.id(sttProv),
-            onSelect = {
-                sttProv = SttProvider.LOCAL
-                scope.launch { settings.setSttProvider(SttProviders.ID_LOCAL) }
-            },
-        )
-        VoicePickRow(
-            "📡 System · " + SttProviders.subtitle(SttProvider.SYSTEM, sttPresent, sysAvailable, sysPkg),
-            SttProviders.id(SttProvider.SYSTEM), SttProviders.id(sttProv),
-            onSelect = {
-                sttProv = SttProvider.SYSTEM
-                scope.launch { settings.setSttProvider(SttProviders.ID_SYSTEM) }
-            },
-        )
-        // BATCH-4 #9: the third provider — streaming mic to the gateway engine. The subtitle
-        // names the engine watchkit's /health reports (refreshed while this page is open),
-        // which is also the #9 "Settings shows it" contract. Auto-fallback = never stranded.
-        val gwEngine by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
-        LaunchedEffect(page) { if (page == SettingsPage.Voice) dev.hermes.wearos.net.Watchkit.refreshSttEngine() }
-        VoicePickRow(
-            "🛰 Gateway · " + SttProviders.subtitle(
-                SttProvider.GATEWAY, sttPresent, sysAvailable, sysPkg, gwEngine,
-            ),
-            SttProviders.id(SttProvider.GATEWAY), SttProviders.id(sttProv),
-            onSelect = {
-                sttProv = SttProvider.GATEWAY
-                scope.launch { settings.setSttProvider(SttProviders.ID_GATEWAY) }
-            },
-        )
+        // SPEECH INPUT lives on its own nested page now (batch-4 #13: Settings ▸ Voice in) —
+        // the owner asked for the orb's default engine to be settable the same way voice-out
+        // is, not buried under it.
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.
@@ -903,6 +869,59 @@ fun SettingsScreen(
             }
         }
 
+        }
+        if (page == SettingsPage.VoiceIn) {
+            // SPEECH INPUT PROVIDER (batch-4 #8 picker, #13 page: the orb's default engine,
+            // nested like Voice out). HONEST subtitles from domain/SttProviders (pure +
+            // JVM-tested); Vosk stays default — airplane mode must keep listening (SPEC §5).
+            // The mic path resolves the pick on every startListening (WearApp.Graph.sttNow),
+            // so a pick is live immediately, no restart.
+            FieldLabel("🎙 speech input")
+            val sysAvailable = remember { SystemStt.isAvailable(context) }
+            val sysPkg = remember { SystemStt.recognizerPackage(context) }
+            var sttProv by remember { mutableStateOf(SttProviders.fromId(SttProviders.current)) }
+            VoicePickRow(
+                "🎙️ Local Vosk · " + SttProviders.subtitle(SttProvider.LOCAL, sttPresent, sysAvailable, sysPkg),
+                SttProviders.id(SttProvider.LOCAL), SttProviders.id(sttProv),
+                onSelect = {
+                    sttProv = SttProvider.LOCAL
+                    scope.launch { settings.setSttProvider(SttProviders.ID_LOCAL) }
+                },
+            )
+            VoicePickRow(
+                "📡 System · " + SttProviders.subtitle(SttProvider.SYSTEM, sttPresent, sysAvailable, sysPkg),
+                SttProviders.id(SttProvider.SYSTEM), SttProviders.id(sttProv),
+                onSelect = {
+                    sttProv = SttProvider.SYSTEM
+                    scope.launch { settings.setSttProvider(SttProviders.ID_SYSTEM) }
+                },
+            )
+            // BATCH-4 #9: the third provider — streaming mic to the gateway engine. The subtitle
+            // names the engine watchkit's /health reports (refreshed while this page is open),
+            // which is also the #9 "Settings shows it" contract. Auto-fallback = never stranded.
+            val gwEngine by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
+            LaunchedEffect(page) { dev.hermes.wearos.net.Watchkit.refreshSttEngine() }
+            VoicePickRow(
+                "🛰 Gateway · " + SttProviders.subtitle(
+                    SttProvider.GATEWAY, sttPresent, sysAvailable, sysPkg, gwEngine,
+                ),
+                SttProviders.id(SttProvider.GATEWAY), SttProviders.id(sttProv),
+                onSelect = {
+                    sttProv = SttProvider.GATEWAY
+                    scope.launch { settings.setSttProvider(SttProviders.ID_GATEWAY) }
+                },
+            )
+            // #13: the SAME truth the listening overlay prints up top, previewed here so the
+            // wearer learns what each row means before they rely on it mid-sentence.
+            SttProviders.streamsText(sttProv, gwEngine)?.let { streams ->
+                Text(
+                    SttProviders.streamsLabel(streams) + if (!streams) " (stays 'listening…' while you talk)" else "",
+                    style = MaterialTheme.typography.caption3,
+                    color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         if (page == SettingsPage.Voice) {
             StatusLine("tts engine", ttsState.toString())
@@ -1379,6 +1398,10 @@ enum class SettingsPage(val title: String) {
     Display("Display"),
     Watch("Watch"),
     Voice("Voice out"),
+    // BATCH-4 #13 (owner: *"there's a settings page for voice out. We need a voice in
+    // settings so we can set the default one we want to use on the orb"*): the STT provider
+    // picker moved OUT of the voice-out page into its own nested page.
+    VoiceIn("Voice in"),
     About("About"),
 }
 

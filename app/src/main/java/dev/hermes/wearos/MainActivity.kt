@@ -102,6 +102,9 @@ import dev.hermes.wearos.domain.RenderCase
 import dev.hermes.wearos.domain.ProfileLogic
 import dev.hermes.wearos.domain.PromptEdit
 import dev.hermes.wearos.domain.Vad
+import dev.hermes.wearos.domain.SttProvider
+import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.domain.CommandCatalog
 import dev.hermes.wearos.domain.CommandEntry
 import dev.hermes.wearos.domain.CommandKind
@@ -1198,11 +1201,24 @@ private fun ChatBody(
     }
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewport = it }) {
         if (listening) {
+            // #13 provider + streaming honesty line for the overlay top (pure labels,
+            // domain/SttProviders). The engine name rides watchkit's live /health report.
+            val sttProvNow = SttProviders.fromId(SttProviders.current)
+            val gwEngineNow by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
+            val ctxNow = androidx.compose.ui.platform.LocalContext.current
+            val sysPkgNow = remember { SystemStt.recognizerPackage(ctxNow) }
+            val sttEmoji = when (sttProvNow) {
+                SttProvider.LOCAL -> "🎙️"
+                SttProvider.SYSTEM -> "📡"
+                SttProvider.GATEWAY -> "🛰"
+            }
             PttOverlay(
                 partial = pttPartial,
                 handsFree = handsFree,
                 onKeyboard = onKeyboard,
                 history = pttHistory,
+                statusLine = sttEmoji + " " + SttProviders.overlayName(sttProvNow, sysPkgNow, gwEngineNow) +
+                    " · " + SttProviders.streamsLabel(SttProviders.streamsText(sttProvNow, gwEngineNow)),
                 modifier = Modifier.padding(bottom = barPadDp),
             )
         } else {
