@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -49,11 +50,16 @@ fun ApprovalModeDialog(
     ) {
         val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
         val edgeScope = rememberCoroutineScope()
+        // BATCH-5 #18: gesture on a viewport-sized wrapper, not the content-tall scroll Column.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } }
                 .verticalScroll(edgeDlgScroll)
                 // Owner correction (batch-4 #6): buffer as CONTENT lines inside the scroll, not
                 // a viewport band (see AgentPickerDialog for the full lesson).
@@ -100,5 +106,6 @@ fun ApprovalModeDialog(
                 }
             }
         }
+        } // Box (batch-5 #18 edge-scroll host)
     }
 }

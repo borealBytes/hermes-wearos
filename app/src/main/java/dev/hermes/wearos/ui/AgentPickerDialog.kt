@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -48,6 +49,14 @@ fun AgentPickerDialog(
     ) {
         val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
         val edgeScope = rememberCoroutineScope()
+        // BATCH-5 #18: the gesture rides a viewport-sized wrapper, NOT the scrolled Column —
+        // the column node is content-tall, so the ring ellipse was computed against the wrong
+        // box and edge circles died below the top rim (see SettingsScreen for the full why).
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -56,7 +65,6 @@ fun AgentPickerDialog(
                 // shrank the viewport — content visibly cut off at top and bottom. Whole face
                 // scrolls; the buffer is blank CONTENT lines at the ends (top so the title clears
                 // the clock at rest, bottom = the circle-safe rim line).
-                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } }
                 .verticalScroll(edgeDlgScroll)
                 .padding(top = 34.dp, bottom = circleSafeBottomDp(12f, 10f).dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -113,5 +121,6 @@ fun AgentPickerDialog(
                 ),
             ) { Text("close", style = MaterialTheme.typography.button) }
         }
+        } // Box (batch-5 #18 edge-scroll host)
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -191,6 +192,19 @@ fun SettingsScreen(
 
     val settingsScroll = androidx.compose.foundation.rememberScrollState()
     val edgeScope = rememberCoroutineScope()
+    // BATCH-5 #18 (owner: *"it's not working on the agent screen… let me check the settings
+    // screens… it's not working there… voice out has a really long list… not working there
+    // either"*): the gesture lived ON the scrolled Column, whose layout node measures as tall
+    // as its CONTENT — the ring geometry then computed a ~480×900 ellipse on a 480 px face, so
+    // only touches near the TOP rim ever counted, and they drifted further off the deeper the
+    // page scrolled (positions ride the node origin, which scrolls away). Chat/Sessions kept
+    // working because a ScalingLazyColumn node IS viewport-sized. The gesture now rides a
+    // viewport-sized wrapper: ring = the real round face, every page, every scroll position.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .edgeCircleScroll { total -> edgeScope.launch { settingsScroll.scrollBy(total) } },
+    ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -200,8 +214,6 @@ fun SettingsScreen(
             // chat window initially"). The buffer is CONTENT padding after the scroll: think of a
             // web page with extra blank lines at the end — the text flows through the rim zone
             // while you read, and the LAST line comes to rest in the meat of the circle.
-            // BATCH-4 #7: finger-circling the edge scrolls the settings tree too.
-            .edgeCircleScroll { total -> edgeScope.launch { settingsScroll.scrollBy(total) } }
             .padding(horizontal = 20.dp)
             .verticalScroll(settingsScroll)
             .padding(top = 12.dp, bottom = circleSafeBottomDp(20f, 12f).dp),
@@ -1004,6 +1016,7 @@ fun SettingsScreen(
             StatusLine("author", "Clayton Young")
         }
     }
+    } // Box (batch-5 #18 edge-scroll host)
 }
 
 /**

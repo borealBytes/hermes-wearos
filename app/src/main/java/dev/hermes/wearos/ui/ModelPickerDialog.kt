@@ -62,18 +62,20 @@ fun ModelPickerDialog(
         // Bounded full-screen box with the scroll INSIDE: a bare scrollable Column inside a
         // wrap-content dialog window reports its natural (taller-than-the-circle) height and the
         // window then CENTERS it — the title scrolls off before the list even appears.
+        // BATCH-5 #18: the edge-circle gesture lives HERE (viewport-sized), never on the
+        // scrolled Column — the column node is content-tall, so the ring ellipse was wrong.
+        val edgeScope = rememberCoroutineScope()
+        val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black),
+                .background(Color.Black)
+                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
         ) {
-            val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
-        val edgeScope = rememberCoroutineScope()
         Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } }
                 .verticalScroll(edgeDlgScroll)
                     // Owner correction (batch-4 #6): buffer = blank content lines INSIDE the
                     // scroll (title clears the clock at rest, last row rests on the rim line).
