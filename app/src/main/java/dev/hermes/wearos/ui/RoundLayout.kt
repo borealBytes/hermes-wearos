@@ -21,12 +21,11 @@ import dev.hermes.wearos.domain.RoundScreen
 
 /** Is this a round viewport? (Wear emulator + Ultra are; square preview devices aren't.) */
 @Composable
-fun isRoundScreen(): Boolean {
-    val cfg = LocalConfiguration.current
-    // Configuration.SCREENLAYOUT_ROUND_MASK / SCREENLAYOUT_ROUND (0x03 / 0x02) — spelled as the
-    // documented ints here because only the *_MASK constant resolves in these SDK stubs.
-    return (cfg.screenLayout and 0x03) == 0x02
-}
+fun isRoundScreen(): Boolean = LocalConfiguration.current.isScreenRound
+// (The old bit trick `(screenLayout and 0x03) == 0x02` was WRONG — round lives under mask 0x0C,
+// value 0x08 — and silently reported FALSE on the owner's SM-L705U, so every rim rule in the app
+// quietly ran in square mode. Proven 2026-10-30 by a q-lift log showing listTopPad = 0. The
+// platform's own `isScreenRound` cannot drift.)
 
 @Composable
 fun roundInsets(): RoundScreen.Insets = RoundScreen.insetsFor(isRoundScreen())
@@ -56,11 +55,16 @@ fun Modifier.roundSafe(): Modifier {
  * dwarfs the chin inset.
  */
 @Composable
-fun roundListPadding(bottomExtraDp: Float = 8f, topExtraDp: Float = 0f, bottomOverrideDp: Dp? = null): PaddingValues {
+fun roundListPadding(
+    bottomExtraDp: Float = 8f,
+    topExtraDp: Float = 0f,
+    bottomOverrideDp: Dp? = null,
+    topOverrideDp: Dp? = null,
+): PaddingValues {
     val i = roundInsets()
     val gutter = (i.horizontalDp - 10f).coerceAtLeast(0f)
     return PaddingValues(
-        top = (i.topDp + topExtraDp).dp,
+        top = topOverrideDp ?: (i.topDp + topExtraDp).dp,
         bottom = bottomOverrideDp ?: (i.bottomDp + bottomExtraDp).dp,
         start = gutter.dp,
         end = gutter.dp,

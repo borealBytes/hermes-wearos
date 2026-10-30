@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -46,6 +49,7 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import dev.hermes.wearos.domain.ChatAnchor
+import kotlin.math.roundToInt
 import dev.hermes.wearos.domain.ApprovalInfo
 import dev.hermes.wearos.domain.ChatFollow
 import dev.hermes.wearos.domain.ChatMessage
@@ -66,6 +70,9 @@ fun ChatScreen(
     // LAYOUT D: transcript bottom clearance = the bottom-cluster's top edge (px→dp by the caller)
     // so the LAST message can rest clear of the orb cluster; null keeps the chin-based default.
     contentPadBottomDp: Dp? = null,
+    // Batch-4 #3: full viewport width (px) so the 10-o'clock line is the real face's, not the
+    // SLC column's. 0 = fall back to the column's own height (square faces are identical).
+    viewportW: Float = 0f,
     // Hoisted from MainActivity's ChatBody so the scroll SURVIVES the PTT overlay (if/else pair
     // leaves composition while listening) — walkthrough: "after stt talk button done, it scrolls
     // to the top of convo instead of staying at bottom".
@@ -111,6 +118,16 @@ fun ChatScreen(
     //    the layout's own truth — ONE clean frame with every row visible sums the heights —
     //    so no font/markdown math can drift.
     val anchorDensity = androidx.compose.ui.platform.LocalDensity.current
+    // Measured chrome for the question-lift geometry (batch-4 #3): the SLC's own top content
+    // padding, its item gap, AND where the list actually starts in the window — the Scaffold's
+    // clock band offsets it ~90 px, which the first version assumed away (the 10:00 tick then
+    // computed perfectly while the question rendered 70 px lower on the glass).
+    val listTopPadPx = 0f  // = the topOverrideDp below: the chat deliberately flows full-bleed
+    // (its true clearance comes from the bottom-cluster pad + the spacer math, and the whole
+    // transcript was tuned that way; the now-truthful round insets would push every row 64 px
+    // down and re-wrap the lines — the list-inset retune is batch item 6, per surface).
+    val listGapPx = with(anchorDensity) { 6.dp.toPx() }
+    var slcTopPx by remember { mutableStateOf(0f) }
     var anchorPadPx by remember { mutableStateOf(0f) }
     var slcH by remember { mutableStateOf(0) }
     val bottomPadPx = with(anchorDensity) { (contentPadBottomDp ?: 82.dp).toPx() } +
@@ -157,6 +174,48 @@ fun ChatScreen(
         val slack = if (contentH > 0f && !idleEmpty && state.approval == null)
             (slcH - bottomPadPx - contentH) else 0f
         anchorPadPx = if (slack > 1f) slack else 0f
+        // BATCH-4 #3 (owner: *"when you submit a request, it's okay for your question to start at
+        // that 10 o'clock spot… that should be the top corner"*): the beat right after SEND the
+        // question is the newest row and nothing answers it yet — retune the spacer so its TOP
+        // edge rests exactly on the 10-o'clock tick line (wide-open rim up there, nothing to
+        // clip), leaving the whole lower circle as the answer's runway. The first streamed delta
+        // flips this back to the orb-crown rule and the reply grows upward from the 8:20 corner,
+        // sliding the question back up past the tick exactly as it fills.
+        // THE OFFSET MUST BE TRUTHFUL, AND THE FIX MUST BE A FIXED POINT. The first version
+        // one-step-corrected from the row's measured offset — which OSCILLATES (a lifted frame
+        // measures above the tick and relaxes the pad back; caught on the SM-L705U as the
+        // question wobbling between two heights), and lazy wear frames report not-yet-laid rows
+        // at offset −1, where lifting adds a viewport of spacer and the chat falls off screen
+        // (black transcript mid-stream, also caught on-device). Direct geometry instead: the
+        // spacer that lands the question's TOP on the tick is exactly
+        // (tick − listTopPad − header − item gap) — all measured terms, none depends on the
+        // current spacer. Clamped to [0, slack]: never above the tick, never below the plain
+        // orb-crown rest. The state is "newest row is USER and nothing has streamed for it yet",
+        // not the newAsk transition — the transition is true only in the one lazy frame the
+        // guards must refuse.
+        val awaitingAnswer = state.messages.lastOrNull()?.role == ChatMessage.Role.User &&
+            state.live.isEmpty()
+        // Direct geometry undercounts the header chrome (measured: formula said 120, the row
+        // rendered at 258). MEASURE instead: while resting at the list top, the row's container
+        // offset is its distance below the viewport top (content padding + spacer + header all
+        // folded in), so shrinking the spacer by exactly (rowTop − tick) lands the question's
+        // TOP-LEFT on the 10:00 line. Stable at its result (next pass measures tenY, delta 0);
+        // re-decides as the header grows mid-composition.
+        val qRow = vis.firstOrNull { it.index == state.messages.size + 1 }
+        if (awaitingAnswer && slack > 1f && state.approval == null && qRow != null &&
+            qRow.offset >= 0 && slcH > 0 && !listState.canScrollBackward
+        ) {
+            val tenY = dev.hermes.wearos.domain.RoundScreen.tenOclockY(
+                if (viewportW > 0f) viewportW else slcH.toFloat(), slcH.toFloat(),
+            )
+            val qTopGlobal = slcTopPx + qRow.offset
+            val lift = (qTopGlobal - tenY).coerceAtLeast(0f)
+            if (lift > 1f) anchorPadPx = (anchorPadPx - lift).coerceIn(0f, slack)
+            android.util.Log.d(
+                "HermesWear", "q-lift pad=${anchorPadPx.toInt()} qTop=${qTopGlobal.toInt()} " +
+                    "tenY=${tenY.toInt()} slcTop=${slcTopPx.toInt()} slack=${slack.toInt()}",
+            )
+        }
         val idx = ChatAnchor.bottomIndex(
             messageCount = state.messages.size,
             hasApproval = state.approval != null,
@@ -190,6 +249,38 @@ fun ChatScreen(
                 tries++
             }
             if (tries > 1) android.util.Log.d("HermesWear", "anchor idx=$idx tries=$tries (lazy tail)")
+            // THE TAIL PUSH, padding edition (batch-4 #1/#4, owner: *"the bottom left of the
+            // text gets cut off from the circle screen face"*): wear-compose clamps a row
+            // TALLER than the viewport at an end position it computes from its own lazy layout —
+            // scrollToItem into the row is clamped and simply does not move it (measured:
+            // push o=1600, bottom 1009 → unchanged). But wear's list END does HONOR
+            // contentPadding (settled long rows rest exactly at vpBottom − pad on this device).
+            // So the lever is the PADDING: while the tail hangs below the circle-safe line,
+            // grow the bottom pad by the hang; when it lifts back above, decay. The answer's
+            // last line then streams upward out of the 8:20 corner instead of the bezel edge.
+            val tailInfo = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == target }
+            val restLine = slcH - bottomPadPx
+            if (tailInfo != null && slcH > 0 && restLine > 0f &&
+                tailInfo.offset + tailInfo.size > restLine + 2f
+            ) {
+                // THE GROWING-ROW LAG (batch-4 #1/#4, measured on the SM-L705U): wear computes the
+                // clamped END from the row's PREVIOUS layout pass, so a row growing mid-stream
+                // rests its newest line BELOW the circle-safe line until the next relayout — the
+                // exact band the bezel shaves. A padding lever over-corrects (black transcript:
+                // caught mid-oscillation on this build), so settle it the honest way: let the
+                // row finish laying out, then re-assert the end — wear HONORS contentPadding at a
+                // settled clamp (long settled rows rest exactly on the safe line, measured).
+                // 3 × 70 ms covers the text-wrap passes without a visible pause; every streamed
+                // chunk re-runs this effect, so the tail walks up out of the 8:20 corner.
+                for (i in 1..6) {
+                    delay(if (i <= 3) 70 else 150)
+                    programmaticScrollAt.value = android.os.SystemClock.elapsedRealtime()
+                    listState.scrollToItem(target, 4096)
+                    withFrameNanos { }
+                    if (!listState.canScrollForward) break
+                }
+            }
         }
     }
     // THE SECOND ChatFollow SIGNAL — who moved the list? Every scroll this screen itself makes is
@@ -213,7 +304,9 @@ fun ChatScreen(
     }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxWidth().onSizeChanged { slcH = it.height }.pointerInput(listState) {
+        modifier = Modifier.fillMaxWidth().onSizeChanged { slcH = it.height }
+            .onGloballyPositioned { slcTopPx = it.positionInRoot().y }
+            .pointerInput(listState) {
             // OBSERVER-ONLY gesture watch (Initial pass, consumes nothing → the list scrolls and
             // the orb keeps its own lane). While the end is reached (no forward scroll left),
             // upward travel accumulates; past the threshold the gateway re-pull fires — once
@@ -240,7 +333,11 @@ fun ChatScreen(
         // Round discipline (ask #5): first item rests below the clock, last above the orb bar,
         // horizontal gutter tops rows' own padding up to the safe circle; SLC scaling does falloff.
         // LAYOUT D: the chat passes the measured cluster top edge as the bottom clearance.
-        contentPadding = roundListPadding(bottomExtraDp = 6f, bottomOverrideDp = contentPadBottomDp),
+        contentPadding = roundListPadding(
+            bottomExtraDp = 6f,
+            bottomOverrideDp = contentPadBottomDp,
+            topOverrideDp = 0.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Item 0: the BOTTOM-ANCHOR spacer (see anchorPadPx) — height 0 whenever the tail-pin

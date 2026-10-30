@@ -1,5 +1,7 @@
 package dev.hermes.wearos.domain
 
+import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -98,6 +100,50 @@ object BottomLayout {
     fun transcriptBottomPad(viewportW: Float, viewportH: Float): Float =
         if (scaleFor(viewportW, viewportH) <= 0f) 0f
         else (viewportH - geometry(viewportW, viewportH).talk.topY()).coerceAtLeast(0f)
+
+    /** Physical-round allowance: the glass rim is a hair inside the mathematical circle. */
+    const val RIM_INSET_RATIO = 0.98f
+
+    /**
+     * THE CIRCLE-SAFE BOTTOM LINE (batch-4 items 1 + 6, owner: *"the bottom left of the text gets
+     * cut off from the circle screen face… have the corner the text comes from start at the line
+     * where the top of the orb is… make this universal to work on square and circle screens"*).
+     *
+     * Returns the contentPadding-bottom in px — the band at the bottom of the viewport that
+     * scrolling content must never enter — as the LARGER of two rules:
+     *
+     *  • **orb crown** (via [orbTopPx]): content rests above the cluster on ANY shape. Pass
+     *    [orbTopPx] = viewport height for surfaces without an orb (every plain list, item 6).
+     *  • **rim** (round faces only): a text row's bottom-LEFT corner is the first pixel the
+     *    bezel shaves, so content may only descend to the lowest y that keeps (contentLeftPx, y)
+     *    inside the physical circle: y ≤ cy + √(r² − (x−cx)²), r = min(w,h)/2 · [RIM_INSET_RATIO].
+     *    On the 480-ref face with the text gutter at 8 dp this lands ≈ 288/480 — ABOVE the orb
+     *    crown at 337 — which is the owner's "8:20 spot" (rim ∩ just-above-orb), measured from
+     *    his screenshot: digits at x≈8 px resting at y≈314 were shaved by ~26 px.
+     *
+     * Square faces get the orb rule untouched (no rim constraint on a rect), so the same call
+     * serves Pixel/OnePlus square watches. Degenerate viewports return 0 (nothing to clear).
+     */
+    fun circleSafeBottomPad(
+        viewportW: Float,
+        viewportH: Float,
+        round: Boolean,
+        contentLeftPx: Float,
+        orbTopPx: Float = viewportH,
+        marginPx: Float = 0f,
+    ): Float {
+        if (scaleFor(viewportW, viewportH) <= 0f) return 0f
+        val orbPad = (viewportH - (orbTopPx - marginPx)).coerceAtLeast(0f)
+        if (!round) return orbPad
+        val cx = viewportW / 2f
+        val cy = viewportH / 2f
+        val r = min(viewportW, viewportH) / 2f * RIM_INSET_RATIO
+        val dx = abs(contentLeftPx - cx)
+        // x outside the rim's span (tiny face, huge gutter): the safe line is the center height.
+        val rimLowestY = if (dx >= r) cy else cy + sqrt(r * r - dx * dx)
+        val rimPad = (viewportH - (rimLowestY - marginPx)).coerceAtLeast(0f)
+        return max(orbPad, rimPad)
+    }
 
     /** Ref-px gap between two cluster circles (negative = overlap); mockup sanity checks use it. */
     fun clearance(a: Spot, b: Spot): Float {

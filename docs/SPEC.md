@@ -896,9 +896,9 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 
 | # | Status | Ask (owner language distilled) | Where it lands |
 |---|--------|------------------------------|----------------|
-| 1 | ☐ | Newest streamed text's bottom-left corner rests at the **"8:20 spot"** — the circle rim ∩ top-of-orb line — so nothing clips on round faces; derived from orb position + screen shape so SQUARE screens (and any vendor round size) work unchanged | `domain/BottomLayout.kt` rim math + `ui/ChatScreen.kt` bottom-anchor |
-| 2 | ☐ | Karaoke's spoken line anchors at the **10-o'clock tick height** (~25 % down — wide rim up there, left edge never clips); no-nudge band re-tuned around it | `MainActivity` karaoke effect + `domain/KaraokeCursor` |
-| 3 | ☐ | The submitted question anchors at that same 10:00 height (ChatAnchor baseline re-base) | `domain/ChatAnchor` + ChatScreen |
+| 1 | ✅ | Newest streamed text's bottom-left corner rests at the **"8:20 spot"** — the circle rim ∩ top-of-orb line — so nothing clips on round faces; derived from orb position + screen shape so SQUARE screens (and any vendor round size) work unchanged | FIXED 2026-10-30: `BottomLayout.circleSafeBottomPad` = max(orb-crown, physical-rim at the text gutter) feeds the transcript pad; growing-row lag settled by delayed re-asserts (wear's clamp uses the PREVIOUS layout pass). Circle-masked captures: mid-stream digits fully readable, none shaved (pre-fix: "29"→"9") |
+| 2 | 🛠 | Karaoke's spoken line anchors at the **10-o'clock tick height** (~25 % down — wide rim up there, left edge never clips); no-nudge band re-tuned around it | CODE LANDED: karaoke anchor = `RoundScreen.tenOclockY`, band 12 %–35 % around it. Hardware capture needs a READ-ALoud session — scheduled into the end-of-batch watch pass |
+| 3 | ✅ | The submitted question anchors at that same 10:00 height (ChatAnchor baseline re-base) | FIXED 2026-10-30: while a question awaits its answer the bottom spacer shrinks by the MEASURED row-top minus tick (derived geometry undercounted header chrome — measured 120 vs rendered 258), clamped to `[0, slack]`. Masked capture: question top-left lands upper-left (≈10:00–10:20 depending on header mid-composition), never under the orb; exact-pixel polish logged below |
 | 4 | ☐ | **Follow-up replies scroll-from-orb like the first chat in a new session** — every answer rises from the 8:20 corner regardless of history length (pad recomputed per reply; over-long replies switch to in-reply tail-follow) | `ui/ChatScreen.kt` spacer pad |
 | 5 | ☐ | Approval ✅ **OK = left of the orb**, ❌ **NO = right of the orb** — but **only while scrolled to the chat bottom** (no buttons permanently hanging by the orb → no mis-clicks); also fixes: buttons never appeared when the approval arrived mid-scroll | `ui/ChatScreen.kt` + ApprovalCard |
 | 6 | ☐ | **Top/bottom buffer padding on EVERY list** (Settings tree, Voice lists, Sessions, Chats, Commands, search) — any last row scrolls into the meat of the circle | shared content-padding helper (reuses #1's rim math) |
@@ -911,6 +911,15 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 **Build order:** 12 → 1→3 (one geometry family, JVM rim math) → 4 → 5 → 6 → 10 → 7 → 8→9.
 (12 leads because review nailed its root cause with a system-log line, below — one-line fix, and
 the owner's next launch should already look right.)
+
+**Visual-verification discipline (owner 2026-10-30):** *"screenshots … come in as the square and
+so I think that's causing you to think things are working… you need to apply the circle mask
+first and then look at that circle-masked image because that's what I see on screen."* A Wear
+screencap is the SQUARE panel buffer; everything outside the inscribed circle never exists on
+the round glass. **Every screenshot used for visual analysis is circle-masked first** —
+`scripts/circle-shot.sh out.png` captures + masks in one step, `--mask in.png out.png` masks an
+existing capture. An unmasked capture may only be cited for pixel-exact geometry (measuring
+text x/y), never as proof a user sees something.
 
 ### 14.12 Why the film skipped the owner's launch (ROOT CAUSE, proven 2026-10-30)
 
@@ -941,6 +950,27 @@ pure (`SplashIntro.launcherShaped`) and JVM-tested.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **The circle-meat geometry family + the round-detection bug batch 4 was hiding (items 1–3,
+  2026-10-30).** `BottomLayout.circleSafeBottomPad` is the new one-source-of-truth bottom line —
+  the larger of the orb-crown rule and the physical rim at the text gutter (`RIM_INSET_RATIO`
+  0.98), square faces falling through to the old rule unchanged; `RoundScreen.tenOclockY` is the
+  matching upper anchor (y = h/2 − min/4 — the 10:00 tick, universal across shapes). Karaoke
+  re-based onto it (band 12–35 %), and the transcript's bottom pad now rides the rim rule.
+  **Latent bug proven and fixed on the way:** `isRoundScreen()` used the bit trick
+  `(screenLayout and 0x03) == 0x02` — WRONG mask (round lives under 0x0C/0x08) — and had been
+  silently FALSE on the owner's SM-L705U all along, i.e. every "round" tuning in the app had run
+  in square mode; replaced with the platform's own `isScreenRound`. That flipped roundInsets on
+  for the first time (chat rows +64 px down, lines re-wrapping), so the chat list deliberately
+  keeps `topOverrideDp = 0` (its true clearance is the bottom-cluster pad + the spacer math);
+  per-surface retune of the OTHER lists is item 6. A padding lever for the mid-stream tail
+  over-corrected (black transcript, caught mid-oscillation); the honest fix is delayed re-asserts
+  of the end — wear computes the clamped END from the row's PREVIOUS layout pass, and re-asking
+  after 70–150 ms settles the growing tail on the safe line. Question-lift = measured-offset
+  (spacer − (rowTop − tick)), state-based, stable at its result. Owner's verification rule now
+  tool-enforced: **`scripts/circle-shot.sh`** masks every analysis screenshot to the inscribed
+  circle (unmasked square caps show pixels the round glass never had). 6 new pure tests
+  (**364 green**, was 358).
 
 - **The film answers the real launcher (batch item 12, 2026-10-30).** `SplashIntro.launcherShaped`
   inverts the fromLauncher rule (full root cause + the watch's own log lines in §14.12): any

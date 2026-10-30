@@ -1118,14 +1118,27 @@ private fun ChatBody(
     val vpW = viewport.width.toFloat()
     val vpH = viewport.height.toFloat()
     val cluster = remember(viewport) { BottomLayout.geometry(vpW, vpH) }
-    val clusterPadPx = remember(viewport) { BottomLayout.transcriptBottomPad(vpW, vpH) }
+    // CIRCLE-SAFE BOTTOM (batch-4 #1): the larger of the orb-crown rule and the BEZEL-RIM rule —
+    // the newest line's bottom-LEFT corner must sit inside the physical circle, or the round face
+    // shaves it (owner: *"the bottom left of the text gets cut off from the circle screen face"*).
+    // Text left edge = the SLC gutter (~8 dp, measured from the owner's 45-lines screenshot);
+    // square faces fall through to the old crown rule unchanged.
+    val roundShape = dev.hermes.wearos.ui.isRoundScreen()
+    val clusterPadPx = remember(viewport, roundShape) {
+        BottomLayout.circleSafeBottomPad(
+            viewportW = vpW, viewportH = vpH, round = roundShape,
+            contentLeftPx = with(density) { 8.dp.toPx() },
+            orbTopPx = cluster.talk.topY(),
+        )
+    }
     val hasViewport = viewport.width > 0 && viewport.height > 0
     // Transcript/overlay clearance = the cluster's top edge; pre-measure first frame keeps the
     // old 74–78 dp bar clearance.
     val barPadDp = if (hasViewport) with(density) { clusterPadPx.toDp() } else 78.dp
     // KARAOKE FOLLOW (owner 2026-10-29: *"while it's speaking the line that is being spoken is
     // in the middle of the screen. That way you can follow along"*): while the answer is being
-    // READ ALOUD and tail-follow is engaged, the spoken sentence is anchored ~⅓ down. The
+    // READ ALOUD and tail-follow is engaged, the spoken line rides the 10-o'clock tick height
+    // (batch-4 #2; was ~⅓ down — the rim shaves text that low on round faces). The
     // char→pixel ratio SELF-CALIBRATES from the live item's measured height (no font math, no
     // assumption about markdown sizes); scrolling away disengages exactly like the tail-pin
     // (same chatFollow escape hatch — no yanking); a line already comfortably on screen is
@@ -1153,17 +1166,23 @@ private fun ChatBody(
         val item = chatListState.layoutInfo.visibleItemsInfo
             .firstOrNull { it.index == wantIdx } ?: return@LaunchedEffect
         val yOfSpoken = off.toFloat() / textLen * item.size
+        // THE 10 O'CLOCK ANCHOR (batch-4 #2, owner: *"the beginning of the speech should start
+        // at the 10 o'clock spot"*): the spoken line rides RoundScreen.tenOclockY (~25 % down,
+        // rim wide open up there → left edge never clipped). The no-nudge band runs from just
+        // under the clock (~12 %) to the 8:20 rim∩orb line (~60 %): anything already inside is
+        // comfortably readable, anything outside is lifted back to the tick.
+        val anchorY = dev.hermes.wearos.domain.RoundScreen.tenOclockY(vpW, vpH)
         val onScreen = item.offset + yOfSpoken
-        if (onScreen in vpH * 0.22f..vpH * 0.72f) return@LaunchedEffect
+        if (onScreen in (anchorY - vpH * 0.12f)..(anchorY + vpH * 0.35f)) return@LaunchedEffect
         // INSTANT, not animateScrollToItem: the follow-disengage detector reads a RISE of
         // isScrollInProgress as the user grabbing the list, and wear-compose raises it for
         // ANIMATED scrolls too — an animated karaoke nudge disengaged tail-follow on its first
         // jump and froze the view (owner: "I am not seeing the line that you're saying be at the
         // center"). Even instant jumps raise it on this wear-compose, so we also STAMP the jump:
         // edges settling within the guard window are ours (ChatScreen skips them). The 180 ms
-        // ticker + the 22–72 % no-nudge band keep the jumps rare and small.
+        // ticker + the ~12–60 % no-nudge band keep the jumps rare and small.
         chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
-        chatListState.scrollToItem(wantIdx, (yOfSpoken - vpH * 0.34f).roundToInt().coerceAtLeast(0))
+        chatListState.scrollToItem(wantIdx, (yOfSpoken - anchorY).roundToInt().coerceAtLeast(0))
     }
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewport = it }) {
         if (listening) {
@@ -1260,6 +1279,7 @@ private fun ChatBody(
                     follow = chatFollow,
                     programmaticScrollAt = chatScrollStamp,
                     contentPadBottomDp = if (hasViewport) barPadDp else null,
+                    viewportW = vpW,
                     onPullUpAtBottom = onPullUpAtBottom,
                 )
             }
