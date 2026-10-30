@@ -42,6 +42,25 @@ object Watchkit {
     }
 
     /**
+     * BATCH-4 #9: which STT engine watchkit's `/health` says will answer `/stt/stream`
+     * (null = offline/unreachable). Settings ▸ Voice names it in the Gateway picker row;
+     * the endpoint is PUBLIC, so no bearer is spent on the probe.
+     */
+    private val _sttEngine = MutableStateFlow<String?>(null)
+    val sttEngine: StateFlow<String?> = _sttEngine.asStateFlow()
+
+    suspend fun refreshSttEngine() = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url("${_config.value.baseUrl}/health").get().build()
+            val text = clientCall(req) { it.body?.string().orEmpty() }
+            val stt = HermesApi.parse(text)["stt"] as? kotlinx.serialization.json.JsonObject
+            fun flag(o: kotlinx.serialization.json.JsonObject, k: String) =
+                (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            _sttEngine.value = stt?.let { s -> flag(s, "engine")?.takeIf { flag(s, "ready") == "true" } }
+        }.onFailure { _sttEngine.value = null }
+    }
+
+    /**
      * Byte-aware image cache (owner batch 2: full-res to the watch): a few big photos must not
      * OOM a watch, so the budget is BYTES (~24 MB), not entry count. Weighs raw byte arrays by
      * size and bitmaps by their real allocation (allocationByteCount). Entries heavier than the

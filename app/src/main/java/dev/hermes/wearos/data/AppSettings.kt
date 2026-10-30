@@ -200,7 +200,7 @@ class AppSettings(private val context: Context) {
         SttProviders.current = sttProviderValue()
     }
     suspend fun setSttProvider(v: String) {
-        val id = if (v == SttProviders.ID_SYSTEM) SttProviders.ID_SYSTEM else SttProviders.ID_LOCAL
+        val id = SttProviders.normalize(v) // any unknown collapses to local (offline default)
         context.dataStore.edit { it[KEY_STT_PROVIDER] = id }
         SttProviders.current = id
     }

@@ -28,6 +28,11 @@
  *   POST /img             → same, JSON body {path[,width]}
  *   POST /render/mermaid  → image/png  {code, width, format?}  (mmdc, .cache/ renders)
  *   POST /stt/whisper     → {text}     multipart "audio" wav/webm ≤10MB     (faster-whisper CPU)
+ *   WS   /stt/stream      ← BINARY 16 kHz mono PCM16 mic frames from the watch, TEXT {"end":true}
+ *        (bearer)          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
+ *        Engine from config.json `stt_stream_engine`: "whisper" (default, buffered — final only)
+ *        | "parakeet" (NeMo — partials WHILE talking; honest error when nemo is absent).
+ *        GET /health reports it as stt:{engine,ready,missing}.
  *
  * Zero framework: node:http + node:crypto only. Everything folder-local under
  * server/watchkit/ (.cache for renders+npx+puppeteer, .models for whisper weights).
@@ -39,6 +44,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { attachSttStream, sttEngineStatus } from './stt_stream_ws.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -989,7 +995,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url === '/health') {
       logLine({ ev: 'req', ip, ep: 'health', status: 200, ms: 0 });
-      return send(res, 200, JSON.stringify({ status: 'ok', version: VERSION, uptime_s: Math.round((Date.now() - START_MS) / 1000) }));
+      // BATCH-4 #9: the watch's Settings shows WHICH engine would answer a streamed ask.
+      return send(res, 200, JSON.stringify({
+        status: 'ok', version: VERSION, uptime_s: Math.round((Date.now() - START_MS) / 1000),
+        stt: sttEngineStatus(cfg, VENV_PY, WK_DIR),
+      }));
     }
     const auth = req.headers.authorization || '';
     if (!auth.startsWith('Bearer ') || !timingSafeEqual(auth.slice(7), TOKEN)) {
@@ -1171,6 +1181,11 @@ function runMcp() {
 if (MCP_MODE) {
   runMcp();
 } else {
+  // BATCH-4 #9: streamed mic sessions ride the same socket authority as every endpoint.
+  attachSttStream(server, {
+    cfg, venvPy: VENV_PY, wkDir: WK_DIR, TOKEN, CHILD_ENV, logLine,
+    timingSafe: (a, b) => timingSafeEqual(a, b),
+  });
   server.listen(PORT, HOST, () => {
     logLine({ ev: 'start', version: VERSION, host: HOST, port: PORT, pid: process.pid });
   });

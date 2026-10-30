@@ -21,6 +21,7 @@ import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
 import dev.hermes.wearos.domain.SttProvider
 import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.voice.GatewayStt
 import dev.hermes.wearos.voice.SttSource
 import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.voice.VoskStt
@@ -57,12 +58,17 @@ class WearApp : Application() {
         /** Batch-4 #8: the SYSTEM recognizer behind the same SttSource seam (picker switch). */
         lateinit var sttSystem: SystemStt
             private set
+        /** Batch-4 #9: streamed-mic STT on the gateway engine, with the local auto-fallback. */
+        lateinit var sttGateway: GatewayStt
+            private set
 
-        /** Which engine the mic flow gets NOW (batch-4 #8 picker; offline-safe default). */
-        fun sttNow(): SttSource =
-            if (SttProviders.fromId(SttProviders.current) == SttProvider.SYSTEM &&
-                SystemStt.isAvailable(app)
-            ) sttSystem else stt
+        /** Which engine the mic flow gets NOW (batch-4 #8/#9 picker; offline-safe default).
+         *  GATEWAY needs no availability gate — voice/GatewayStt falls back locally by design. */
+        fun sttNow(): SttSource = when (SttProviders.fromId(SttProviders.current)) {
+            SttProvider.SYSTEM -> if (SystemStt.isAvailable(app)) sttSystem else stt
+            SttProvider.GATEWAY -> sttGateway
+            SttProvider.LOCAL -> stt
+        }
         lateinit var agents: AgentsRepo
             private set
 
@@ -305,6 +311,7 @@ class WearApp : Application() {
                 }
                 stt = VoskStt(app)
                 sttSystem = SystemStt(app)
+                sttGateway = GatewayStt(app, stt)
                 scope.launch { settings.loadSttProvider() } // seed the #8 picker mirror
                 session.resume() // loads registry (migrates legacy keys), restores active chat + in-flight run
                 network.start() // LAST: its hook reaches into every other Graph member

@@ -759,6 +759,21 @@ fun SettingsScreen(
                 scope.launch { settings.setSttProvider(SttProviders.ID_SYSTEM) }
             },
         )
+        // BATCH-4 #9: the third provider — streaming mic to the gateway engine. The subtitle
+        // names the engine watchkit's /health reports (refreshed while this page is open),
+        // which is also the #9 "Settings shows it" contract. Auto-fallback = never stranded.
+        val gwEngine by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
+        LaunchedEffect(page) { if (page == SettingsPage.Voice) dev.hermes.wearos.net.Watchkit.refreshSttEngine() }
+        VoicePickRow(
+            "🛰 Gateway · " + SttProviders.subtitle(
+                SttProvider.GATEWAY, sttPresent, sysAvailable, sysPkg, gwEngine,
+            ),
+            SttProviders.id(SttProvider.GATEWAY), SttProviders.id(sttProv),
+            onSelect = {
+                sttProv = SttProvider.GATEWAY
+                scope.launch { settings.setSttProvider(SttProviders.ID_GATEWAY) }
+            },
+        )
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.

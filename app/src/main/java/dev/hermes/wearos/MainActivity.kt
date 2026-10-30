@@ -227,13 +227,13 @@ class MainActivity : ComponentActivity() {
                 fun endListening() {
                     // Both engines get the stop: the pick cannot change mid-session, but an
                     // idle sibling stop is free (flag set / null-recognizer no-op).
-                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop()
+                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop(); WearApp.Graph.sttGateway.stop()
                     voiceSink.value = null
                 }
 
                 fun cancelListening() {
                     voiceCancel.value = true
-                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop()
+                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop(); WearApp.Graph.sttGateway.stop()
                     voiceSink.value = null
                 }
 
