@@ -908,7 +908,7 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 | 10 | ✅ | About ▸ **"MIT · borealBytes (github.com/borealBytes, tappable) · Superior ByteWorks, LLC · Clayton Young"** | SHIPPED 2026-10-30: About reads `MIT · 🌐 borealBytes` (ACTION_VIEW to github.com/borealBytes, toast fail-soft on watches with no browser) + `made by: Superior ByteWorks, LLC` + `author: Clayton Young`. Masked capture: full block resting clear of the rim |
 | 12 | ✅ | **Video splash must actually play on a real app-drawer cold start** when VIDEO is selected (and STATIC must work when selected) — *"I close out all the apps and then I open Hermes… it shows the static image instead of the video"* | FIXED 2026-10-30: `SplashIntro.launcherShaped` + gate log now carries `launcher=`/`deepLink=`. Watch-proven: MAIN-alone launch → `launcher=true` → pocket-watch film frame captured; bare `am start -n` → `intro skipped: NotLauncher`; static mode holds then lifts |
 | 13 | ✅ | **Nested Voice-in settings page + listening-overlay honesty** — *"we need a voice in settings so we can set the default one we want to use on the orb"* + *"on the screen where you are entering voice … very top small … voice input provider listed, and … if it's streaming the text back … or not … really simple, like maybe a checkbox … I don't know if it's hearing me or not"* | SHIPPED 2026-10-30, watch-proven: Settings ▸ **Voice in** is its own nested page (picker moved out of Voice out; root row names the orb's engine). The listening overlay prints a top line — masked capture: **"🛰 Gateway · whisper · text streaming ✗ · final when you stop"** at y 64–111 live on the SM-L705U; labels pure (`SttProviders.overlayName/streamsText/streamsLabel/navSummary` — honesty JVM-tested, unknown engine prints `engine ?`). Proof-of-life meter: `domain/MicLevel` (√-compressed RMS + dB mapping) published by ALL THREE engines' mic loops into `voice/SttLevel`; the overlay dot rides it — a buffered engine (whisper) still visibly proves the mic reads. Masked proofs: root row ("Voice in · Gateway · streaming"), picker page, gateway pick + honest preview, listening overlay. 392 green (+8) |
-| 14 | 🛠 | **Streaming-from-orb is the default for every new message** — *"anytime we get a brand new message in that we're waiting on it to complete, the text will stream from the bottom, including that little thinking thing … the only time you turn that off is within the chat session turn if I start scrolling"* | LANDED (re-arm) 2026-10-30: a run start (busy false→true) re-engages tail-follow — a mid-run scroll still owns the current turn, the NEXT run takes the tail back. The "including that little thinking thing" half (status row resting at the ORB line while awaiting, question staying on the 10:00 tick) is the hard part: three on-device iterations proved wear renders mid-clamp `layoutInfo` offsets at different PIXELS than reported (§14.13 has the measurements + the stash pointer). Re-arm behavior confirmed on hardware via wear-demo; the runway lands when the pixel-truth regime is pinned |
+| 14 | ✅ | **Streaming-from-orb is the default for every new message** — *"anytime we get a brand new message in that we're waiting on it to complete, the text will stream from the bottom, including that little thinking thing … the only time you turn that off is within the chat session turn if I start scrolling"* | LANDED (re-arm) 2026-10-30: a run start (busy false→true) re-engages tail-follow — a mid-run scroll still owns the current turn, the NEXT run takes the tail back. The "including that little thinking thing" half (status row resting at the ORB line while awaiting, question staying on the 10:00 tick) is the hard part: three on-device iterations proved wear renders mid-clamp `layoutInfo` offsets at different PIXELS than reported (§14.13 has the measurements + the stash pointer). SHIPPED HALF 2 (same day): FOCUS HOLD §14.14 — during the wait the transcript collapses to question+status so the shipped slack rule puts both bottom-aligned on the orb crown with the whole upper circle as the reply's runway (masked `p14_hold_ship_c.png`: live "🔧 terminal…" on the crown, empty runway above; `p14_after_c.png`: answer lands, history keyed back). No offset measurement anywhere — the layoutInfo-fiction pin approach is documented dead in §14.13/14.14 |
 | 15 | ✅ | **Developer testing rides the `wear-demo` agent** — *"from this point forward, all of your testing should be done in that wear demo agent… put the developer notes in the contributions stuff"* | SHIPPED 2026-10-30: `CONTRIBUTING.md` carries the developer contract (demo-agent setup recipe with its own key, the hand-back rule, dev quick card, mask discipline); AGENTS.md §0 points developers there and keeps the file as the pure install contract. All §14 hardware work after this line ran against `/p/wear-demo` |
 | 16 | ✅ | **Gateway STT engine selectable + parakeet streaming on watchkit** — *"Parakeet Unified EN .6b streaming is what I'm running in Handy. I want watchkit to have its own version, not reuse my handy version, cause I want to make this generic"* + *"I think we should have the option to select the model… if you click on it, it should let you … select … installed models … Whisper is working okay, I just don't like that it doesn't live transcribe … at least we have two and we're set up to expand in the future"* | SHIPPED 2026-10-30, watch-proven: watchkit runs the **handy-computer transcribe.cpp** engine (MIT) with its OWN `parakeet-unified-en-0.6b-Q8_0.gguf` (731 MB, `.models/` — never the owner's Handy files) — CPU build, ~15x realtime, punctuation+caps. `stt_stream.py` parakeet branch = true streaming session (`stream.text().committed` append-only + tentative suffix → `{"partial"}` while talking); whisper kept as the honest buffered option; `--check` probes readiness per engine. `/health` now reports `stt.engines[]` (background-cached probe); `WS /stt/stream?engine=<id>` per-session override (unknown ids fold to config default). `scripts/parakeet.sh` = the generic installer (clone→cmake shared→bindings pip→hf download, idempotent). Watch: Settings ▸ Voice in ▸ Gateway row clicks OPEN the installed-engine picker (`★ gateway default · parakeet` / `whisper · text streaming ✗ · final when you stop` / `parakeet · text streaming ✓` — masked capture on SM-L705U), pick persists (`stt_gateway_engine`) and rides as `?engine=`; the listening overlay names the EFFECTIVE engine + inventory-truth streaming flag, refreshed when the mic opens (cold-start "engine ?" beat proven then fixed same day). Proofs: WS probe → **8 live partials before the end frame**, final 200 ms after stop (parakeet); whisper override → final-only (honest); watch logcat `ws=…/stt/stream?engine=parakeet`; overlay `"🛰 Gateway · parakeet · text streaming ✓"` + mic dot on round glass. 400 green (+8). FUTURE SCOPE (owner asked, deferred): Hermes DESKTOP mic (Settings ▸ Voice ▸ Local Transcription Model) could add this same GGUF as a selector entry — same installer, server-side only |
 
@@ -981,6 +981,33 @@ dots sit (*"including that little thinking thing"*). Findings, all SM-L705U, all
   one-calibrated regime constant. Re-arm itself (runStarted → ChatFollow.reengaged) shipped,
   confirmed on hardware: every ask after a mid-run scroll streamed from the orb by itself.
 
+### 14.14 The thinking-runway RESOLUTION (2026-10-30, shipped) — FOCUS HOLD
+
+The pin approach §14.13 chased (drive rows to tick/crown by measured offsets) is DEAD on this
+runtime: the second attempt proved offsets lie even in what looked like top-rest — a settled
+focused hold reported `first=0@−124` with a 136 px spacer, and rows at 83/146 drew at
+272/378 (uiautomator, SM-L705U). Nothing that MEASURES layoutInfo offsets can converge to
+pixels here.
+
+What ships instead needs NO offset: **focus hold**. While an answer is awaited (busy + newest
+message is the wearer's question + nothing streamed + following), the transcript renders only
+`spacer · caption · QUESTION · status` — the history hides. That collapsed list is short
+content, so the SHIPPED slack rule (#1/#4: spacer = viewport − bottomPad − content, rest at
+list top — never measures a row offset) puts question+thinking bottom-aligned on the orb crown
+and leaves the whole upper circle as the runway the reply grows into. The status row is
+PERMANENT during a hold — engine/tool updates BLANK the text between phases ("thinking…" → ""
+→ "🔧 terminal…" measured mid-run: keying the hold on a non-empty status FRAGMENTS it and the
+history flickers back); a blank line keeps its height, so the slack math never jitters.
+Scrolling mid-hold releases the hold (follow off — the owner's rule). The first streamed delta
+ends the hold: history returns keyed and intact, and the proven streaming paths take over.
+
+Hardware (SM-L705U, wear-demo): masked `p14_hold_ship_c.png` — question + "🔧 terminal…"
+bottom-aligned on the crown, upper circle empty, tool status LIVE inside the hold; the answer
+then lands with history restored (`p14_after_c.png`). Known pre-existing caveat, untouched by
+this: a SHORT final answer in a TALL chat settles via the end-clamp, which over-scrolls short
+tail rows (§14.13 bullet 3) — that is the tail-push's problem, not the hold's, and it predates
+#14. 402 green (+2 hold-row tests).
+
 ---
 
 
@@ -1013,6 +1040,21 @@ dots sit (*"including that little thinking thing"*). Findings, all SM-L705U, all
   is short. Re-arm half shipped + hardware-confirmed (new run → orb-streaming by itself); the
   runway half lives in `git stash` "thinking-runway WIP" with the candidate regimes next to the
   numbers. All traffic on `/p/wear-demo` per CONTRIBUTING.
+
+- **Thinking runway, shipped as FOCUS HOLD (§14 #14, 2026-10-30, watch-proven).** The re-arm
+  half shipped first (`40e1cf5`): a run start re-engages tail-follow, so streaming-from-orb is
+  every new message's default and a mid-run scroll only owns the CURRENT turn. The held-window
+  half went through three offset-tracking attempts (all documented dead in §14.13: wear renders
+  mid-clamp layoutInfo offsets at different pixels — even a settled list reported `first=0@−124`
+  over a 136 px spacer). The shipped answer abandons measuring entirely: during the wait the
+  transcript renders only spacer·caption·question·status, making the hold SHORT CONTENT by
+  construction, and the proven slack pad rule (spacer = viewport − bottomPad − content) seats
+  question + thinking bottom-aligned on the orb crown with the whole upper circle as the reply's
+  runway. A second hardware lesson shipped with it: engine/tool updates BLANK the status between
+  phases, so the hold keys on busy+unanswered-question and the status row stays (blank) all
+  through — keying on status text fragments the hold mid-run. Masked proofs: `p14_hold_ship_c.png`
+  (question + live "🔧 terminal…" on the crown, empty runway), `p14_after_c.png` (answer lands,
+  history returns keyed). 402 green (+2).
 
 - **Selectable STT engines + watchkit-native parakeet streaming (batch item 16, 2026-10-30,
   watch-proven).** The owner runs Handy on their Mac and wants the same feel on the watch — but
