@@ -553,15 +553,17 @@ class MainActivity : ComponentActivity() {
                         if (mode == SplashIntro.Choice.VIDEO) settings.splashVideoUri.value
                         else settings.splashImageUri.value
                     introSource = customRaw.takeIf { settings.splashGrantLive(it) }
+                    val fromLauncher = intent?.isLauncherLaunch() == true
                     Log.i(
                         TAG, "intro gate: mode=${settings.splashMode.value} custom=$customRaw " +
-                            "source=${introSource ?: "built-in"}",
+                            "source=${introSource ?: "built-in"} launcher=$fromLauncher " +
+                            "deepLink=${deepLink.value != null}",
                     )
                     introGate = SplashIntro.decide(
                         firstCompositionOfProcess = !IntroClaimed.getAndSet(true),
                         choice = mode,
                         deepLink = deepLink.value != null, // notification/tile tap (§M5)
-                        fromLauncher = intent?.isLauncherLaunch() == true,
+                        fromLauncher = fromLauncher,
                     ).also {
                         if (it != SplashIntro.Gate.PlayVideo && it != SplashIntro.Gate.PlayStatic) {
                             Log.i(TAG, "intro skipped: $it")
@@ -1577,12 +1579,17 @@ private val SpiritClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
 private val IntroClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
 
 /**
- * Only the app grid means "show me the app". `am start` (scripts/setup.sh, verify-chat.sh) and
- * every DevAskReceiver path start this activity by explicit component with no LAUNCHER category,
- * which is what keeps the film out of the docs/screens captures (docs/DEMO.md).
+ * Only "show me the app" launches get the film (domain/SplashIntro.launcherShaped has the FULL
+ * story, incl. the One UI Watch fingerprint: MAIN with NO category). The harness keeps itself
+ * splash-free the same way it always did — `am start -n` is a bare component start (no action) —
+ * plus an explicit `--ez dev_no_intro 1` whenever a caller wants silence regardless of shape
+ * (docs/DEMO.md, scripts/verify-chat.sh).
  */
-private fun Intent.isLauncherLaunch(): Boolean =
-    action == Intent.ACTION_MAIN && hasCategory(Intent.CATEGORY_LAUNCHER)
+private fun Intent.isLauncherLaunch(): Boolean = SplashIntro.launcherShaped(
+    action = action,
+    hasLauncherCategory = hasCategory(Intent.CATEGORY_LAUNCHER),
+    devNoIntro = getBooleanExtra("dev_no_intro", false),
+)
 internal val spiritVisible = androidx.compose.runtime.mutableStateOf(false)
 private fun spiritBoom() {
     if (!SpiritClaimed.getAndSet(true)) {

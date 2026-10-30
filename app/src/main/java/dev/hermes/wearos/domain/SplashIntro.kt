@@ -18,10 +18,11 @@ package dev.hermes.wearos.domain
  *    covers re-entering the app.
  *  • **not a deep link** — a notification tap after the process died wants THAT CHAT and the tile's
  *    "Ask Hermes" wants the mic up; both cold-start the process, neither wants an intro (§M5).
- *  • **launched from the app grid** — the launcher icon is the only intent that means "show me the
- *    app". `am start`/dev broadcasts/screenshot harnesses carry an explicit component with no
- *    LAUNCHER category, and a splash painted over a screencap silently breaks every docs/screens
- *    shot.
+ *  • **launched from the app grid** — "show me the app" is answered by [launcherShaped]:
+ *    anything with ACTION_MAIN (the AOSP launcher's MAIN+LAUNCHER **and** the One UI Watch grid's
+ *    MAIN-without-category, proven from watch logcat 2026-10-30) qualifies; the harness declines
+ *    via the `dev_no_intro` extra or by being a bare `am start -n` component start (no action),
+ *    which keeps every docs/screens shot splash-free.
  *  • **the owner's choice decides WHICH show, not whether one exists** — VIDEO or STATIC, both
  *    real modes now (the old off-switch's OFF maps to STATIC in [choiceOf]: an owner who silenced
  *    the film still gets a splash, just a still one).
@@ -58,6 +59,32 @@ object SplashIntro {
         choice == Choice.VIDEO -> Gate.PlayVideo
         else -> Gate.PlayStatic
     }
+
+    /** The one android constant this domain file needs (Intent.ACTION_MAIN). */
+    const val ACTION_MAIN = "android.intent.action.MAIN"
+
+    /**
+     * Is this launch "from the app grid"? (owner 2026-10-30: *"I close out all the apps and then
+     * I open Hermes… it shows the static image instead of the video"* — the SETTING read
+     * `mode=video` and the gate still skipped the film: the One UI Watch launcher starts the
+     * activity with `act=android.intent.action.MAIN` and **no CATEGORY_LAUNCHER at all** (watch
+     * logcat: `START u0 {act=…MAIN … cmp=dev.hermes.wearos/.MainActivity} … from uid 1000`), so
+     * the old require-the-category rule rejected every real drawer launch into the static flash.
+     *
+     * The rule inverts: a launch is launcher-shaped UNLESS IT PROVES OTHERWISE.
+     *  • [devNoIntro] — the explicit harness opt-out (intent extra `dev_no_intro`), for any
+     *    script that wants the app with no show, whatever the fingerprint;
+     *  • `action == null` with no LAUNCHER category — a bare component start, which is exactly
+     *    what `am start -n` (every `scripts` launcher call, verify-chat.sh, docs/screens captures)
+     *    produces, and what no real launcher does.
+     *
+     * Anything carrying ACTION_MAIN plays the owner's chosen mode — AOSP's Wear launcher (MAIN +
+     * LAUNCHER), the One UI grid (MAIN alone), monkey (MAIN + CATEGORY_INFO). The gate is pure so
+     * vendor intent fingerprints stay unit-testable; deep links never reach this question
+     * ([decide] checks them first).
+     */
+    fun launcherShaped(action: String?, hasLauncherCategory: Boolean, devNoIntro: Boolean): Boolean =
+        !devNoIntro && (hasLauncherCategory || action == ACTION_MAIN)
 
     /**
      * Ceiling on "wait for the owner's Display switch" (DataStore read at boot). Waiting beats

@@ -18,7 +18,7 @@ if [ -n "$WEAR_KEY" ]; then
 fi
 "$ADB" shell svc power stayon true          # dev: keep the watch screen awake for captures
 "$ADB" shell input keyevent KEYCODE_WAKEUP
-"$ADB" shell am start -n dev.hermes.wearos/.MainActivity >/dev/null
+"$ADB" shell am start --ez dev_no_intro 1 -n dev.hermes.wearos/.MainActivity >/dev/null
 sleep 3
 "$ADB" exec-out screencap -p > "$OUT/01-launch.png"
 "$ADB" logcat -c

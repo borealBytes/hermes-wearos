@@ -906,7 +906,7 @@ Item 11 (rename the Hermes "API server" platform to "WatchKit") was **CANCELLED 
 | 8 | ☐ | Settings ▸ Voice ▸ **Speech input provider picker**: Local Vosk default/offline · System (Google/Samsung) via `SpeechRecognizer`, honestly labeled **OFF-DEVICE** when networked, auto-detected per vendor (Pixel/OnePlus → Google) | `voice/` abstraction + `SettingsScreen` |
 | 9 | ☐ | **Gateway streaming STT**: watch streams the mic frames it already captures (16 kHz mono PCM16 ≈ 256 kbps; 10 s ≈ 320 KB; optional 8 kHz μ-law ≈ 64 kbps) over watchkit `/stt/stream` WS; engine in watchkit `config.json` (`whisper` today, **`parakeet` = NeMo Unified-EN-6B streaming**, partials streamed back WHILE talking); `/health` reports the engine, Settings shows it; auto-fallback to local | `server/watchkit/watchkit.mjs` + `scripts/whisper-env.sh` + watch side |
 | 10 | ☐ | About ▸ **"MIT · borealBytes (github.com/borealBytes, tappable) · Superior ByteWorks, LLC · Clayton Young"** | `SettingsPage.About` |
-| 12 | ☐ | **Video splash must actually play on a real app-drawer cold start** when VIDEO is selected (and STATIC must work when selected) — *"I close out all the apps and then I open Hermes… it shows the static image instead of the video"* | see root cause below |
+| 12 | ✅ | **Video splash must actually play on a real app-drawer cold start** when VIDEO is selected (and STATIC must work when selected) — *"I close out all the apps and then I open Hermes… it shows the static image instead of the video"* | FIXED 2026-10-30: `SplashIntro.launcherShaped` + gate log now carries `launcher=`/`deepLink=`. Watch-proven: MAIN-alone launch → `launcher=true` → pocket-watch film frame captured; bare `am start -n` → `intro skipped: NotLauncher`; static mode holds then lifts |
 
 **Build order:** 12 → 1→3 (one geometry family, JVM rim math) → 4 → 5 → 6 → 10 → 7 → 8→9.
 (12 leads because review nailed its root cause with a system-log line, below — one-line fix, and
@@ -941,6 +941,17 @@ pure (`SplashIntro.launcherShaped`) and JVM-tested.
 
 
 ## Appendix A — Landed slices (build log, newest first)
+
+- **The film answers the real launcher (batch item 12, 2026-10-30).** `SplashIntro.launcherShaped`
+  inverts the fromLauncher rule (full root cause + the watch's own log lines in §14.12): any
+  ACTION_MAIN launch plays the owner's chosen mode — the One UI Watch grid sends MAIN with no
+  CATEGORY_LAUNCHER — while the harness declines as before (bare `am start -n` = no action) and
+  gains an explicit `--ez dev_no_intro 1` in `setup.sh`/`verify-chat.sh`. The gate log line grew
+  `launcher=`/`deepLink=` so the next splash mystery names itself. Proof on SM-L705U: grid-shaped
+  cold start → `intro gate: mode=video … launcher=true` → `intro: first frame 5846ms in` → the
+  pocket-watch frame screenshotted mid-film; bare `am start -n` → `intro skipped: NotLauncher`;
+  `mode=static` cold start → still holds, lifts to chat by +5 s. Owner's setting restored to
+  VIDEO. 2 new pure tests (**358 green**, was 356).
 
 - **The run survives the wrist — notification wake-tier trio (2026-10-29 night, owner live-fire:
   *"wait thirty seconds, then send a haiku and immediately went to the watchface… i did not get a

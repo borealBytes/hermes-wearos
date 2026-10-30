@@ -231,8 +231,8 @@ if [ "$NO_DEVICE" = 0 ]; then
     done
   fi
   [ -n "$WK_TOKEN" ] && broadcast set_watchkit "$WK_TOKEN"
-  plan "${ADB_X[*]} shell am start -n $PKG/.MainActivity"
-  [ "$DRY" = 1 ] || "${ADB_X[@]}" shell am start -n "$PKG/.MainActivity" >/dev/null
+  plan "${ADB_X[*]} shell am start --ez dev_no_intro 1 -n $PKG/.MainActivity"
+  [ "$DRY" = 1 ] || "${ADB_X[@]}" shell am start --ez dev_no_intro 1 -n "$PKG/.MainActivity" >/dev/null
 fi
 
 # ── wear SOUL seed (optional: --install-soul) ────────────────────────────────

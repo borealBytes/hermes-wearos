@@ -1,6 +1,7 @@
 package dev.hermes.wearos.domain
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,6 +46,35 @@ class SplashIntroTest {
         // a splash over a screencap is a silent demo breakage.
         assertEquals(SplashIntro.Gate.NotLauncher, gate(launcher = false))
         assertEquals(SplashIntro.Gate.DeepLink, gate(link = true, launcher = false))
+    }
+
+    // ── LAUNCHER SHAPED (owner 2026-10-30: *"it shows the static image instead of the video"* —
+    //    the One UI Watch app grid sends ACTION_MAIN with NO CATEGORY_LAUNCHER; the old
+    //    require-the-category rule skipped the film on every real drawer launch. Watch logcat:
+    //    `START u0 {act=android.intent.action.MAIN … cmp=dev.hermes.wearos/.MainActivity}` ── ) ──
+    private fun shaped(
+        action: String? = null,
+        category: Boolean = false,
+        dev: Boolean = false,
+    ) = SplashIntro.launcherShaped(action, category, dev)
+
+    @Test fun `the One UI Watch grid launch plays the film (MAIN without any category)`() {
+        // The regression, pinned: MAIN alone IS a human tapping the app icon.
+        assertTrue(shaped(action = SplashIntro.ACTION_MAIN))
+        // The AOSP Wear launcher still works (MAIN + LAUNCHER).
+        assertTrue(shaped(action = SplashIntro.ACTION_MAIN, category = true))
+        // …and the category alone (some vendor launcher variants) is equally a launch.
+        assertTrue(shaped(category = true))
+    }
+
+    @Test fun `a bare component start is the harness, and dev_no_intro outranks any shape`() {
+        // `am start -n pkg/.MainActivity` = component only, no action, no category.
+        assertFalse(shaped())
+        // Explicit opt-out wins even against the truest launcher shape.
+        assertFalse(shaped(action = SplashIntro.ACTION_MAIN, dev = true))
+        assertFalse(shaped(category = true, dev = true))
+        // A stray non-MAIN action with no category (someone's deep plumbing) is not a launch.
+        assertFalse(shaped(action = "android.intent.action.VIEW"))
     }
 
     // ── CHOOSER (owner 2026-10-29: "I only want static or video, video by default") ──
