@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -28,6 +29,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -45,6 +47,10 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "HermesWear"
+
+/** #07070C — the exact `windowSplashScreenBackground` (themes.xml): the video-mode curtain
+ *  (batch-5 #17) continues the system splash seamlessly instead of showing the portrait. */
+private val SplashCurtainBg = Color(0xFF07070C)
 
 /**
  * `app/src/main/assets/hermes-watch-intro.mp4` — the 480×480 launch film (rationale in
@@ -249,17 +255,24 @@ fun IntroVideo(
                 )
             }
         }
-        // POSTER / CURTAIN: the same self-portrait the system splash used. It covers two gaps that
-        // would otherwise show the app mid-launch — the beat while the gate answers, and the
-        // ~2 s the decoder needs on a watch (measured 1.9 s on an SM-L705U). The hand-off from the
-        // OS splash into the film is face→face→film, never face→chat→film.
+        // BATCH-5 #17 (owner: *"if we have video selected, the static image should not show at
+        // all … it's still fine to have that noose icon that is on the orb, because obviously
+        // that's the first thing you're going to see it owns real fast"*): the VIDEO curtain is
+        // the SYSTEM SPLASH TWIN — the same orb icon on the same #07070C the launcher just
+        // showed — never the self-portrait. The old full-bleed splash_spirit poster turned a
+        // video launch into "static image first, then film", which is exactly what the owner
+        // vetoed; the portrait stays reserved for STATIC mode where it IS the splash.
         if (kind == SplashIntro.Choice.VIDEO && !framePainted) {
-            Image(
-                painter = painterResource(R.drawable.splash_spirit),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier.fillMaxSize().background(SplashCurtainBg),
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_hermes_orb),
+                    contentDescription = null,
+                    modifier = Modifier.size(168.dp),
+                )
+            }
         }
         // TEXTUREView, not SurfaceView: a SurfaceView punches a hole through the window for its
         // own layer, so "video hidden until it paints" leaves a black rectangle instead of the
