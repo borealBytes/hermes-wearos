@@ -120,4 +120,43 @@ class SplashIntroTest {
         // (First-frame floor measured 1.9 s on the SM-L705U — the static hold stays a third under.)
         assertTrue(SplashIntro.STATIC_HOLD_MS < 1_900L)
     }
+
+    // ── batch-6 #23 THE SPLASH HOLD: the system icon stays up until the media paints ──
+    @Test fun `splash hold covers the media wait and nothing else`() {
+        val b = SplashIntro.SETTING_BUDGET_MS
+        // Gate unread (slow disk): hold through the settings budget + slack, then release —
+        // the plain hand-off beats trapping the icon behind a wedged DataStore read.
+        assertTrue(SplashIntro.shouldHold(null, false, 0L))
+        assertTrue(SplashIntro.shouldHold(null, false, b))
+        assertTrue(SplashIntro.shouldHold(null, false, b + SplashIntro.HOLD_SLACK_MS - 1))
+        assertFalse(SplashIntro.shouldHold(null, false, b + SplashIntro.HOLD_SLACK_MS + 1))
+        // Film chosen: hold until it PAINTS (first real pixels), not merely "player exists".
+        assertTrue(SplashIntro.shouldHold(SplashIntro.Gate.PlayVideo, false, b))
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.PlayVideo, true, b))
+        // …but the hold is CAPPED: a decoder that never renders hands the glass back.
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.PlayVideo, false, SplashIntro.FILM_HOLD_CAP_MS))
+        // The still rides the same hold (custom-image decode included).
+        assertTrue(SplashIntro.shouldHold(SplashIntro.Gate.PlayStatic, false, b))
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.PlayStatic, true, b))
+        // Every skip verdict releases immediately — a skipped launch must not stare at an icon.
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.WarmStart, false, 10L))
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.DeepLink, false, 10L))
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.NotLauncher, false, 10L))
+    }
+
+    @Test fun `the hold cap clears the worst measured first frame but stays bounded`() {
+        // 4.7 s was the measured video-mode first frame on the SM-L705U (batch-5 #17 proof) —
+        // the cap must sit comfortably above it yet never approach a "hung launch".
+        assertTrue(SplashIntro.FILM_HOLD_CAP_MS in 6_000L..10_000L)
+        assertTrue(SplashIntro.FILM_HOLD_CAP_MS > 5_000L)
+    }
+
+    @Test fun `LaunchHold is a pure clock over shouldHold`() {
+        val h = SplashIntro.LaunchHold(1_000L)
+        assertTrue(h.holds(1_500L)) // gate null, inside budget
+        h.gate = SplashIntro.Gate.PlayVideo
+        assertTrue(h.holds(2_000L))
+        h.painted = true
+        assertFalse(h.holds(2_000L))
+    }
 }

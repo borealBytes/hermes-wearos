@@ -94,6 +94,55 @@ object SplashIntro {
      */
     const val SETTING_BUDGET_MS = 400L
 
+    // ── BATCH-6 #23 THE SPLASH HOLD (owner cold-start review: *"I see the icon first in the
+    // center — as expected — then the icon from the orb zoomed to full screen — don't expect
+    // this — straight to video per launch selection"*) ──────────────────────────────────
+    // The zoom WAS the operating system: from Android 12 the system splash exits with an
+    // ICON SCALE-OUT animation the moment the app first draws, and our #17 curtain — a twin
+    // of that same orb on the same background — then sat visible while the video decoder
+    // woke (measured 4.7 s to first frame). Icon → zoom → big orb → film. The fix makes the
+    // SYSTEM SPLASH the curtain: MainActivity holds it up (setKeepOnScreenCondition) until
+    // the chosen media has actually PAINTED, and replaces the exit with a fast alpha fade.
+    // What the owner sees is then exactly the ask: the small launcher icon they already
+    // accept, then a fade straight into film (or the still). [shouldHold] is the pure brain;
+    // MainActivity installs the holder, the intro gate feeds it, IntroVideo's first-frame
+    // callback releases it.
+
+    /** Grace after the settings budget: a gate still unread at budget+slack means the disk is
+     *  slow — release the splash and let the app draw (the in-app curtain falls back). */
+    const val HOLD_SLACK_MS = 300L
+
+    /** Hard ceiling on holding the splash for media: a decoder that never paints must never
+     *  trap the launcher icon on the glass. Well above the 4.7 s measured first frame. */
+    const val FILM_HOLD_CAP_MS = 8_000L
+
+    /**
+     * The mutable half of the hold. `SystemClock.elapsedRealtime()` rides in through
+     * [holds] — this file stays android-free and the whole machine unit-tested.
+     */
+    class LaunchHold(val startedAtMs: Long) {
+        @Volatile var gate: Gate? = null
+        @Volatile var painted: Boolean = false
+        fun holds(nowMs: Long): Boolean = shouldHold(gate, painted, nowMs - startedAtMs)
+    }
+
+    /**
+     * Should the SYSTEM splash still be on screen? Pure so the whole state machine is unit-
+     * tested: [gate] null = the Display switch has not been read yet (hold to budget+slack —
+     * the same bounded wait that always decided the gate, now invisible behind the icon);
+     * PlayVideo/PlayStatic = hold until [painted] (the media's first real pixels, not merely
+     * "player prepared" — a prepared-but-unpainted film would leak black); every skip verdict
+     * and the [FILM_HOLD_CAP_MS] ceiling release immediately. Called only on launches the
+     * holder deems show-shaped (launcher-shaped intent, no deep link) — everything else gets
+     * the plain OS hand-off.
+     */
+    fun shouldHold(gate: Gate?, painted: Boolean, elapsedMs: Long): Boolean = when {
+        elapsedMs >= FILM_HOLD_CAP_MS -> false
+        gate == null -> elapsedMs < SETTING_BUDGET_MS + HOLD_SLACK_MS
+        gate == Gate.PlayVideo || gate == Gate.PlayStatic -> !painted
+        else -> false
+    }
+
     /**
      * How long the film waits for audio focus before it stops waiting (the policy itself lives in
      * ui/IntroVideo: ask politely, then play silent). Tuned on hardware: an SM-L705U answered a

@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -151,6 +152,9 @@ fun IntroVideo(
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 framePainted = true
+                // BATCH-6 #23: the first REAL pixels are what releases the system-splash hold —
+                // the fade starts on the keep-condition's next frame.
+                dev.hermes.wearos.WearApp.Graph.launchHold?.painted = true
                 Log.i(TAG, "intro: first frame ${SystemClock.elapsedRealtime() - openedAt}ms in")
             }
             override fun onPlaybackStateChanged(state: Int) {
@@ -240,18 +244,26 @@ fun IntroVideo(
             // THE STILL: the owner's own picked image when it decoded, else the built-in
             // self-portrait. It IS the splash here — there is no hand-off to a film — and the
             // undecodable case silently keeps the built-in rather than showing black.
+            // BATCH-6 #23: placement (not composition) is the truth — once laid out it is on
+            // the glass, which is exactly what the splash hold waits for (custom picks decode
+            // first, so the hold covers that too).
             val customImg = splashBitmap(custom)
             if (customImg != null) {
                 Image(
                     bitmap = customImg, contentDescription = null,
-                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().onPlaced {
+                        dev.hermes.wearos.WearApp.Graph.launchHold?.painted = true
+                    },
                 )
             } else {
                 Image(
                     painter = painterResource(R.drawable.splash_spirit),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().onPlaced {
+                        dev.hermes.wearos.WearApp.Graph.launchHold?.painted = true
+                    },
                 )
             }
         }

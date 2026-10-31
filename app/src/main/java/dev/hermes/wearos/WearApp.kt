@@ -140,6 +140,13 @@ class WearApp : Application() {
 
         /** Dev hook `-e agents 1`: open the agent picker like the agents lane does (batch-4 #6
          *  dialog-padding proof without hunting the chip under SLC centering). */
+        /**
+         * BATCH-6 #23: the live SPLASH HOLD (domain/SplashIntro) — non-null only while a
+         * show-shaped cold launch is holding the system splash; the intro gate publishes the
+         * verdict here, IntroVideo publishes `painted`, the keep-condition reads it. Null
+         * everywhere else, so every other launch pays one field read.
+         */
+        @Volatile var launchHold: dev.hermes.wearos.domain.SplashIntro.LaunchHold? = null
         val devAgents = MutableStateFlow(false)
 
         /** Dev hook `-e approvals`: opens the per-chat approvals sheet like the ✅ lane does. */

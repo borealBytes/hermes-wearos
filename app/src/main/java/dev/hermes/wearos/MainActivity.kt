@@ -109,6 +109,7 @@ import dev.hermes.wearos.domain.CommandCatalog
 import dev.hermes.wearos.domain.CommandEntry
 import dev.hermes.wearos.domain.CommandKind
 import dev.hermes.wearos.domain.CommandUsage
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import dev.hermes.wearos.domain.SplashIntro
 import dev.hermes.wearos.ui.CommandsOverlay
 import dev.hermes.wearos.ui.IntroVideo
@@ -145,12 +146,38 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // BATCH-6 #23 (owner cold-start review: *"the icon from orb like zoomed to full screen —
+        // don't expect this — straight to video per launch selection"*): the zoom was the OS —
+        // Android 12+ exits the system splash by SCALING THE ICON OUTWARD the instant the app
+        // first draws, and the #17 curtain (that same orb, full-screen) then sat visible for the
+        // decoder's whole 4.7 s wake. So the SYSTEM SPLASH becomes the curtain: the library's
+        // keep-condition holds the small launcher icon up until the chosen media has painted its
+        // FIRST FRAME, and the exit animation is replaced with a 140 ms alpha fade — icon fades,
+        // film is already there underneath. Static/custom-image: same hold until the still is
+        // placed. Skips (warm/deep link/not-launcher) and a slow disk or sick decoder (capped)
+        // release into the same plain fade. installSplashScreen BEFORE super.onCreate.
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         parseDeepLink(intent)
+        // Hold ONLY show-shaped launches (same question the gate asks, answered early with what
+        // onCreate already knows; the gate's own verdict arrives with the settings read).
+        if (intent?.isLauncherLaunch() == true && deepLink.value == null) {
+            val hold = SplashIntro.LaunchHold(android.os.SystemClock.elapsedRealtime())
+            WearApp.Graph.launchHold = hold
+            splash.setKeepOnScreenCondition { hold.holds(android.os.SystemClock.elapsedRealtime()) }
+        }
+        // THE FADE that replaces the icon zoom-out (the whole point of #23 — the default exit
+        // animation IS the zoom the owner vetoed).
+        splash.setOnExitAnimationListener { splashView ->
+            splashView.view.animate()
+                .alpha(0f).setDuration(140L)
+                .withEndAction { splashView.remove() }
+                .start()
+        }
         setContent {
             MaterialTheme {
                 val session = WearApp.Graph.session
@@ -573,6 +600,7 @@ class MainActivity : ComponentActivity() {
                         deepLink = deepLink.value != null, // notification/tile tap (§M5)
                         fromLauncher = fromLauncher,
                     ).also {
+                        WearApp.Graph.launchHold?.gate = it
                         if (it != SplashIntro.Gate.PlayVideo && it != SplashIntro.Gate.PlayStatic) {
                             Log.i(TAG, "intro skipped: $it")
                         }

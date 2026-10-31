@@ -69,7 +69,7 @@
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.HermesWear">
+            android:theme="@style/Theme.HermesWear.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
