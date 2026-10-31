@@ -35,12 +35,14 @@ fun Modifier.edgeCircleScroll(
     /** Set while the gesture OWNS the touch (down-in-ring → up); informational for call sites
      *  that want to suppress sibling behaviour during a circle. */
     driving: MutableState<Boolean>? = null,
+    /** Gear for the surface's density (Sessions rides 2f, owner #28): see EdgeScroll.scrollPxFor. */
+    speed: Float = 1f,
     /** Fires ONCE on release with the banked travel: POSITIVE px = screen-CLOCKWISE = scroll
      *  FORWARD (down the list, toward newest); NEGATIVE = counter-clockwise = BACK through
      *  history. Sign verified end-to-end on the SM-L705U (chat + settings + dialogs). The
      *  caller feeds it straight to its scroll surface (same sign convention as ScrollBy). */
     onScrollEnd: (totalPx: Float) -> Unit,
-): Modifier = pointerInput(enabled) {
+): Modifier = pointerInput(enabled, speed) {
     if (!enabled) return@pointerInput
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -51,9 +53,15 @@ fun Modifier.edgeCircleScroll(
         }
         driving?.value = true
         var prev = EdgeScroll.angleDeg(down.position.x, down.position.y, w, h)
+        val dDown = EdgeScroll.distFromCenter(down.position.x, down.position.y, w, h)
         var remainder = 0f
         var locked = false
         var acc = 0f
+        // STROKE TELEMETRY (#28): a locked stroke that banks ~nothing looks identical to a dead
+        // gesture from the wrist. Counting events/degrees separates "gesture never locked" from
+        // "the math round-tripped" — one log line per honest failure mode.
+        var nEvents = 0
+        var degAcc = 0f
         try {
             while (true) {
                 val ev = awaitPointerEvent(PointerEventPass.Initial)
@@ -61,12 +69,24 @@ fun Modifier.edgeCircleScroll(
                 val ang = EdgeScroll.angleDeg(change.position.x, change.position.y, w, h)
                 val delta = EdgeScroll.angleDeltaDeg(prev, ang)
                 prev = ang
-                if (!locked && kotlin.math.abs(delta) >= EdgeScroll.LOCK_DELTA_DEG) {
-                    locked = true // a real circle: from here we consume and the list never drags
+                nEvents++
+                degAcc += kotlin.math.abs(delta)
+                val drift = EdgeScroll.radialDrift(
+                    dDown,
+                    EdgeScroll.distFromCenter(change.position.x, change.position.y, w, h),
+                    w, h,
+                )
+                if (!locked && kotlin.math.abs(delta) >= EdgeScroll.LOCK_DELTA_DEG &&
+                    drift <= EdgeScroll.LOCK_MAX_DRIFT_RATIO
+                ) {
+                    // A real circle: angular velocity AND a held radius. Anything else — above
+                    // all a rim-to-center SWIPE, whose angle explodes near the middle — stays
+                    // unconsumed so the list drags it normally (#28).
+                    locked = true // from here we consume and the list never drags
                 }
                 if (locked) {
                     change.consume()
-                    val step = EdgeScroll.scrollPxFor(ang - delta, ang, remainder, w, h)
+                    val step = EdgeScroll.scrollPxFor(ang - delta, ang, remainder, w, h, speed = speed)
                     remainder = step.remainderDeg
                     acc += step.px
                 }
@@ -83,6 +103,11 @@ fun Modifier.edgeCircleScroll(
         if (locked && acc != 0f) {
             android.util.Log.d("HermesWear", "edge circle release: ${acc.toInt()}px")
             onScrollEnd(acc)
+        } else if (locked) {
+            // A LOCKED stroke that banked ~0px is the "bezel drag does nothing" complaint in
+            // one log line: the finger circled, the math round-tripped to nothing (sign flips
+            // / aliasing). Without this the wrist says "dead", the logs say nothing happened.
+            android.util.Log.d("HermesWear", "edge circle release: banked 0 (locked, ${nEvents} events, ${degAcc.toInt()}deg)")
         }
     }
 }

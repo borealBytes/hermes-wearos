@@ -86,8 +86,10 @@ fun SessionsScreen(
     val edgeSessionScroll: (Float) -> Unit = { total -> edgeScope.launch { edgeSessionState.edgeScrollWalk(total) } }
     ScalingLazyColumn(
         modifier = Modifier.fillMaxWidth()
-            // BATCH-4 #7: edge-circle scrolling on every list surface.
-            .edgeCircleScroll { total -> edgeSessionScroll(total) },
+            // BATCH-4 #7: edge-circle scrolling on every list surface. BATCH-6 #28 owner:
+            // "sessions faster with bezel scroll" — a dense full-width list wants two screens
+            // per circle, not the chat's one-screen reading gear.
+            .edgeCircleScroll(speed = 2f) { total -> edgeSessionScroll(total) },
         state = edgeSessionState,
         contentPadding = roundListPadding(bottomExtraDp = 16f),
         verticalArrangement = Arrangement.spacedBy(4.dp),

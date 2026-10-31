@@ -104,4 +104,35 @@ class EdgeScrollTest {
         val next = EdgeScroll.scrollPxFor(3f, 8f, tiny.remainderDeg, w, h)
         assertTrue(next.px > 0f)
     }
+
+    // ── batch-6 #28: radial steadiness separates circles from swipes; gears are per-surface ──
+    @Test fun `a rim swipe crossing the face blows the drift budget — the list keeps it`() {
+        val (w, h, _) = face
+        // Thumb swipe from the bottom rim toward the top: distances from center collapse fast.
+        val d0 = EdgeScroll.distFromCenter(240f, 466f, w, h)          // ≈ 226 (inside ring ✓)
+        val e1 = EdgeScroll.distFromCenter(246f, 400f, w, h)
+        val e2 = EdgeScroll.distFromCenter(252f, 330f, w, h)
+        // The events THAT LOCK swipes (angle jumps near center) carry drift the gate refuses:
+        val drift1 = EdgeScroll.radialDrift(d0, e1, w, h)
+        val drift2 = EdgeScroll.radialDrift(d0, e2, w, h)
+        assertTrue("swipe event 1 must bust the lock budget: $drift1", drift1 > EdgeScroll.LOCK_MAX_DRIFT_RATIO)
+        assertTrue("swipe keeps drifting deeper: $drift2", drift2 > drift1)
+    }
+
+    @Test fun `a rim circle holds its radius inside the budget`() {
+        val (w, h, _) = face
+        val d0 = EdgeScroll.distFromCenter(466f, 240f, w, h)
+        // Riding the rim: right → slightly up, radius wobble well under the budget.
+        val drift = EdgeScroll.radialDrift(d0, EdgeScroll.distFromCenter(452f, 172f, w, h), w, h)
+        assertTrue("a true circle must stay lockable: $drift", drift <= EdgeScroll.LOCK_MAX_DRIFT_RATIO)
+    }
+
+    @Test fun `the surface gear multiplies travel, chat gear stays untouched by default`() {
+        val (w, h, _) = face
+        val base = EdgeScroll.scrollPxFor(0f, 30f, 0f, w, h)
+        val geared = EdgeScroll.scrollPxFor(0f, 30f, 0f, w, h, speed = 2f)
+        assertEquals(base.px * 2f, geared.px, 0.01f)
+        // And the default call site (chat/settings/dialogs) still rides the old gear.
+        assertEquals(base.px, EdgeScroll.scrollPxFor(0f, 30f, 0f, w, h).px, 0.001f)
+    }
 }

@@ -55,7 +55,16 @@ fun AgentPickerDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
+                .edgeCircleScroll { total -> edgeScope.launch {
+                    // APPLY TELEMETRY (#28): the stroke lands here; if it does nothing visible,
+                    // the used/max numbers say whether the scroll range was zero (content fits)
+                    // or the ScrollState refused the injection — no guessing from screenshots.
+                    val used = edgeDlgScroll.scrollBy(total)
+                    android.util.Log.d(
+                        "HermesWear",
+                        "agents edge apply: want=${total.toInt()} used=${used.toInt()} max=${edgeDlgScroll.maxValue} at=${edgeDlgScroll.value}",
+                    )
+                } },
         ) {
         Column(
             modifier = Modifier
