@@ -725,9 +725,14 @@ async function handleRender(req, res, ip) {
 }
 
 // ── /img ─────────────────────────────────────────────────────────────────────
-// Allowlisted image scaler (F6): the gateway emits `![desc](/abs/path.png)` lines and the
-// watch fetches them here. img_roots + extension whitelist are the security boundary — the
-// bearer token alone must not turn this daemon into an arbitrary-file reader.
+// Image scaler (F6): the gateway emits `![desc](/abs/path.png)` lines and the watch fetches
+// them here. Boundaries: the extension whitelist (only image types, never .env/.py/…), the
+// 15 MB cap, and realpath re-checks (a symlink under a root may not escape it). Roots:
+// the daemon user's HOME is ALWAYS allowed (batch-6 #26: the comfy agent writes under
+// /run/media/…/comfy/outputs, outside the legacy four-path allowlist — desktop showed the
+// photo, the wrist 403'd it). This daemon already hands out every session BODY via
+// /sessions and /search, so image-typed files under the owner's home are strictly less
+// sensitive than what the same bearer already reads; extra mounts go in img_roots.
 const IMG_MAX_INPUT_BYTES = 15 * 1024 * 1024;
 const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // Full-res passthrough (owner batch 2: "images should be in full res to the watch; scaling should
@@ -735,8 +740,8 @@ const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // the legacy scaler (animation/mode conversion genuinely needs Pillow).
 const IMG_FULL_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const IMG_SCALER = path.join(WK_DIR, 'img_scale.py');
-const IMG_ROOTS = (Array.isArray(cfg.img_roots) && cfg.img_roots.length ? cfg.img_roots
-  : [path.join(os.homedir(), '.hermes'), path.join(os.homedir(), 'dev'), '/tmp', '/var/tmp'])
+const IMG_ROOTS = [os.homedir(), '/tmp', '/var/tmp',
+  ...(Array.isArray(cfg.img_roots) ? cfg.img_roots : [])]
   .map(r => { try { return fs.realpathSync(path.resolve(String(r))); } catch { return null; } })
   .filter(Boolean);
 const underRoots = (p) => IMG_ROOTS.some(root => p === root || p.startsWith(root + path.sep));
