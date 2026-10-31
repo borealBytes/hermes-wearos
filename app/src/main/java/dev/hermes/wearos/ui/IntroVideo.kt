@@ -103,7 +103,13 @@ fun IntroVideo(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val done by rememberUpdatedState(onDone)
+    // BATCH-6 #30: EVERY exit of this overlay — tap-cut, ended, first-frame budget, player
+    // failure, still's timer — lifts the system-splash hold, because past this point there is
+    // nothing left to reveal: holding would trap the icon over a chat that is already drawn.
+    val done by rememberUpdatedState<() -> Unit> {
+        dev.hermes.wearos.WearApp.Graph.launchHold?.painted = true
+        onDone()
+    }
     var framePainted by remember { mutableStateOf(false) }
     val mutedByCut = remember { AtomicBoolean(false) }
 
@@ -152,9 +158,9 @@ fun IntroVideo(
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 framePainted = true
-                // BATCH-6 #23: the first REAL pixels are what releases the system-splash hold —
-                // the fade starts on the keep-condition's next frame.
-                dev.hermes.wearos.WearApp.Graph.launchHold?.painted = true
+                // BATCH-6 #23: real pixels gate the release — but #30 moved the release itself
+                // to the MOVING frame below (the built-in's closed-watch opening reads as the
+                // vetoed icon zoom when the fade lands on it still).
                 Log.i(TAG, "intro: first frame ${SystemClock.elapsedRealtime() - openedAt}ms in")
             }
             override fun onPlaybackStateChanged(state: Int) {
@@ -173,6 +179,20 @@ fun IntroVideo(
             p.volume = 0f
             p.release()
         }
+    }
+
+    // BATCH-6 #30 — THE MOVING RELEASE: the built-in film opens on a STILL shot (closed watch),
+    // so releasing the splash on the decoder's first frame landed the fade onto a big static orb
+    // — indistinguishable from the icon zoom the owner vetoed ("it zooms all the way up, static,
+    // before it shows the video"). The film plays under the splash; the hold lifts only once the
+    // position passes the lid-opening motion (SplashIntro.revealIsMoving). Owner-picked media
+    // releases on its first frame untouched — the still opening is OUR film's artwork quirk.
+    LaunchedEffect(framePainted, player) {
+        if (!framePainted || kind == SplashIntro.Choice.STATIC) return@LaunchedEffect
+        val p = player ?: return@LaunchedEffect
+        while (!SplashIntro.revealIsMoving(true, p.currentPosition, custom == null)) delay(80)
+        dev.hermes.wearos.WearApp.Graph.launchHold?.painted = true
+        Log.i(TAG, "intro: splash reveal on moving frame at pos=${p.currentPosition}ms")
     }
 
     // A STILL HAS NO END, so it gets one: hold for STATIC_HOLD_MS, then lift (a tap still cuts,

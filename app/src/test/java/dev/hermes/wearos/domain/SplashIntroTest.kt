@@ -121,6 +121,33 @@ class SplashIntroTest {
         assertTrue(SplashIntro.STATIC_HOLD_MS < 1_900L)
     }
 
+    // ── batch-6 #30 THE MOVING RELEASE: no fade onto the film's still opening ──────────
+    @Test fun `the built-in film holds the splash past its still closed-watch opening`() {
+        // First painted frame at position 0: still orb on screen = the vetoed zoom, stay up.
+        assertFalse(SplashIntro.revealIsMoving(firstFramePainted = true, positionMs = 0L, builtInFilm = true))
+        assertFalse(SplashIntro.revealIsMoving(true, SplashIntro.INTRO_OPEN_MS - 1, builtInFilm = true))
+        // The lid is opening: release into MOTION.
+        assertTrue(SplashIntro.revealIsMoving(true, SplashIntro.INTRO_OPEN_MS, builtInFilm = true))
+        assertTrue(SplashIntro.revealIsMoving(true, SplashIntro.INTRO_OPEN_MS + 900, builtInFilm = true))
+    }
+
+    @Test fun `owner-picked media releases on its very first frame`() {
+        // The still-opening skip is OUR film's artwork quirk — never a rule about theirs.
+        assertTrue(SplashIntro.revealIsMoving(firstFramePainted = true, positionMs = 0L, builtInFilm = false))
+    }
+
+    @Test fun `nothing releases before the first real frame`() {
+        for (builtIn in listOf(true, false)) {
+            assertFalse(SplashIntro.revealIsMoving(false, 99_999L, builtIn))
+        }
+    }
+
+    @Test fun `the opening skip stays shorter than the first-frame it waits out`() {
+        // 2.2 s of motion-wait must not outlast a slow decoder's first frame by enough to
+        // approach the cap — the reveal never becomes a longer hold than #23 ever allowed.
+        assertTrue(SplashIntro.INTRO_OPEN_MS < SplashIntro.FILM_HOLD_CAP_MS / 3)
+    }
+
     // ── batch-6 #23 THE SPLASH HOLD: the system icon stays up until the media paints ──
     @Test fun `splash hold covers the media wait and nothing else`() {
         val b = SplashIntro.SETTING_BUDGET_MS
@@ -147,8 +174,11 @@ class SplashIntroTest {
     @Test fun `the hold cap clears the worst measured first frame but stays bounded`() {
         // 4.7 s was the measured video-mode first frame on the SM-L705U (batch-5 #17 proof) —
         // the cap must sit comfortably above it yet never approach a "hung launch".
-        assertTrue(SplashIntro.FILM_HOLD_CAP_MS in 6_000L..10_000L)
-        assertTrue(SplashIntro.FILM_HOLD_CAP_MS > 5_000L)
+        // #30: the cap must sit ABOVE the intro's own give-up deadline — a cap below the
+        // budget released the splash onto the orb curtain during a slow boot (11.5 s
+        // measured), the exact "icon zoomed and sat there static" the owner vetoed.
+        assertTrue(SplashIntro.FILM_HOLD_CAP_MS >= SplashIntro.FIRST_FRAME_BUDGET_MS)
+        assertTrue(SplashIntro.FILM_HOLD_CAP_MS <= 20_000L)
     }
 
     @Test fun `LaunchHold is a pure clock over shouldHold`() {

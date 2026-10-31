@@ -112,9 +112,28 @@ object SplashIntro {
      *  slow — release the splash and let the app draw (the in-app curtain falls back). */
     const val HOLD_SLACK_MS = 300L
 
-    /** Hard ceiling on holding the splash for media: a decoder that never paints must never
-     *  trap the launcher icon on the glass. Well above the 4.7 s measured first frame. */
-    const val FILM_HOLD_CAP_MS = 8_000L
+    /** Last-resort ceiling on holding the splash: the intro's own [FIRST_FRAME_BUDGET_MS] is
+     *  what actually decides a slow/sick decoder (and every skip path releases the hold through
+     *  IntroVideo's done()), so this cap only has to sit ABOVE that deadline with slack — never
+     *  below the boot's real first-frame time. Batch-6 #30 evidence: the 8 s cap was tuned to a
+     *  4.7 s first frame, but a busy boot measured 11.5 s — the cap then released the splash
+     *  onto the full-screen orb CURTAIN for seconds, which the owner read as the vetoed icon
+     *  zoom all over again ("it zooms that in all the way, static, before it shows the video").
+     *  The launcher icon they accepted is a far better hold than that curtain. */
+    const val FILM_HOLD_CAP_MS = 15_000L
+
+    /** BATCH-6 #30 (owner: *"it zooms that in all the way to take up the whole screen, static,
+     *  before it shows the video"*): the film's opening shot — a CLOSED pocket watch lying like
+     *  a silver ellipse — is still for its first ~2.2 s, so fading the splash onto the decoder's
+     *  first frame lands the wearer on a big static orb and reads as the vetoed zoom all over
+     *  again. The hold therefore releases on a MOVING frame: the built-in film starts playing
+     *  under the splash and the fade cuts in once the lid is opening. The position comes from
+     *  the player; owner-picked media and stills release on their first paint as before. */
+    const val INTRO_OPEN_MS = 2_200L
+
+    /** Is the overlay showing a frame worth fading the splash away ONTO? (Pure half of #30.) */
+    fun revealIsMoving(firstFramePainted: Boolean, positionMs: Long, builtInFilm: Boolean): Boolean =
+        firstFramePainted && (!builtInFilm || positionMs >= INTRO_OPEN_MS)
 
     /**
      * The mutable half of the hold. `SystemClock.elapsedRealtime()` rides in through
