@@ -6,6 +6,7 @@ import android.util.Log
 import dev.hermes.wearos.data.AgentsRepo
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.data.ChatStore
+import dev.hermes.wearos.domain.AwayWatch
 import dev.hermes.wearos.domain.ChatSession
 import dev.hermes.wearos.domain.ProfileLogic
 import dev.hermes.wearos.health.BodySnapshot
@@ -28,6 +29,7 @@ import dev.hermes.wearos.voice.VoskStt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 
@@ -307,6 +309,38 @@ class WearApp : Application() {
                     runCatching { session.refreshGatewaySessions() }
                     runCatching { refreshGatewayMirror() }
                 })
+                // DESKTOP WATCH (batch-6 #25, owner: "notifications or approvals from sessions
+                // started in the desktop … the ONLY time I don't get one is the session that is
+                // actively the top thing on my watch"). Desk runs have no watch-side stream, so
+                // the wrist POLLS watchkit's inbox (approval parks via the gateway's activity
+                // beacon + session pulses from the state stores) and domain/AwayWatch.diff turns
+                // sweeps into buzzes. Silence set: the chat top-of-screen on the chat page (the
+                // owner's ONE allowed silence) and chats whose runs the watch itself drives —
+                // those already notify approvals/settles through the watch-run paths.
+                scope.launch {
+                    val seenParks = mutableSetOf<String>()
+                    val counts = mutableMapOf<String, Int>()
+                    var first = true
+                    while (true) {
+                        delay(AwayWatch.POLL_MS) // first tick also lets the endpoint config land
+                        val body = Watchkit.approvalsWaiting() ?: continue
+                        val mine = store.chats.value.mapNotNull { c -> c.id.takeIf { c.lastRunId.isNotEmpty() } }.toSet() +
+                            setOf(viewingChatId.takeIf { isForeground }.orEmpty())
+                        for (a in AwayWatch.diff(AwayWatch.parse(body), seenParks, counts, mine, first)) {
+                            when (a.kind) {
+                                AwayWatch.Kind.Approval -> {
+                                    Log.i(TAG, "away-watch: approval parked ${a.profile}/${a.chatId} ${a.tool}")
+                                    Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments)
+                                }
+                                AwayWatch.Kind.Finished -> {
+                                    Log.i(TAG, "away-watch: answer finished ${a.profile}/${a.chatId} msgs=${a.messageCount}")
+                                    Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false)
+                                }
+                            }
+                        }
+                        first = false
+                    }
+                }
                 // Queued AFTER Watchkit.setConfig so the first /agents fetch carries the real token.
                 scope.launch {
                     val gw = settings.ensureGateways() // one-time seed/migrate (never loses old keys)

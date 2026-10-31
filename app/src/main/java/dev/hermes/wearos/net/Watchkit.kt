@@ -116,6 +116,25 @@ object Watchkit {
     private fun esc(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
         .replace("\n", "\\n").replace("\r", "").replace("\t", "\\t") + "\""
 
+    /**
+     * BATCH-6 #25 (owner: *"notifications or approvals from sessions started in the desktop …
+     * only stuff I start in the watch [get them] — even if not ever opened yet on the watch"*):
+     * the DESKTOP-PULSE inbox — approval parks (activity beacon) + recently-active sessions everywhere
+     * on the gateway box (watchkit reads the state stores directly). Raw JSON in, parsed by the
+     * pure domain/AwayWatch; null = watchkit unset/offline (the poller just tries again later).
+     */
+    suspend fun approvalsWaiting(): String? = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        try {
+            clientCall(
+                Request.Builder().url("${cfg.baseUrl}/approvals_waiting")
+                    .header("Authorization", "Bearer ${cfg.token}").build(),
+            ) { r -> if (r.isSuccessful) r.body?.string() else null }
+        } catch (e: Exception) {
+            null // offline / watchkit down / bearer refused: the next tick retries
+        }
+    }
+
     /** Raw render fetch (also used by the dev `render_test` hook). Throws ApiException/IOException. */
     suspend fun renderBytes(code: String, width: Int = 460): ByteArray = withContext(Dispatchers.IO) {
         val cfg = _config.value

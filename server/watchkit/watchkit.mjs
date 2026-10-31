@@ -928,6 +928,115 @@ async function handleSessions(req, res, ip, params) {
   }
 }
 
+// ── /approvals_waiting (batch-6 #25: desktop-session life reaches the wrist) ───
+// Owner 2026-10-30: "I'm not getting notifications or approvals from sessions started on the
+// desktop — only stuff I start on the watch. I want desktop-session notifications — even ones
+// never opened on the watch — so when I step away from the computer I still get them; the ONLY
+// silence allowed is the session that is actually the top thing on my watch's chat screen."
+// A desktop run has no watch-side stream, so nothing ever pushed it. Design review found the
+// honest truth source in the profile's state.db (the gateway keeps it live, read-only for us —
+// same posture as /sessions and /search):
+//   • WAITING approvals — the approval park heartbeats `sessions.last_activity_description =
+//     "waiting for user approval"` every ~10 s (agent activity tracker; approval_gateway_wait
+//     activity_heartbeat), so a session with that beacon AND a fresh last_activity_at is parked
+//     RIGHT NOW. What it wants approved: the session's last assistant message's tool_calls
+//     (persisted before execution — that IS the parked call). No request_id on disk, and desk
+//     parks answer only on their own ws lane, so the wrist notification opens the session
+//     rather than approving inline (watch-started runs keep their inline Approve/Deny).
+//   • PULSES — visible session rows (same visibility rules as /sessions) with message_count +
+//     last_role: the watch diffs counts between polls and buzzes once when an assistant answer
+//     FINISHED on the desktop since the last look.
+// Per-profile errors blank only their own profile. The watch (domain/AwayWatch) dedups and
+// applies the viewing suppression client-side.
+//   GET /approvals_waiting → {"object":"list",
+//     "waiting":[{"profile","chat_id","title","tool","arguments","parked_at"}],
+//     "pulses":[{"profile","id","title","message_count","last_role","last_active"}]}
+const PARK_FRESH_SEC = 15 * 60;       // the park heartbeats every ~10 s; stale beacon = gone
+const PULSE_FRESH_SEC = 30 * 60;      // a session idle for hours cannot have just finished
+const PULSE_LIMIT = 12;               // per profile: nothing older matters inside 30 min
+
+function parseToolCallNames(toolCallsJson) {
+  try {
+    const tcs = JSON.parse(toolCallsJson);
+    if (!Array.isArray(tcs)) return [];
+    return tcs.map((tc) => ({
+      tool: String(tc?.function?.name ?? tc?.name ?? ''),
+      arguments: String(tc?.function?.arguments ?? tc?.arguments ?? ''),
+    })).filter((t) => t.tool);
+  } catch { return []; }
+}
+
+async function handleApprovalsWaiting(req, res, ip) {
+  const t0 = Date.now();
+  const waiting = [];
+  const pulses = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(PROFILES_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && SESSIONS_PROFILE_RE.test(e.name)).map((e) => e.name);
+  } catch { /* no profiles dir: honest empty */ }
+  // The default profile's store is the HOME state.db (desktop sessions live there), not
+  // profiles/default/state.db — same resolution /sessions uses.
+  if (!names.includes('default')) names.unshift('default'); // home profile: no directory, but it owns the desktop sessions
+  const stores = names.map((n) => ({ name: n, file: sessionDbPath(n) })).filter((s) => s.file && fs.existsSync(s.file));
+  for (const { name, file } of stores) {
+    let db;
+    try {
+      const { DatabaseSync } = await import('node:sqlite'); // lazy — same 503 posture as /sessions
+      db = new DatabaseSync(file, { readOnly: true });
+      const nowSec = Math.floor(Date.now() / 1000);
+      const parked = db.prepare(`
+        SELECT id, title, last_activity_at FROM sessions
+        WHERE last_activity_description LIKE 'waiting for user approval%'
+          AND COALESCE(last_activity_at, started_at) > ?
+        ORDER BY last_activity_at DESC LIMIT 8
+      `).all(nowSec - PARK_FRESH_SEC);
+      for (const r of parked) {
+        let tool = '', args = '';
+        try {
+          const m = db.prepare(
+            "SELECT tool_calls FROM messages WHERE session_id = ? AND tool_calls IS NOT NULL AND tool_calls != '' ORDER BY id DESC LIMIT 1"
+          ).get(r.id);
+          const calls = m ? parseToolCallNames(m.tool_calls) : [];
+          tool = calls.map((c) => c.tool).join(', ');
+          args = (calls[0]?.arguments || '').slice(0, 240);
+        } catch { /* payload is garnish: the beacon itself is the news */ }
+        waiting.push({
+          profile: name, chat_id: String(r.id), title: String(r.title || ''),
+          tool, arguments: args, parked_at: Number(r.last_activity_at) || 0,
+        });
+      }
+      const since = nowSec - PULSE_FRESH_SEC;
+      for (const r of db.prepare(`
+        SELECT s.id AS id, s.title AS title, s.message_count AS mc,
+               (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS msg_ts,
+               (SELECT m.role FROM messages m WHERE m.session_id = s.id
+                 ORDER BY m.timestamp DESC, m.id DESC LIMIT 1) AS last_role
+        FROM sessions s
+        WHERE s.hidden = 0 AND s.archived = 0
+          AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+          AND COALESCE(s.last_activity_at, s.started_at) > ?
+        ORDER BY COALESCE(s.last_activity_at, s.started_at) DESC
+        LIMIT ?
+      `).all(since, PULSE_LIMIT)) {
+        const lastActive = Math.max(Number(r.msg_ts) || 0, Number(r.last_activity_at) || 0);
+        if (lastActive < since) continue;
+        pulses.push({
+          profile: name, id: String(r.id), title: String(r.title || ''),
+          message_count: Number(r.mc) || 0, last_role: String(r.last_role || ''),
+          last_active: lastActive,
+        });
+      }
+    } catch { /* one locked/corrupt store blanks its own profile, never the batch */ }
+    finally { try { db?.close(); } catch { /* already gone */ } }
+  }
+  waiting.sort((a, b) => b.parked_at - a.parked_at);
+  pulses.sort((a, b) => b.last_active - a.last_active);
+  const body = JSON.stringify({ object: 'list', waiting, pulses });
+  return done(res, send(res, 200, body), t0, ip, 'approvals_waiting', 200, undefined,
+    waiting.length + pulses.length);
+}
+
 // ── /session_messages (history backfill on adoption) ────────────────────────
 // Owner bug: adopting a `default`-profile session from the watch's Sessions screen set the
 // session id but opened EMPTY — the transcript lives only in the profile's state.db. Same
@@ -1063,6 +1172,7 @@ const server = http.createServer(async (req, res) => {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleCatalog(req, res, ip, q);
     }
+    if (req.method === 'GET' && url === '/approvals_waiting') return handleApprovalsWaiting(req, res, ip);
     if (req.method === 'GET' && url === '/sessions') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleSessions(req, res, ip, q);
