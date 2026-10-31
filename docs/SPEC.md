@@ -1057,7 +1057,80 @@ caught mid-read, last line riding the tick) and the tail-pin recovers when speec
 ---
 
 
+## 16. Owner batch 6 (2026-10-30/31): cold start is one cut, volume is dB, the wrist sees
+   the desktop, comfy photos land, one tap is a keyboard, swipes are swipes
+
+The wrist review kept rolling: six more numbered items (23–28). Every one shipped
+hardware-proven on the SM-L705U over `wear-demo` (or server-proven where the fix lives in
+watchkit); 423 green at ship.
+
+| # | Defect (owner's words) | Fix | Proof |
+|---|---|---|---|
+| 23 | *"the icon from orb like zoomed to full screen — don't expect this — straight to video per launch selection"* | The zoom was the OS: Android 12+ exits the system splash by scaling the icon OUT the first moment the app draws. The SYSTEM SPLASH becomes the curtain — core-splashscreen's `setKeepOnScreenCondition` holds the small launcher icon until the chosen media PAINTS ITS FIRST FRAME (`SplashGate` in domain/SplashIntro, fed by IntroVideo on paint), and the default scale-out is replaced by a 140 ms alpha fade (§16.1) | cold-launch burst: 7 byte-identical held-icon PNGs (`cs_01–07`) → film frames (`cs_08+`, girl WITH headphone band — different artwork); ZERO intermediate scale frames |
+| 24 | *"the audio slider for voice out is linear, fix that… audio taper / log-law volume curve — map the slider to dBFS"* | `TtsConfig.gainFor(position)` = 10^(`TAPER_FLOOR_DB`·(1−x)/20): even grid steps are even dB steps (−60 floor, hard zero at 0 %); stored values re-read as POSITIONS, so old settings land where the ear expects | `TtsConfigTest` dB-ladder + monotonicity + endpoints; the grid that was 5 % per linear-step is now 3 dB per step in the useful range |
+| 25 | *"I'm not getting notifications or approvals from sessions started in the desktop, only stuff I start on the watch… the ONLY time I don't get one is the session that is actively the top thing on my watch"* | DESKTOP WATCH (§16.1): watchkit `/approvals_waiting` reads the truth straight off the state stores — approval PARKS via the gateway's `last_activity_description = "waiting for user approval"` activity beacon (heartbeat ~10 s, `approval_gateway_wait`) + FINISHED answers via message_count/last_role pulses; the watch polls every 20 s (`AwayWatch.POLL_MS`), diffs, dedups, and applies the ONE silence (viewing chat + watch-driven chats); desk parks notify OPEN-session only (their approval answers on the desktop's own ws lane — no fake inline buttons) | wrist buzzes logged: `away-watch: answer finished default/api-6117ff4b92044a5b msgs=2` (two asks curl'd at the OpenAI lane) and `away-watch: approval parked default/53199106a25d terminal` (beacon stamped in state.db); `AwayWatchTest` pins anti-stampede/dedup/silence rules |
+| 26 | *the ComfyUI photo rendered on the desktop but the watch card said `path outside img_roots`* | watchkit `/img`: HOME + /tmp + /var/tmp are ALWAYS roots (the daemon already serves every session BODY via /sessions — image-typed files under the daemon user's home are strictly less sensitive); `img_roots` config adds mounts (`/run/media/clay/Data/comfy`, `…/dev`). The extension whitelist + 15 MB cap + realpath re-checks remain the boundary | `curl /img?path=/run/…/comfy/outputs/keweenaw_aurora.png → 200`; the same chat line that 403'd now paints as an image card on the wrist (`comfy_img9.png`) |
+| 27 | *"I hit the keyboard button and… it doesn't [work]"* + the keyboard's search key dead | TWO root causes: (1) the passive tap swapped IN a BasicTextField but nothing ever REQUESTED focus — the ⌨ chip's "already focused" comment was a lie; the proven PromptEditor ladder (focusRequester → frame → 120 ms → `show()` → `imm.showSoftInput`) now runs on every focus edge and the chip re-raises. (2) `maxLines = 2` made the field multiline, so the IME mapped its action key to a NEWLINE and `onSearch` never fired — `singleLine = true` hands the key back; onSearch hides the IME, sends, and collapses to the passive field with the term in it | one tap → keyboard UP (`s28_i_tap.png`); the IME action key is now the magnifier; tapping it logs `field search action typed=haikus`, dismisses, and applies (`Search · 7` via `-e search haiku`) |
+| 28 | *"Agent Scroll's normal way, not bezel way, and same with sessions… Want the speed on the sessions to go faster with bezel scroll"* | The circle-lock was EATING swipes: angular velocity alone declares a rim→center SWIPE a circle (angles explode near the center), so the gesture consumed it and the list never dragged. The lock now demands velocity AND radial steadiness (`EdgeScroll.radialDrift ≤ LOCK_MAX_DRIFT_RATIO`); plus a per-call `speed` gear — Sessions rides 2f, chat/settings/dialogs stay 1f (§16.2) | normal swipe scrolls Sessions a full screen (`s28_t1_*`) AND the Agents dialog (`s28_ag_*`), gesture silent; same synthetic circle banks 76 px vs the 38 px baseline (2× exactly); a real-finger circle inside Agents logs `agents edge apply: want=38 used=38 max=1425 at=38` — the dialog DOES move |
+
+### 16.1 The desktop watch: the beacon is the truth source (#25, the design-review save)
+
+First cut polled a `/approval_decide` proxy against a `run_approval_pending_v1` table —
+design review caught that the table does not exist: the gateway keeps pending approvals in
+PROCESS MEMORY (`_pending` dicts), which has no HTTP surface and no durability. The honest
+durable signal was already being written: a parked run heartbeats
+`sessions.last_activity_description = "waiting for user approval"` every ~10 s
+(`approval_gateway_wait.activity_heartbeat`), so *beacon text + fresh `last_activity_at`*
+IS a parked approval, right now, per profile. The parked tool call itself is recovered from
+the session's last assistant message `tool_calls` (persisted before execution); what it lacks
+is a request_id — and desk parks answer decisions on their own ws lane anyway — so the wrist
+notification carries one honest action: OPEN SESSION (watch-started runs keep inline
+Approve/Deny through their own stream). `default` matters most (that's where desktop sessions
+live) and has no directory — its store is the HOME `state.db`, the same resolution `/sessions`
+uses. Client side, `domain/AwayWatch` (pure, JVM-tested): first sweep SEEDS cursors silently
+(a launch must not stampede the wrist with everything that aged while the watch slept), parks
+dedup by chatId|tool|args and are FORGOTTEN when their beacon ages out (a re-park buzzes
+again), pulses buzz only when the count grew AND the tail message is an ASSISTANT one
+("an answer exists", not "someone typed"), and the suppression set is exactly the owner's
+rule: the chat top-of-screen on the chat page, plus chats whose runs the watch itself drives.
+
+### 16.2 A circle is a radius, not just an angle (#28)
+
+`LOCK_DELTA_DEG` (angular velocity) separated rim-circles from rim-DRAGS, but not from
+SWIPES: a normal swipe that STARTS on the rim crosses the face, and angle-vs-center spins
+fast near the middle — velocity screamed "circle", `consume()` ate the gesture, and both
+Sessions and Agents felt dead to a normal thumb (batch-4 #7's gesture had been quietly
+stealing the ordinary scroll it was supposed to complement). `radialDrift` closes it: a
+circle holds its distance-from-center (≤ 10 % of the face radius at the lock moment ≈ 24 px
+on the 480 face); a rim→center swipe blows the budget by event two and keeps its drag.
+Telemetry makes both failure modes answerable from logcat: a locked stroke banking 0 px logs
+`banked 0 (locked, N events, M deg)` (a jitter-cancelled short touch, not a dead gesture),
+and the Agents apply site logs `want/used/max/at` — which settled the batch-5 "dialog banks
+but never moves" mystery: with a real finger the apply runs (`used = want = 38`,
+max = 1425 px of range), and adb's standalone `motionevent MOVE` injections simply never
+reach a Dialog window (only the window that caught the DOWN receives the rest of the
+sequence — a lab limit, not a user bug). 423 green (+3 drift/gear tests).
+
+---
+
+
 ## Appendix A — Landed slices (build log, newest first)
+
+-- **Batch 6 — cold-start cuts, dB volume, the desktop watch (#23–#28, 2026-10-30/31,
+  watch-proven).** The system splash holds the small launcher icon until the chosen intro media
+  paints its first frame, then a 140 ms alpha fade replaces the Android-12 icon zoom-out (the
+  cold start is ONE cut: icon → film; `SplashGate`); reply volume became a dB taper
+  (`TtsConfig.gainFor`: log-law curve, −60 dB floor, hard zero at mute); DESKTOP WATCH — desktop
+  sessions now reach the wrist via watchkit `/approvals_waiting` (approval parks read from the
+  gateway's `waiting for user approval` activity beacon + finished answers from message-count
+  pulses over every profile's state store) and a 20 s watch-side diff (`domain/AwayWatch`,
+  anti-stampede seed, park dedup, assistant-only buzzes, the ONE viewing-chat silence); watchkit
+  `/img` roots widened (home + tmp implicit, mounts in config) so comfy photos render on the
+  wrist like on the desktop; the Sessions search field got the proven keyboard ladder (one tap
+  raises the IME, ⌨ chip re-raises) and `singleLine` (the dead search key is the field's
+  onSearch now — it hides, sends, lands the term); the edge-circle lock now demands radial
+  steadiness (normal swipes scroll Agents/Sessions again) with a per-surface speed gear
+  (Sessions 2×). 423 green.
 
 -- **Batch 5 — the live-review fix list (#17–#22, 2026-10-30, watch-proven).** Video splash shows
   the orb-icon system-splash twin instead of the static portrait; the edge-circle gesture re-hosted
