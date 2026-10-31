@@ -40,6 +40,41 @@ object TtsConfig {
         if (v.isNaN()) DEFAULT_VOLUME else v.coerceIn(0f, 1f)
 
     /**
+     * AUDIO TAPER (batch-6 #24, owner 2026-10-30: *"the audio slider for voice out is linear,
+     * fix that… audio taper / log-law volume curve — map the slider to dBFS instead of
+     * amplitude"*). A linear slider spends half its travel in a range the ear barely notices
+     * (the ear answers RATIOS: −10 dB = half as loud, but still 31.6 % amplitude), and the last
+     * 20 % does everything (50→100 % is only +6 dB). The slider position x is therefore a
+     * position on a dB sweep with a [VOLUME_FLOOR_DB] floor, converted to amplitude — what DAWs
+     * and OS mixers do:
+     *
+     *     gain = 10^((floor_dB · (1 − x)) / 20),  gain = 0 at x = 0 (hard mute, no FP dust)
+     *
+     * At −60 dB the 5 % first stop is 0.14 % amplitude (−57 dB, genuinely a whisper), 50 % is
+     * 3.2 %, 90 % is 50 %. The PERSISTED number (global slider and the per-agent 5 % grid) is
+     * now the slider POSITION — the old values re-read as positions (100 stays 100; a stored
+     * 40 becomes a gentle 1.6 % until redialed, which the taper's owner will do anyway).
+     */
+    const val VOLUME_FLOOR_DB = -60f
+
+    /** Slider position (0..1, 0 = mute) → KEY_PARAM_VOLUME amplitude via the dB sweep. */
+    fun gainFromPosition(pos: Float): Float {
+        val x = clampVolume(pos)
+        if (x <= 0f) return 0f // HARD ZERO — the mute flag, never 10^(-inf) floating dust
+        if (x >= 0.9999f) return 1f
+        return Math.pow(
+            10.0, (VOLUME_FLOOR_DB * (1f - x) / 20f).toDouble(),
+        ).toFloat().coerceIn(0f, 1f)
+    }
+
+    /** Inverse (curve position for an amplitude) — round-trips the table, clamped like the map. */
+    fun positionForGain(gain: Float): Float = when {
+        gain <= 0f -> 0f
+        gain >= 1f -> 1f
+        else -> (1f - kotlin.math.log10(gain) / (VOLUME_FLOOR_DB / 20f)).coerceIn(0f, 1f)
+    }
+
+    /**
      * MUTE IS MUTE (batch-5 #19, owner 2026-10-30: *"I have it muted, but it still seems like
      * it's talking to me from the orb … if it's muted, the talking shit shouldn't happen"*). At
      * 0 % reply volume the old code still QUEUED every sentence with KEY_PARAM_VOLUME=0 — no

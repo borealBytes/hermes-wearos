@@ -470,9 +470,13 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         val want = voiceChain().getOrElse(step) { "" }
         if (want != appliedVoice) applyVoiceTo(t, want)
         // Reply volume rides PER UTTERANCE (KEY_PARAM_VOLUME) — app-scoped by construction, the
-        // system stream stays untouched for everything else on the watch.
-        val params = if (volume < 0.999f) android.os.Bundle().apply {
-            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
+        // system stream stays untouched for everything else on the watch. BATCH-6 #24: `volume`
+        // is a slider POSITION; the amplitude sent to the engine is the dB-sweep taper of it
+        // (TtsConfig.gainFromPosition — 50 % position ≈ 3 % amplitude, the ear's law, not the
+        // ruler's).
+        val amp = TtsConfig.gainFromPosition(volume)
+        val params = if (amp < 0.999f) android.os.Bundle().apply {
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, amp)
         } else null
         val id = "hermes-${++utterSeq}"
         utterances[id] = Utt(text, step, offset)
