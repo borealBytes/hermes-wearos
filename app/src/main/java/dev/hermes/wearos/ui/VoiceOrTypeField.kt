@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
@@ -69,6 +70,32 @@ fun VoiceOrTypeField(
     // voice query and typing edits a typed query, instead of concatenating the two mid-thought.
     var typed by remember { mutableStateOf(value) }
     LaunchedEffect(value) { if (!voiceOn && !focused) typed = value }
+    // THE KEYBOARD LADDER (owner batch-6 #27: "I hit the keyboard button and … it doesn't").
+    // This field used to only SWAP IN a BasicTextField — a newly composed text field does NOT
+    // take focus by itself, so the keyboard never came: not on the passive tap, not on the ⌨
+    // chip (whose "already focused" comment was a lie — nothing ever requested focus). Now the
+    // same proven ladder PromptEditor uses runs on every focused=true edge: requestInput focus,
+    // show(), and the SHOW_EXPLICIT imm bypass some Wear IMEs demand. One tap → one keyboard.
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val imeCtl = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val imeView = androidx.compose.ui.platform.LocalView.current
+    val imeCtx = androidx.compose.ui.platform.LocalContext.current
+    fun raiseKeyboard() {
+        runCatching { focus.requestFocus() }
+        imeCtl?.show()
+        try {
+            val imm = imeCtx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager
+            @Suppress("DEPRECATION") imm?.showSoftInput(imeView, 1)
+        } catch (e: Exception) { /* IME is whatever the watch runs; best effort */ }
+    }
+    LaunchedEffect(focused) {
+        if (!focused) return@LaunchedEffect
+        runCatching { focus.requestFocus() }
+        androidx.compose.runtime.withFrameNanos { }
+        kotlinx.coroutines.delay(120)
+        raiseKeyboard()
+    }
     val fm = LocalFontScale.current
     val shape = RoundedCornerShape(14.dp)
 
@@ -79,13 +106,31 @@ fun VoiceOrTypeField(
                 onValueChange = { typed = it; onValueChange(it) },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .focusRequester(focus)
                     .background(MaterialTheme.colors.surface.copy(alpha = 0.7f), shape)
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 textStyle = TextStyle(color = MaterialTheme.colors.onBackground, fontSize = (15 * fm).sp),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colors.primary),
-                maxLines = 2,
+                // SINGLE LINE IS THE IME CONTRACT (owner batch-6 #27: keyboard's search button
+                // "doesn't work"): a multi-line field makes Compose answer
+                // getCurrentPositionCursor/ENTER-action negotiation with "multiline", the IME then
+                // maps its action key to a NEWLINE INSERT and onSearch never fires — the search
+                // glyph shows but is dead furniture. Queries are one-liners by nature; singleLine
+                // hands the action key back to onSearch. It also DISMISSES the keyboard, landing
+                // the wearer on the passive field with the term in it — the owner's expectation.
+                singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { onSend(typed) }),
+                keyboardActions = KeyboardActions(onSearch = {
+                    @Suppress("DEPRECATION") imeCtl?.hide() // IME-DONE GUARANTEE (PromptEditor's rule)
+                    // FIELD-vs-COMPOSING REALITY: some Wear IMEs deliver the word only at the
+                    // action moment (composing lives IME-side); if this logs empty, the field is
+                    // right and the IME is shy — the wrist-proof answer comes from logcat, not
+                    // from guessing at pixels.
+                    android.util.Log.i("HermesWear", "field search action typed=${typed.take(40)}")
+                    onSend(typed)
+                    focused = false
+                    focusManager.clearFocus(force = true)
+                }),
                 decorationBox = { inner ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (typed.isEmpty()) {
@@ -106,11 +151,15 @@ fun VoiceOrTypeField(
                     onClick = { if (voiceOn) onVoiceStop() else onVoiceStart() },
                 )
                 if (showKeyboardHint) {
-                    FieldChip(glyph = "⌨", active = true, onClick = { /* already focused */ })
+                    // The ⌨ chip RAISES the keyboard — it used to be a no-op claiming "already
+                    // focused" (nothing ever requested focus). It is the owner's literal bug ask:
+                    // "I hit the keyboard button and … it doesn't".
+                    FieldChip(glyph = "⌨", active = true, onClick = { raiseKeyboard() })
                 }
                 FieldChip(glyph = "↵", active = false, onClick = { onSend(typed) })
                 FieldChip(glyph = "✕", active = false, onClick = {
                     focused = false
+                    @Suppress("DEPRECATION") imeCtl?.hide()
                     focusManager.clearFocus(force = true)
                     if (voiceOn) onVoiceStop()
                 })
