@@ -37,9 +37,11 @@ object EdgeScroll {
     const val LOCK_DELTA_DEG = 2.5f
 
     /** Max drift of the finger's distance-from-center (fraction of the face radius) allowed at
-     *  the lock moment. 0.10 on the 480 face ≈ 24 px: a real rim circle wobbles well inside it,
-     *  while a rim→center swipe blows past it by event two and keeps its swipe. */
-    const val LOCK_MAX_DRIFT_RATIO = 0.10f
+     *  the lock moment. 0.14 on the 480 face ≈ 34 px: thumb circles on a 1.3" face wobble more
+     *  than synthetic points do (owner batch-6 review of #28), while a rim→center swipe still
+     *  blows the budget by event two (measured drift ≥ 0.27 at the first lockable event) and
+     *  keeps its drag. */
+    const val LOCK_MAX_DRIFT_RATIO = 0.14f
 
     /** Distance of (x, y) from the face center (px). */
     fun distFromCenter(x: Float, y: Float, w: Float, h: Float): Float =

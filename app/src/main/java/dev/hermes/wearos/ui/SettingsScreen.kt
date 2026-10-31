@@ -203,7 +203,10 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .edgeCircleScroll { total -> edgeScope.launch { settingsScroll.scrollBy(total) } },
+            // BATCH-6 #29 (owner: "the main settings screen… does not work with the bezel
+            //  scrolling"): it DID circle — at the chat's reading gear, ~50 px a real-finger
+            //  stroke, invisible on a button list. Dense surfaces circle at 2f, like Sessions.
+            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.scrollBy(total) } },
     ) {
     Column(
         modifier = Modifier

@@ -55,7 +55,8 @@ fun AgentPickerDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .edgeCircleScroll { total -> edgeScope.launch {
+                // BATCH-6 #29: button lists circle at 2f (see SettingsScreen).
+                .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch {
                     // APPLY TELEMETRY (#28): the stroke lands here; if it does nothing visible,
                     // the used/max numbers say whether the scroll range was zero (content fits)
                     // or the ScrollState refused the injection — no guessing from screenshots.

@@ -70,7 +70,8 @@ fun ModelPickerDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
+                // BATCH-6 #29: model lists circle at 2f (see SettingsScreen).
+                .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
         ) {
         Column(
                 modifier = Modifier

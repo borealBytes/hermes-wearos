@@ -60,7 +60,8 @@ fun ChatsScreen(
     ScalingLazyColumn(
         modifier = Modifier.fillMaxWidth()
             // BATCH-4 #7: edge-circle scrolling on every list surface.
-            .edgeCircleScroll { total -> edgeScope.launch { edgeChatsState.edgeScrollWalk(total) } },
+            // BATCH-6 #29: row lists circle at 2f (see SettingsScreen).
+            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { edgeChatsState.edgeScrollWalk(total) } },
         state = edgeChatsState,
         contentPadding = roundListPadding(bottomExtraDp = 12f),
         verticalArrangement = Arrangement.spacedBy(4.dp),

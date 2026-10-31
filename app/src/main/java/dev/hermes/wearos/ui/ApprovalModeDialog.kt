@@ -54,7 +54,8 @@ fun ApprovalModeDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .edgeCircleScroll { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
+                // BATCH-6 #29: button lists circle at 2f (see SettingsScreen).
+                .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },
         ) {
         Column(
             modifier = Modifier
