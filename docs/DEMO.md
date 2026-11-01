@@ -124,6 +124,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 45 | DESKTOP WATCH — approval park from a DESKTOP/API session buzzes the wrist with the parked command (beacon-derived); **Open adopts the session** and finishes it with ✅/❌ in chat (watch-started runs keep inline Approve/Deny) | `44-notify-desktop-approval.png` NEW | S44a | todo |
 | 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | todo |
 | 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | todo |
+| 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -411,6 +412,14 @@ Branch keeps exactly ONE generation of every tracked media path.
   needed (`notify_demo -e notify_chat <id>` aims the demo card at any session — the A6 beat uses it).
 - **2026-10-26 `39f770b`** — orb-spirit notification icon (+ color largeIcon),
   ⚙ settings lane at 3:00, `notify_demo` hook → ledger rows 22, 23 + new S30–S34.
+- **2026-11-01 (THE POCKET LIFELINE, row 48)** — the capture round caught #25's dirty secret:
+  backgrounded with a quiet process, the away-watch loop dies with Samsung's cached-process
+  freeze within a minute (the morning's buzzes only survived because adb traffic kept the app
+  warm). #32 hands the off-screen sweep to a chained one-time WorkManager hop (~55 s,
+  CONNECTED) armed on stop / cancelled on resume, sharing ONE SweepCursor with the foreground
+  loop (no double-buzz; 4 new pins). Wrist-proven: unattended off-wrist settle buzz, 3 sweeps
+  through 4 minutes of screen-off darkness (old build: zero). Rows 45/46's shots were captured
+  THROUGH this path — the desktop watch pixels are honest pixels now.
 - **2026-11-01 (standard versioning)** — repo-root `VERSION` (semver, now `0.6.0`) is the single
   source for app versionName/versionCode, watchkit `/health`+MCP version, in-app About, and the
   demo pipeline: versioned film/GIF filenames, container metadata, and a permanent `v<VER> ·

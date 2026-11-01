@@ -1153,6 +1153,18 @@ a chat to find it re-reading a finished answer is the same violation wearing a d
 `AttentionPolicyTest` pins every row of the table above; changing the policy means changing
 that test, this section, and the KDoc together — never code alone.
 
+**The buzz must SURVIVE the pocket (#32).** A wrist-verified failure the media round caught:
+backgrounded with nothing keeping the process warm, the in-app 20 s away-watch loop died within
+a minute of `onActivityStopped` (Samsung caches/freezes the app and its coroutines with it) —
+so the policy's whole off-screen column silently evaporated in a real pocket. `AwayWatchWorker`
+(now THE POCKET LIFELINE) chains ONE-TIME WorkManager work (~55 s hops, CONNECTED constraint)
+armed on the last activity stop and cancelled on resume; foreground keeps the 20 s loop. Both
+callers share ONE `SweepCursor` (anti-stampede first-sweep, park dedup, message-count cursors)
+so the handoff cannot double-buzz (`SweepCursorTest`). Wrist proof: chain requests at 55-60 s
+cadence after the loop went quiet; an unattended off-wrist settle buzzed; 4 minutes of
+screen-off darkness delivered 3 sweeps (old build: zero). Honest limit: under real Doze,
+CONNECTED-constrained work defers to maintenance windows — minutes of latency, not seconds.
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 6 — cold-start cuts, dB volume, the desktop watch (#23–#28, 2026-10-30/31,
