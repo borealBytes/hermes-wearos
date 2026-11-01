@@ -60,6 +60,28 @@ scripts/parakeet.sh                                      # install the streaming
 Screenshots from `adb screencap` are the SQUARE panel buffer — mask them (`circle-shot.sh`) or
 they lie about the round glass (SPEC §14, owner rule).
 
+## The alignment rule: one worktree owns the loop (owner rule, 2026-10-31)
+
+While a worktree is under test, **it must own both ends of the loop**: the watchkit serving
+port 8651 is started from THIS worktree's `scripts/watchkit.sh`, and the APK on the watch is
+byte-identical to THIS worktree's build. A stale daemon (or one from another checkout — the
+watch is indifferent to which repo answered) plus a newer APK is a phantom test harness:
+features get proven against the wrong code. Owner caught this exact drift — main-checkout
+watchkit squatting on 8651 while a splash-video worktree build rode the watch. Check both
+before any hardware claim:
+
+```bash
+scripts/watchkit.sh status && ps aux | grep watchkit.mjs | grep -v grep   # pid path = THIS worktree
+P=$(adb -s "$SERIAL" shell pm path dev.hermes.wearos | tr -d '\r' | sed 's/package://')
+[ "$(adb -s "$SERIAL" shell md5sum "$P" | cut -d' ' -f1 | tr -d '\r')" = \
+  "$(md5sum app/build/outputs/apk/debug/app-debug.apk | cut -d' ' -f1)" ] && echo ALIGNED
+```
+
+If the daemon is from another checkout: kill its pid, `scripts/watchkit.sh start` here. If the
+md5s differ: reinstall (chunked push, AGENTS.md §1) before trusting a single screenshot or
+logcat line. A stray `watchkit.mjs mcp` child belongs to the gateway (stdio, no port) — leave
+it; only the 8651 listener must be yours.
+
 ## Watch connection gotchas (real hardware)
 
 - Wireless-debugging `IP:PORT` **rotates every reconnect** — offline serial = reconnect to the
