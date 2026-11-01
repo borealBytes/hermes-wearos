@@ -20,6 +20,13 @@
   against its exact caption claim (§8) before it lands in `docs/screens/`.
 - **One generation of media in history.** After each media round: purge +
   force-push (§9).
+- **Every artifact carries the version** (owner, 2026-11-01). The single source of truth is
+  repo-root `VERSION` (standard semver, `scripts/version.sh`). Film/GIF filenames embed it
+  (`demo-vertical-v0.6.0-raw.mp4`, `demo-walkthrough-v0.6.0.gif`), the canvas burns a permanent
+  `v<VER> · wear-demo` bug into every frame, and ffmpeg container metadata repeats it — so a
+  YouTube upload or a downloaded GIF is never ambiguous about what it shows. The app
+  (`versionName`/About/Settings) and watchkit (`/health`) read the SAME file; bump with
+  `scripts/release.sh <x.y.z>`, never by hand.
 
 ## 1. Production flow
 
@@ -125,7 +132,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 
 | README row (current) | Becomes | Caption refresh | Status |
 |---|---|---|---|
-| hero `dial-orb-vertical-v2.mp4` | **RETIRED** → one combined film `demo-vertical.mp4` at top, inline `![](…mp4)` embed | NEW caption: full feature story, silent note | refreshed |
+| hero `dial-orb-vertical-v2.mp4` | **RETIRED** → one combined film at top (inline `![](…mp4)` embed); current generation: **versioned** `demo-vertical-v<VER>-raw.mp4` → owner scores keeping the stem (`demo-vertical-v<VER>.mp4`) → YouTube master + README link swap | NEW caption: full feature story, silent note | refreshed |
 | `orb-dial.gif` | **RETIRED** (dial act lives in the film) | — | refreshed |
 | `01-orb-cluster.png` | re-shot (owner: empty-session minimalism — new chat, Ask Hermes + popped orb cluster, no chat content) | yes — 3:00 row ⚙ in shot | refreshed |
 | `02-chat-markdown.png` | re-shot | keep claim | refreshed |
@@ -149,7 +156,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `27-commands-overlay.png` | re-shot | aurora note | refreshed |
 | — (new, 2026-11 round) | `35-splash-film.png`, `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy | todo |
 | hero film | RE-CUT: new A0 splash act + voice/desktop-watch beats; new YouTube upload + README link swap (owner uploads scored master) | yes | todo |
-| `demo-walkthrough.gif` | RE-CUT from the new film's keyframes (walk the new beats in) | — | todo |
+| `demo-walkthrough.gif` | RE-CUT from the new film's keyframes; committed as **`demo-walkthrough-v<VER>.gif`** (version in the name — README links the current one) | — | todo |
 | `21-session-search.png` | re-shot | YES → one-tap keyboard ladder + ⌨ chip + singleLine search key | todo |
 | `11-gateways.png` | re-shot or superseded by 42 | keep claim | todo |
 | `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5) | todo |
@@ -274,6 +281,13 @@ Pipeline (scripts live in `/tmp/opencode/` — copy to `tools/demo/` before they
 `canvas_build.py` (harbor canvas + masks + pills) → `assemble.py` (beat cut list → segments →
 concat) → final medium/crf24 re-encode → `gif_build.py` (walkthrough keyframes → palette GIF).
 
+**Versioned artifacts (owner rule 2026-11-01):** all three scripts read repo-root `VERSION`.
+`assemble.py` emits `vid/demo-vertical-v<VER>-raw.mp4` (+ metadata `comment=hermes-wearos v<VER>`);
+the owner scores that file and keeps the stem (`demo-vertical-v<VER>.mp4`); `gif_build.py` then
+prefers the SCORED film for keyframes, falling back to the raw — so the GIF always matches the
+video the owner actually published — and commits `vid/demo-walkthrough-v<VER>.gif`. The canvas
+bottom-right bug (`v<VER> · wear-demo`) rides every frame of both.
+
 **Owner-approved design (2026-10-27, keep unless overridden):**
 - Art canvas: agent self-portrait harbor plate (`comfyui state demo-art/draft-1`), cover-cropped
   1080×1920, dimmed to 0.82, vignette. Cobalt (#3C63DD) ring + caption pills in
@@ -320,9 +334,11 @@ concat) → final medium/crf24 re-encode → `gif_build.py` (walkthrough keyfram
 
 ## 9. History invariant (after every media round)
 
-**Tracked media = `docs/screens/*.png` + `docs/demo/demo-walkthrough.gif`. The mp4 master is NOT
-tracked** (`docs/demo/*.mp4` gitignored; it regenerates via `tools/demo/` and lives locally,
-published on YouTube — README links, never embeds, the mp4).
+**Tracked media = `docs/screens/*.png` + `docs/demo/demo-walkthrough-v<VER>.gif` (version in
+the filename; the old version's GIF is purged with the round, never kept side by side). The mp4
+master is NOT tracked** (`docs/demo/*.mp4` gitignored — videos make this repo heavy; it
+regenerates via `tools/demo/` and lives locally, published on YouTube — README links, never
+embeds, the mp4).
 
 For tracked media: commit new → `git filter-branch --index-filter "git rm -r --cached
 --ignore-unmatch <paths>"` over `origin/main..HEAD` (NOTE: the tree must be CLEAN or
@@ -395,6 +411,11 @@ Branch keeps exactly ONE generation of every tracked media path.
   needed (`notify_demo -e notify_chat <id>` aims the demo card at any session — the A6 beat uses it).
 - **2026-10-26 `39f770b`** — orb-spirit notification icon (+ color largeIcon),
   ⚙ settings lane at 3:00, `notify_demo` hook → ledger rows 22, 23 + new S30–S34.
+- **2026-11-01 (standard versioning)** — repo-root `VERSION` (semver, now `0.6.0`) is the single
+  source for app versionName/versionCode, watchkit `/health`+MCP version, in-app About, and the
+  demo pipeline: versioned film/GIF filenames, container metadata, and a permanent `v<VER> ·
+  wear-demo` canvas bug on every frame — the owner uploads scored videos to YouTube and needs the
+  version visible. Bump via `scripts/release.sh`; tag merge commits on main `v<VER>`.
 - **2026-11-01 (media realign for batch 5+6, rows 36–47)** — the ledger grew for everything
   shipped after the 10-27 round: splash intro film (one cut, `revealIsMoving`), the full voice
   suite (engine/voice/rate settings, dB-taper volume, karaoke follow, 0-dB silence), STT sources

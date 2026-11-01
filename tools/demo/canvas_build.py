@@ -41,6 +41,16 @@ dv.ellipse((-W // 2, -H // 2, W * 3 // 2, H * 3 // 2), fill=255)
 vig = vig.filter(ImageFilter.GaussianBlur(220)).point(lambda p: 255 - min(90, (255 - p) // 2))
 dark = Image.new("RGB", (W, H), (0, 0, 0))
 base = Image.composite(base, dark, vig).convert("RGBA")
+# ---- version bug (owner rule): every film frame carries the release version + the test
+# agent it was captured on; bg.png is under every beat, so one stamp persists whole film+GIF.
+VER_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "VERSION")
+with open(VER_FILE) as _fh:
+    DEMO_VERSION = _fh.read().strip()
+bug = ImageDraw.Draw(base)
+bug_fnt = font("RulesCmp-Medium.ttf", 28)
+bug_txt = f"v{DEMO_VERSION} · wear-demo"
+bug_xy = (W - tracked_w(bug, bug_txt, bug_fnt, track=4) - 56, H - 64)
+bug.text(bug_xy, bug_txt, font=bug_fnt, fill=(232, 232, 242, 130))
 base.save(f"{OUT}/bg.png")
 
 # ---- 2) circle hole mask for the watch clip (640 box at (220,400)) ----

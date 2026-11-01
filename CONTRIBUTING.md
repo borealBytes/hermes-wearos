@@ -99,6 +99,11 @@ Before every push:
 2. **Re-shoot every changed feature** (`wear-demo` only, per the hard rule + DEMO.md §4 capture
    recipes; keep each existing filename, circle-mask it, then pass the vision gate). Re-cut the
    film + GIF so every §2 row is `shot ✓` and appears in the cut list.
+2b. **Version everything you ship**: bump repo-root `VERSION` with `scripts/release.sh <x.y.z>`
+   (app, watchkit, and the demo pipeline all read it — never hand-edit a version string), and
+   cut the film/GIF from `tools/demo/` so their filenames + on-screen bug carry `v<VERSION>`.
+   The mp4 master stays OUT of the repo (owner scores it and uploads to YouTube); the versioned
+   GIF + the screenshots are the tracked pixels.
 3. **Walk the gates** (DEMO.md §8): coverage ledger complete, vision review per `<img>`, privacy
    pass, captions `refreshed`, tests green.
 4. **Purge the old media generation** (DEMO.md §9) before pushing so the branch carries exactly

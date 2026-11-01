@@ -10,6 +10,12 @@ C = f"{VID}/canvas"
 SEG = f"{VID}/segs"
 os.makedirs(SEG, exist_ok=True)
 OVL = {"bg": f"{C}/bg.png", "circle": f"{C}/circle.png", "ring": f"{C}/ring.png"}
+# Versioned outputs (owner rule): the RAW master carries the repo version in its name AND
+# metadata, so after the owner scores it in YouTube ("name-scored" keeps the stem), the
+# upload is always traceable to a build. gif_build.py finds it by the same version.
+with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "VERSION")) as _fh:
+    VER = _fh.read().strip()
+RAW = f"{VID}/demo-vertical-v{VER}-raw.mp4"
 
 # (source, in, dur, beat) ; None => canvas-only card. Arcs show the WHOLE feature:
 # action -> stream -> result. Durations tuned per raw's best window.
@@ -74,8 +80,8 @@ with open(f"{SEG}/list.txt", "w") as f:
     for i in range(len(SEGS)):
         f.write(f"file '{SEG}/seg_{i:02d}.mp4'\n")
 run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", f"{SEG}/list.txt",
-     "-c", "copy", f"{VID}/demo-vertical-raw.mp4"])
+     "-c", "copy", "-metadata", f"comment=hermes-wearos v{VER} (wear-demo capture)", RAW])
 d = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                    "-of", "csv=p=0", f"{VID}/demo-vertical-raw.mp4"],
+                    "-of", "csv=p=0", RAW],
                    capture_output=True, text=True).stdout.strip()
 print("master:", d, "seconds", flush=True)

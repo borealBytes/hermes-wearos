@@ -51,8 +51,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.1.0';
 const WK_DIR = path.dirname(fileURLToPath(import.meta.url));
+// Version comes from repo-root VERSION (single source of truth — scripts/version.sh).
+const VERSION = (() => {
+  try { return fs.readFileSync(path.join(WK_DIR, '..', '..', 'VERSION'), 'utf8').trim(); }
+  catch { return '0.0.0'; }
+})();
 
 // ── config ─────────────────────────────────────────────────────────────────
 const CONFIG_PATH = process.env.WATCHKIT_CONFIG || path.join(WK_DIR, 'config.json');

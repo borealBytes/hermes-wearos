@@ -5,6 +5,12 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Single source of truth: repo-root VERSION (standard semver, see scripts/version.sh).
+// versionCode derives arithmetically: major*10000 + minor*100 + patch.
+val appVersion: String = rootProject.file("VERSION").readText().trim()
+val appVersionCode: Int = appVersion.split(".").map { it.toInt() }
+    .let { (maj, min, pat) -> maj * 10000 + min * 100 + pat }
+
 android {
     namespace = "dev.hermes.wearos"
     compileSdk = 35
@@ -13,8 +19,8 @@ android {
         applicationId = "dev.hermes.wearos"
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
         // Galaxy Watch Ultra ships a 32-bit userspace (zygote32, abilist=armeabi-v7a only!)
         // despite the 64-bit chip. x86_64 serves the emulator. Do NOT "modernize" this away.
         ndk { abiFilters += listOf("armeabi-v7a", "x86_64") }
