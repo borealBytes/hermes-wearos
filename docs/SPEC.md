@@ -1073,6 +1073,10 @@ watchkit); 423 green at ship.
 | 27 | *"I hit the keyboard button and… it doesn't [work]"* + the keyboard's search key dead | TWO root causes: (1) the passive tap swapped IN a BasicTextField but nothing ever REQUESTED focus — the ⌨ chip's "already focused" comment was a lie; the proven PromptEditor ladder (focusRequester → frame → 120 ms → `show()` → `imm.showSoftInput`) now runs on every focus edge and the chip re-raises. (2) `maxLines = 2` made the field multiline, so the IME mapped its action key to a NEWLINE and `onSearch` never fired — `singleLine = true` hands the key back; onSearch hides the IME, sends, and collapses to the passive field with the term in it | one tap → keyboard UP (`s28_i_tap.png`); the IME action key is now the magnifier; tapping it logs `field search action typed=haikus`, dismisses, and applies (`Search · 7` via `-e search haiku`) |
 | 28 | *"Agent Scroll's normal way, not bezel way, and same with sessions… Want the speed on the sessions to go faster with bezel scroll"* | The circle-lock was EATING swipes: angular velocity alone declares a rim→center SWIPE a circle (angles explode near the center), so the gesture consumed it and the list never dragged. The lock now demands velocity AND radial steadiness (`EdgeScroll.radialDrift ≤ LOCK_MAX_DRIFT_RATIO`); plus a per-call `speed` gear — Sessions rides 2f, chat/settings/dialogs stay 1f (§16.2) | normal swipe scrolls Sessions a full screen (`s28_t1_*`) AND the Agents dialog (`s28_ag_*`), gesture silent; same synthetic circle banks 76 px vs the 38 px baseline (2× exactly); a real-finger circle inside Agents logs `agents edge apply: want=38 used=38 max=1425 at=38` — the dialog DOES move |
 
+| 29 | *"the agent screen, also the main settings screen, does not work with the edge scrolling… the voice out one… when I go select the model… those ones I'm having to do normal swiping — I want both types"* | They DID circle — at the chat's 1f reading gear, ~40–70 px per real-finger stroke: invisible on a button list, so it felt dead (Sessions only "worked" because #28 gave it 2f). The gear rule is now explicit: **prose reads at 1f (chat), lists circle at 2f** — Settings tree (every page), Agents, Model picker, Approvals mode, Chats all ride 2f; the lock's radius-wobble budget widened 10 %→14 % of face radius (~34 px) for real thumb circles (rim→center swipes still blow it ≥ 0.27) | synthetic rim circle on Settings root banks 76 px (the 1f baseline ×2 exactly) and the row-set changes (`s29_set_*`); same math drives every 2f surface |
+| 30 | *"I see the small Hermes icon… but still it zooms that in all the way to take up the whole screen, static, before it shows the video… that needs to be solved"* | NOT a reversion — two compound causes, one fix: (a) the built-in film OPENS on a still shot (closed pocket watch = an orb ellipse) so fading onto the decoder's first frame lands on a big static orb; (b) the 8 s hold cap (tuned to a 4.7 s first frame) fired during an 11.5 s busy boot, releasing the splash onto the full-screen orb CURTAIN for seconds. Now: `revealIsMoving` holds the splash until the film passes its lid-opening motion (built-in only — owner media releases on its first frame), the cap became a true last resort above the intro's own 12 s give-up deadline, and EVERY overlay exit (cut/ended/budget/error/still) lifts the hold through done() | cold boot with a slow decoder: held-icon PNGs straight THROUGH the old cap point onto a MOVING frame (`cr2_08` icon held → `cr2_18` lid already opening, `splash reveal on moving frame at pos=2298ms`); zero curtain frames, zero still-orb frames |
+| 31 | *"it's starting to talk at me… I went back to my watch face and got a reply where it just talked back — I should get a NOTIFICATION, not it talking… the ONLY time it should not go to notice is when the chat session is in front of me open live"* | THE ATTENTION POLICY as ONE pure brain (§16.3): `AttentionPolicy.shouldSpeak(foreground, viewingChatId, chatId)` ⇔ `!shouldNotify(…)`. VoiceHost (the TTS bridge that was answering from the pocket because its effects run while the app is backgrounded) now speaks ONLY the live-on-screen chat — and walking away mid-answer cuts the queue (no replay on return; the notification already carried it). ChatSession's notification half delegates to the same function, so the two channels can never disagree again. The two Graph signals became Compose-observable so the gate flips the instant the wearer leaves | JVM: `AttentionPolicyTest` pins every situation the owner named (watch face, other chat open, other screen, viewing-while-live); wrist: off-screen settle logged `voice suppressed — answer settled off-screen` + `notif posted`, no speech, watch-face focus held; staying on the chat logged the complement `settle suppressed — viewing chat` with NO notification and the speech path taken (audible only while Voice out is on — the policy and the owner's mute lane compose) |
+
 ### 16.1 The desktop watch: the beacon is the truth source (#25, the design-review save)
 
 First cut polled a `/approval_decide` proxy against a `run_approval_pending_v1` table —
@@ -1111,8 +1115,43 @@ max = 1425 px of range), and adb's standalone `motionevent MOVE` injections simp
 reach a Dialog window (only the window that caught the DOWN receives the rest of the
 sequence — a lab limit, not a user bug). 423 green (+3 drift/gear tests).
 
+**#29 follow-through:** the 10 % budget was a synthetic-finger number — real thumb circles
+wobble ~34 px on the 480 face, so `LOCK_MAX_DRIFT_RATIO` went to 14 % (rim→center swipes
+still blow it by 2×). And the gear rule became explicit where #28 left it implicit:
+**prose surfaces (chat) read at 1f, every LIST surface circles at 2f** — Settings tree,
+Agents, Model, Approvals and Chats were circling at 1f (~40–70 px a stroke: imperceptible on
+a button list, felt dead) and all moved to 2f.
+
 ---
 
+### 16.3 THE ATTENTION POLICY — voice is for the wrist, buzz is for the pocket (#31)
+
+The owner stated this as a PERMANENT REQUIREMENT after noticing behavior flip-flop across
+batches ("get this type of stuff also into our spec doc… we need to really get that clear"):
+
+> **Any completion or approval, from ANY lane — watch, desktop, web UI, plain API — must reach
+> me. What decides the CHANNEL is one fact: is that session live in front of me?**
+>
+> | Situation | Voice (TTS) | System notification |
+> |---|---|---|
+> | Chat open on the chat screen, app foreground | ✅ speaks (as configured: engine, dB volume, mute) | ❌ none — redundant |
+> | Watch face / ambient / another app / screen off | ❌ silent | ✅ answer-ready or approval buzz |
+> | Sessions / Settings / Chats / any other screen | ❌ silent | ✅ |
+> | A DIFFERENT chat open on the chat screen | ❌ silent (voice from an invisible conversation is "talking in my pocket") | ✅ |
+
+Both halves read `domain/AttentionPolicy` — `shouldSpeak(foreground, viewingChatId, chatId)`
+is the single decision and `shouldNotify` is its exact complement. The historical bug in each
+direction is named in code: `VoiceHost` runs inside the activity's composition, so its effects
+fire while the wearer is backgrounded (that's the watch-face voice the policy kills); and a
+notification fired from the front chat is double-signalling a message already on the glass.
+The third twin, caught on the wrist during verification: the DESKTOP WATCH loop (AwayWatch)
+silenced by LOCAL chat ids while watchkit keys its pulses by the GATEWAY `session_id` — the
+viewed session buzzed while being read. `AwayWatch.watchSilence` now builds the set in the
+session-key space and asks [AttentionPolicy] for the viewing branch (JVM-pinned). Walking away
+mid-answer CUTS the speech queue and the skipped tail is not replayed on return — returning to
+a chat to find it re-reading a finished answer is the same violation wearing a different hat.
+`AttentionPolicyTest` pins every row of the table above; changing the policy means changing
+that test, this section, and the KDoc together — never code alone.
 
 ## Appendix A — Landed slices (build log, newest first)
 
@@ -1129,8 +1168,19 @@ sequence — a lab limit, not a user bug). 423 green (+3 drift/gear tests).
   wrist like on the desktop; the Sessions search field got the proven keyboard ladder (one tap
   raises the IME, ⌨ chip re-raises) and `singleLine` (the dead search key is the field's
   onSearch now — it hides, sends, lands the term); the edge-circle lock now demands radial
-  steadiness (normal swipes scroll Agents/Sessions again) with a per-surface speed gear
-  (Sessions 2×). 423 green.
+  steadiness (normal swipes scroll Agents/Sessions again) with a per-surface speed gear.
+  Follow-through on the same wrist review (#29–#31): every LIST surface circles at 2f (Settings
+  pages, Agents, Model, Approvals, Chats — prose chat stays 1f) and the lock's wobble budget
+  widened 10 %→14 % for real thumbs; the cold start reveals on a MOVING film frame
+  (`revealIsMoving` — the built-in's still closed-watch opening + the too-short 8 s hold cap
+  were the "icon zoomed and sat there static" the owner vetoed), the cap realigned above the
+  intro's own 12 s give-up deadline, every overlay exit lifts the hold; and THE ATTENTION
+  POLICY (§16.3) became one pure brain — voice only for the chat live on screen, everything
+  else buzzes, walking away mid-answer cuts the speech queue, `AttentionPolicyTest` pinning
+  every row — and the wrist review caught the third twin: the desktop-watch loop silenced by LOCAL chat
+  ids while watchkit keys pulses by GATEWAY session_id, so the VIEWED session buzzed while being
+  read; `AwayWatch.watchSilence` now speaks session-keys and asks the policy for the viewing
+  branch. 437 green.
 
 -- **Batch 5 — the live-review fix list (#17–#22, 2026-10-30, watch-proven).** Video splash shows
   the orb-icon system-splash twin instead of the static portrait; the edge-circle gesture re-hosted
