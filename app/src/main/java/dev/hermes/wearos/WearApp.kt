@@ -142,6 +142,10 @@ class WearApp : Application() {
          */
         val devModelPicker = MutableStateFlow(false)
 
+        /** Dev hook `-e commands 1`: open the SLASH/⌘ OVERLAY without the flaky synthetic dial
+         *  release to 6:00 (capture-rig family: dial_preview / model_picker). */
+        val devCommands = MutableStateFlow(false)
+
         /** Dev hook `-e agents 1`: open the agent picker like the agents lane does (batch-4 #6
          *  dialog-padding proof without hunting the chip under SLC centering). */
         /**

@@ -362,6 +362,16 @@ class MainActivity : ComponentActivity() {
                 val catalogJson by settings.slashCatalogJson.collectAsState()
                 var commandsOpen by remember { mutableStateOf(false) }
                 var slashPrefill by remember { mutableStateOf<String?>(null) }
+                // Dev hook `-e commands 1`: open the SLASH OVERLAY without a dial drag to 6:00 —
+                // same capture-rig reason as dial_preview/model_picker (a synthetic release is
+                // flaky to script; the overlay is a shipped surface we screenshot for the demo).
+                val devCommands by WearApp.Graph.devCommands.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(devCommands) {
+                    if (devCommands) {
+                        commandsOpen = true
+                        WearApp.Graph.devCommands.value = false
+                    }
+                }
                 val commandEntries = remember(catalogJson) {
                     CommandCatalog.merge(SlashCommands.BUILTIN, CommandCatalog.parse(catalogJson).entries)
                 }

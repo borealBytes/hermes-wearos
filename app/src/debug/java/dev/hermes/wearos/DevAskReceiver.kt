@@ -255,6 +255,7 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
         // MODEL PICKER PIN (`-e model_picker`): opens the 🧠 picker like a lane release would.
         if (intent?.hasExtra("model_picker") == true) { WearApp.Graph.devModelPicker.value = true; return }
+        if (intent?.hasExtra("commands") == true) { WearApp.Graph.devCommands.value = true; return }
         // NOTIFY DEMO (`-e notify_demo plain|approval|both`): posts the REAL notification shapes on
         // command — the settle card and the Approve/Deny approval card (runId "demo-run", so a
         // tapped Approve lands in ApprovalNotificationReceiver and fail-softs) — the deterministic
@@ -307,6 +308,12 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         intent?.getStringExtra("speak")?.let { WearApp.Graph.speak.speakFinal(it); return }
+        // -e approval_mode <off|smart|manual|inherit> → the ACTIVE chat's per-chat approval mode
+        // (SPEC §12.8); capture-rig escape hatch for the once-approval treadmill.
+        intent?.getStringExtra("approval_mode")?.let {
+            WearApp.Graph.session.setChatApprovalMode(dev.hermes.wearos.domain.ApprovalMode.fromId(it))
+            return
+        }
         // BATCH-5 #19 proof hook: set the CURRENT AGENT's reply volume (0 = mute) without a wrist.
         intent?.getStringExtra("set_vol")?.toFloatOrNull()?.let {
             WearApp.Graph.speak.setReplyVolume(it); return
