@@ -54,13 +54,14 @@ Acts (story order, one continuous watch session):
 
 | Act | Story beat | Beats (S-ids) |
 |---|---|---|
+| A0 | **It starts like a film** — launcher tap → the small icon HOLDS, then the splash film opens on its moving lid-opening frame (modes: none/orb/built-in/custom) | S35a, S35b, S36 |
 | A1 | **Morning brief** — wrist raise → PTT ask fires the `aurora` + daily-weather skill → streaming markdown → **3-day weather plot** lands inline | S01→S06→S07→S03 |
 | A2 | **Look at the art** — tap the plot → viewer, pinch zoom, pan; mermaid diagram of the day | S04, S05 |
-| A3 | **Talking back** — 🧠 model pick mid-chat, edit & resend, stop mid-stream, full long reply lands whole, tap a link → browser | S25, S26, S16, S08, S29, S28 |
+| A3 | **Talking back** — 🧠 model pick mid-chat, edit & resend, stop mid-stream, full long reply lands whole, tap a link → browser; the answer is SPOKEN and the glass follows the sentence (karaoke), volume on the dB taper | S25, S26, S16, S08, S29, S28, S39, S37, S38 |
 | A4 | **Approve right here** — approval card inside the open session → tap Approve, run continues | S33, S34 |
 | A5 | **Finding things** — sessions list, search `harbor`, long-press sheet → fork, archive chip, unarchive | S17→S21→S22→S23→S24 |
-| A6 | **Off the wrist** — app backgrounded: settle card + approval notification (Approve from the shade), deep-link resume, agent picker, gateway failover | S31, S32, S32b, S09, S18, S11 |
-| A7 | **Make it yours** — ⚙ lane → Settings, font scale both ends, body tools, commands/skills (aurora listed), keyboard, dial cluster close on launcher | S30, S10→S19, S13→S14→S15, S12, S27, S00 |
+| A6 | **Off the wrist** — app backgrounded: settle card + approval notification (Approve from the shade), deep-link resume, **the DESKTOP WATCH**: answers + approval parks from desktop/API sessions buzz the wrist (never voice off-screen — THE ATTENTION POLICY), agent picker, gateway failover, agent-keys map | S31, S32, S32b, S09, S44a, S44b, S45, S18, S11, S42 |
+| A7 | **Make it yours** — ⚙ lane → Settings, font scale both ends, body tools, commands/skills (aurora listed), keyboard, edge-circle scrolling on every list (bezel AND swipe), dial cluster close on launcher | S30, S10→S19, S13→S14→S15, S12, S27, S41, S00 |
 
 ## 2. Feature ledger (feature ⇔ screenshot ⇔ beat ⇔ status)
 
@@ -103,7 +104,19 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 32 | Font scale min / max (both ends) | `14a-fontscale-min.png`, `14b-fontscale-max.png` | S14 (both) | shot ✓ |
 | 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | shot ✓ |
 | 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | shot ✓ |
-| 35 | 🔊 voice-out mute lane | (shown in 01) | S01 (release) | shot ✓ |
+| 35 | 🔊 voice-out mute lane (0 dB floor = speaks NOTHING, live queue cut) | (shown in 01) | S01 (release) | todo |
+| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut) | `35-splash-film.png` NEW | S35a, S35b | todo |
+| 37 | Splash modes in Settings (none / orb / built-in film / custom media) | `36-splash-picker.png` NEW | S36 | todo |
+| 38 | Voice-out settings: engine picker, voice + fallback, speech rate, preview | `37-voice-output.png` NEW | S37 | todo |
+| 39 | Reply volume = **dB-taper double sliders** (mute-lane pair + settings mirror, −60 dB floor) | `38-volume-db.png` NEW | S38 | todo |
+| 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | todo |
+| 41 | STT source: on-watch Vosk ⇄ Gateway · parakeet streaming | `40-stt-source.png` NEW | S40 | todo |
+| 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | todo |
+| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | todo |
+| 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | todo |
+| 45 | DESKTOP WATCH — approval park from a DESKTOP session buzzes with actions (beacon-derived) | `44-notify-desktop-approval.png` NEW | S44a | todo |
+| 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | todo |
+| 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | todo |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -134,7 +147,12 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `17-agent-picker.png` | re-shot | names check | refreshed |
 | `21/22/23/24` sessions | re-shot | keep claims | refreshed |
 | `27-commands-overlay.png` | re-shot | aurora note | refreshed |
-| — (new) | `25-model-picker.png`, `26-model-picked.png`, `28-browser-opened.png`, `29-full-reply.png`, `30-settings-lane.png`, `31-notify-plain.png`, `32-notify-approval.png`, `33-approval-card.png`, `34-approval-approved.png` | NEW README rows in feature order | refreshed |
+| — (new, 2026-11 round) | `35-splash-film.png`, `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy | todo |
+| hero film | RE-CUT: new A0 splash act + voice/desktop-watch beats; new YouTube upload + README link swap (owner uploads scored master) | yes | todo |
+| `demo-walkthrough.gif` | RE-CUT from the new film's keyframes (walk the new beats in) | — | todo |
+| `21-session-search.png` | re-shot | YES → one-tap keyboard ladder + ⌨ chip + singleLine search key | todo |
+| `11-gateways.png` | re-shot or superseded by 42 | keep claim | todo |
+| `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5) | todo |
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
@@ -237,6 +255,17 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
 - Old wear-demo chatter cleared with the archive feature itself (dogfood).
 - Approval beats ride a REAL gated tool run in wear-demo (in-session card S33
   and backgrounded S32 are two separate runs).
+- **Desktop-watch beats (S44a/S44b):** drive them from the API lane on the gateway box — a
+  curl'd ask at `wear-demo` (finished-answer pulse) and a gated tool parked via the `waiting
+  for user approval` beacon — while the watch sits backgrounded; the buzz + card prove the
+  away-watch path end to end. This is also the ATTENTION POLICY beat (S45): same off-screen
+  run → notify + silent; then open the chat on the wrist and let another answer land → inline
+  + speech-path, zero notify. Capture both halves as `46-attention-pair.png`.
+- Voice beats (S37/S38/S39): voice-out ON with the owner-blessed dB volume, engine/voice as
+  configured, karaoke visibly scrolling with the spoken sentence; the STT source row shows
+  `Gateway · parakeet` (owner's daily pick) with the on-watch Vosk fallback visible.
+- Splash act (S35a/S35b): record the cold-launch burst (held-icon frames → MOVING film frame);
+  the built-in film is the hero (owner media stays local).
 - Model-pick beat: pick → confirm chip → restore default before A4.
 
 ## 7. Assembly (Phase 4)
@@ -366,6 +395,16 @@ Branch keeps exactly ONE generation of every tracked media path.
   needed (`notify_demo -e notify_chat <id>` aims the demo card at any session — the A6 beat uses it).
 - **2026-10-26 `39f770b`** — orb-spirit notification icon (+ color largeIcon),
   ⚙ settings lane at 3:00, `notify_demo` hook → ledger rows 22, 23 + new S30–S34.
+- **2026-11-01 (media realign for batch 5+6, rows 36–47)** — the ledger grew for everything
+  shipped after the 10-27 round: splash intro film (one cut, `revealIsMoving`), the full voice
+  suite (engine/voice/rate settings, dB-taper volume, karaoke follow, 0-dB silence), STT sources
+  (on-watch Vosk ⇄ Gateway · parakeet), edge-circle scrolling on every list (2f) with swipes
+  intact, multi-gateway registry + agent-keys screen, and the DESKTOP WATCH pair (beacon-derived
+  approval parks + finished answers) under THE ATTENTION POLICY (SPEC §16.3: voice only for the
+  chat live on screen — the buzz/voice split gets its own film beat S45 and pair shot). ALL §2/§3
+  rows for new AND changed features flipped to `todo` — a full fresh capture round, not a delta
+  patch (owner directive: "complete, fresh redo"). CONTRIBUTING gained THE MEDIA RULE: refreshing
+  this ledger + pixels is the last step before every PR push.
 - (next feature updates §2 + README §3 rows in the SAME commit)
 
 - **2026-10-27 (publish round)** — owner's audio-scored master replaced the silent cut; mp4s are no
