@@ -100,7 +100,7 @@ class AppSettings(private val context: Context) {
     suspend fun sessionId(): String = context.dataStore.data.first()[KEY_SESSION_ID] ?: ""
     suspend fun lastRun(): String = context.dataStore.data.first()[KEY_LAST_RUN] ?: ""
 
-    suspend fun setBaseUrl(v: String) {
+    suspend fun setBaseUrl(v: String, foldRegistry: Boolean = true) {
         val t = v.trim().trimEnd('/')
         context.dataStore.edit { it[KEY_BASE_URL] = t }
         val seg = ProfileLogic.currentProfile(t)
@@ -108,8 +108,11 @@ class AppSettings(private val context: Context) {
         _profile.value = seg.ifEmpty { ProfileLogic.FALLBACK_AGENT }
         // Gateway fold (SPEC §11): an endpoint already on the selected gateway keeps its
         // position (failover/agent-switch re-set the base constantly); a NEW host prepends.
+        // foldRegistry=false for MECHANICAL mirror rewrites (agent switch): the mirror can hold
+        // a failover winner (LAN at home) that is NOT the owner's endpoint list, and folding it
+        // back re-polluted a tailnet-only gateway on every agent tap (wrist-caught, 2026-11-01).
         val list = gateways()
-        if (list.isNotEmpty()) {
+        if (foldRegistry && list.isNotEmpty()) {
             val sel = selectedGatewayId().ifEmpty { list.first().id }
             val folded = GatewayModel.foldBaseUrl(list, sel, t)
             context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }

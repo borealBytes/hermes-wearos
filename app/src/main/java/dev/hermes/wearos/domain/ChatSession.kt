@@ -843,7 +843,10 @@ class ChatSession(
                 Log.w(TAG, "switchAgent: rejected profile name '$agent'")
                 onDone(false, old, "bad agent name"); return@launch
             }
-            settings.setBaseUrl(newBase) // updates the AppSettings profile mirror too
+            settings.setBaseUrl(newBase, foldRegistry = false) // mirror rewrite only — the
+            // /p/ segment swap is NOT a user endpoint edit; folding it (a) re-polluted the
+            // gateway list with the failover winner's host on every agent tap and (b) could
+            // never add anything the registry didn't already own (SPEC §11 fold, wrist 11-01).
             eventSource?.cancel(); askJob?.cancel()
             if (_state.value.busy || _state.value.live.isNotEmpty() || _state.value.approval != null)
                 _state.value = _state.value.copy(busy = false, live = "", status = "", approval = null)
