@@ -36,6 +36,27 @@ object AwayWatch {
     /** Poll cadence: well under "stepped away" patience, gentle on the tailnet. */
     const val POLL_MS = 20_000L
 
+    /**
+     * The chats that must NEVER buzz the wrist, as GATEWAY SESSION KEYS. Key-space discipline
+     * (bug caught by the #31 review): watchkit keys its parks/pulses by the Hermes `session_id`
+     * (`wear-watch-mvwebl2s`), but the local registry id is a shortId (`b95e49ad`) — the batch-6
+     * caller passed local ids and the owner's ONE allowed silence (chat live on the chat screen)
+     * NEVER matched: the viewed session buzzed while being read on the wrist. Suppression must
+     * therefore be built from [ChatMeta.sessionTitle] (the submitted session_id). Two silences:
+     * the viewing chat (via [AttentionPolicy] — the SAME brain as voice/inline-notifications, so
+     * the channels cannot drift) and chats whose runs the watch itself drives (their approvals
+     * and settles already notify through the watch-run paths).
+     */
+    fun watchSilence(chats: List<dev.hermes.wearos.data.ChatMeta>, foreground: Boolean, viewingChatId: String): Set<String> =
+        chats.mapNotNull { c ->
+            when {
+                c.lastRunId.isNotEmpty() -> c.sessionTitle
+                AttentionPolicy.shouldSpeak(foreground, viewingChatId, c.id) -> c.sessionTitle
+                else -> null
+            }
+        }.toSet()
+
+
     data class Parked(val profile: String, val chatId: String, val title: String, val tool: String, val arguments: String)
 
     data class Pulse(

@@ -216,9 +216,10 @@ class WearApp : Application() {
          * screen must not buzz. tile/complication/receiver processes read it as false — correct,
          * nothing is visible there.
          */
-        @Volatile
-        var isForeground = false
-            private set
+        private val _isForeground = androidx.compose.runtime.mutableStateOf(false)
+        var isForeground: Boolean
+            get() = _isForeground.value
+            private set(value) { _isForeground.value = value }
 
         /**
          * What the wrist is actually looking at (owner 2026-10-29 notification rule): a run's
@@ -227,7 +228,10 @@ class WearApp : Application() {
          * screen-off all route to standard Wear OS notifications (approve/open actions wired).
          * Published by MainActivity; empty whenever nothing chat-shaped is on screen.
          */
-        @Volatile var viewingChatId: String = ""
+        private val _viewingChatId = androidx.compose.runtime.mutableStateOf("")
+        var viewingChatId: String
+            get() = _viewingChatId.value
+            set(value) { _viewingChatId.value = value }
         private var resumedActivities = 0
 
         /** PAUSE-CLEANED (owner 2026-10-29 night: *"wait thirty seconds, then send a haiku and
@@ -324,8 +328,10 @@ class WearApp : Application() {
                     while (true) {
                         delay(AwayWatch.POLL_MS) // first tick also lets the endpoint config land
                         val body = Watchkit.approvalsWaiting() ?: continue
-                        val mine = store.chats.value.mapNotNull { c -> c.id.takeIf { c.lastRunId.isNotEmpty() } }.toSet() +
-                            setOf(viewingChatId.takeIf { isForeground }.orEmpty())
+                        // #31 follow-up: keys MUST be gateway session ids (AwayWatch.watchSilence)
+                        // — local shortIds never matched watchkit's session-keyed pulses, so the
+                        // viewing chat buzzed while it was live on the glass.
+                        val mine = AwayWatch.watchSilence(store.chats.value, isForeground, viewingChatId)
                         for (a in AwayWatch.diff(AwayWatch.parse(body), seenParks, counts, mine, first)) {
                             when (a.kind) {
                                 AwayWatch.Kind.Approval -> {

@@ -1279,8 +1279,11 @@ class ChatSession(
     }
 
     /** Notification suppress gate — true only while [chatId]'s transcript is on screen. */
+    /** BATCH-6 #31: THE brain is domain/AttentionPolicy — the notification half and the voice
+     *  half read the SAME function, so "buzzed while watching" and "spoke in my pocket" can
+     *  never drift apart again (the owner's reversion complaint in one fix). */
     private fun viewingThisChat(chatId: String) =
-        chatId.isNotEmpty() && WearApp.Graph.isForeground && WearApp.Graph.viewingChatId == chatId
+        AttentionPolicy.shouldSpeak(WearApp.Graph.isForeground, WearApp.Graph.viewingChatId, chatId)
 
     /**
      * Gateway label sync (verified probe): `GET {base}/api/sessions` → 200

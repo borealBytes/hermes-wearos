@@ -156,4 +156,48 @@ class AwayWatchTest {
     @Test fun `poll cadence is away-patience but network-gentle`() {
         assertTrue(AwayWatch.POLL_MS in 10_000L..60_000L)
     }
+
+    // ── watchSilence: the KEY-SPACE bug the #31 review caught on the wrist ────────
+    // The batch-6 caller built the suppression set from local shortIds (b95e49ad) while
+    // watchkit keys parks/pulses by the gateway session_id (wear-watch-mvwebl2s): the viewed
+    // chat buzzed WHILE BEING READ (logcat 09:35:43 — 'answer finished wear/wear-watch-mvwebl2s'
+    // + notif posted with the chat open). These fakes mirror that shape: id ≠ sessionTitle.
+    private fun meta(id: String, session: String, lastRun: String = "") =
+        dev.hermes.wearos.data.ChatMeta(id = id, sessionTitle = session, lastRunId = lastRun)
+
+    @Test fun `silence set carries GATEWAY SESSION KEYS, never the local shortId`() {
+        val chats = listOf(meta("b95e49ad", "wear-watch-mvwebl2s"))
+        val s = AwayWatch.watchSilence(chats, foreground = true, viewingChatId = "b95e49ad")
+        assertEquals(setOf("wear-watch-mvwebl2s"), s)
+        // The regression itself, pinned: a pulse keyed by the session id must now be suppressed
+        // — with the old set (["b95e49ad"]) diff() sailed past it and buzzed the viewed chat.
+        val seen = mutableSetOf<String>()
+        val counts = mutableMapOf<String, Int>()
+        AwayWatch.diff(inbox(pulses = listOf(pulse("wear-watch-mvwebl2s", 70))), seen, counts, s, firstSweep = true)
+        assertTrue("viewing session must not buzz", AwayWatch.diff(
+            inbox(pulses = listOf(pulse("wear-watch-mvwebl2s", 72))), seen, counts, s, firstSweep = false,
+        ).isEmpty())
+    }
+
+    @Test fun `watch-driven chats suppress by session key and background viewing does not`() {
+        val chats = listOf(
+            meta("d1", "wear-watch-driven", lastRun = "run_x"),   // watch drove it
+            meta("v1", "wear-watch-viewed"),                      // only being viewed
+            meta("o1", "farm-advisor/20261031"),                  // neither
+        )
+        assertEquals(
+            "watch face: the viewed chat must BUZZ (that is the #31 policy's whole point)",
+            setOf("wear-watch-driven"),
+            AwayWatch.watchSilence(chats, foreground = false, viewingChatId = "v1"),
+        )
+        assertEquals(
+            setOf("wear-watch-driven", "wear-watch-viewed"),
+            AwayWatch.watchSilence(chats, foreground = true, viewingChatId = "v1"),
+        )
+        assertEquals(
+            "watch-driven stays silent even when nothing is viewed",
+            setOf("wear-watch-driven"),
+            AwayWatch.watchSilence(chats, foreground = true, viewingChatId = ""),
+        )
+    }
 }
