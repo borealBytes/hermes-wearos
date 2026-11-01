@@ -82,6 +82,31 @@ md5s differ: reinstall (chunked push, AGENTS.md §1) before trusting a single sc
 logcat line. A stray `watchkit.mjs mcp` child belongs to the gateway (stdio, no port) — leave
 it; only the 8651 listener must be yours.
 
+## THE MEDIA RULE: pixels ship with the PR (owner rule, 2026-11-01)
+
+**The last step before pushing a PR is re-aligning the demo media** — every screenshot, the demo
+film, and the GIF. They are not decoration; they are how the world sees how good this thing is,
+and they must match the features that actually ship. A PR that adds or changes a user-visible
+feature and does not refresh its pixels is incomplete. The whole media pipeline, the feature⇄
+screenshot⇄beat⇄README ledger, and the verification gates live in [`docs/DEMO.md`](docs/DEMO.md) —
+that file is the plan; this section is the discipline to never skip it.
+
+Before every push:
+
+1. **Update `docs/DEMO.md` first** (§2 feature ledger + §3 README checklist + §10 changelog):
+   list every feature the PR adds/changes/removes, with a screenshot row AND a video beat. This
+   file is the source of truth for what the demo can show — code changes update it before pixels.
+2. **Re-shoot every changed feature** (`wear-demo` only, per the hard rule + DEMO.md §4 capture
+   recipes; keep each existing filename, circle-mask it, then pass the vision gate). Re-cut the
+   film + GIF so every §2 row is `shot ✓` and appears in the cut list.
+3. **Walk the gates** (DEMO.md §8): coverage ledger complete, vision review per `<img>`, privacy
+   pass, captions `refreshed`, tests green.
+4. **Purge the old media generation** (DEMO.md §9) before pushing so the branch carries exactly
+   one generation of tracked pixels.
+
+Miss this and the README silently lies about the app (this repo has been burned by reversions
+before — SPEC §16.3). Treat stale media as a failing test, because it is one.
+
 ## Watch connection gotchas (real hardware)
 
 - Wireless-debugging `IP:PORT` **rotates every reconnect** — offline serial = reconnect to the
