@@ -145,3 +145,24 @@ object AwayWatch {
         return out
     }
 }
+
+/**
+ * The two cursors AwayWatch.diff mutates, held in ONE object (#32) so the in-app 20 s loop and
+ * the background WorkManager sweep share a single memory of what already buzzed — no double
+ * notifications at the handoff between foreground and cached life. First sweep after process
+ * start stays silent (anti-stampede), whoever triggers it.
+ */
+class SweepCursor {
+    private val seenParks = mutableSetOf<String>()
+    private val counts = mutableMapOf<String, Int>()
+    private var first = true
+
+    fun sweep(inbox: AwayWatch.Inbox, suppressed: Set<String>): List<AwayWatch.Alert> {
+        val out = AwayWatch.diff(inbox, seenParks, counts, suppressed, first)
+        first = false
+        return out
+    }
+
+    /** Test/inspection hook: cursors ride silently even for suppressed chats (by design). */
+    fun trackedCounts(): Map<String, Int> = counts.toMap()
+}

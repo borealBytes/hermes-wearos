@@ -7,12 +7,14 @@ import dev.hermes.wearos.data.AgentsRepo
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.data.ChatStore
 import dev.hermes.wearos.domain.AwayWatch
+import dev.hermes.wearos.domain.SweepCursor
 import dev.hermes.wearos.domain.ChatSession
 import dev.hermes.wearos.domain.ProfileLogic
 import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
 import dev.hermes.wearos.location.LocationTool
 import dev.hermes.wearos.notify.Attention
+import dev.hermes.wearos.notify.AwayWatchWorker
 import dev.hermes.wearos.notify.Notifs
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.EndpointResolver
@@ -252,12 +254,19 @@ class WearApp : Application() {
                     override fun onActivityResumed(activity: android.app.Activity) {
                         resumedActivities++
                         isForeground = true
+                        // The 20 s loop owns the sweep again; the work chain stands down
+                        // mid-handoff — the shared cursor makes overlap harmless anyway.
+                        AwayWatchWorker.cancel(app)
                     }
 
                     override fun onActivityStopped(activity: android.app.Activity) {
                         resumedActivities = (resumedActivities - 1).coerceAtLeast(0)
                         isForeground = resumedActivities > 0
                         clearViewing()
+                        // #32: the pocket case. When the last activity stops, a cached watch app
+                        // loses its coroutines to the OEM freezer — hand the desktop-watch sweep
+                        // to WorkManager, which the system wakes even for frozen apps.
+                        if (resumedActivities == 0) AwayWatchWorker.schedule(app)
                     }
 
                     override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) {}
@@ -322,29 +331,9 @@ class WearApp : Application() {
                 // owner's ONE allowed silence) and chats whose runs the watch itself drives —
                 // those already notify approvals/settles through the watch-run paths.
                 scope.launch {
-                    val seenParks = mutableSetOf<String>()
-                    val counts = mutableMapOf<String, Int>()
-                    var first = true
                     while (true) {
                         delay(AwayWatch.POLL_MS) // first tick also lets the endpoint config land
-                        val body = Watchkit.approvalsWaiting() ?: continue
-                        // #31 follow-up: keys MUST be gateway session ids (AwayWatch.watchSilence)
-                        // — local shortIds never matched watchkit's session-keyed pulses, so the
-                        // viewing chat buzzed while it was live on the glass.
-                        val mine = AwayWatch.watchSilence(store.chats.value, isForeground, viewingChatId)
-                        for (a in AwayWatch.diff(AwayWatch.parse(body), seenParks, counts, mine, first)) {
-                            when (a.kind) {
-                                AwayWatch.Kind.Approval -> {
-                                    Log.i(TAG, "away-watch: approval parked ${a.profile}/${a.chatId} ${a.tool}")
-                                    Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments)
-                                }
-                                AwayWatch.Kind.Finished -> {
-                                    Log.i(TAG, "away-watch: answer finished ${a.profile}/${a.chatId} msgs=${a.messageCount}")
-                                    Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false)
-                                }
-                            }
-                        }
-                        first = false
+                        awaySweep()
                     }
                 }
                 // Queued AFTER Watchkit.setConfig so the first /agents fetch carries the real token.
@@ -367,8 +356,37 @@ class WearApp : Application() {
             }
         }
 
-        /** Chat opened/foregrounded: clear its flag + notifications (M5 U1/U4 "cleared on open"). */
-        fun clearAttention(chatId: String) {
+        /**
+         * ONE away-watch sweep: fetch watchkit's inbox and let the SHARED cursor (#32) decide
+         * what buzzes. Called by the in-app 20 s loop AND by AwayWatchWorker when the process is
+         * cached (Samsung freezes/stops cached apps — a bare coroutine dies the moment
+         * onActivityStopped strands it, wrist-verified 2026-11-01: polls stopped within a minute
+         * of HOME once nothing kept the process warm). Same cursor both ways ⇒ zero dupes.
+         */
+        suspend fun awaySweep() {
+            if (!::store.isInitialized) return
+            val body = Watchkit.approvalsWaiting() ?: return
+            // #31 follow-up: keys MUST be gateway session ids (AwayWatch.watchSilence)
+            // — local shortIds never matched watchkit's session-keyed pulses, so the
+            // viewing chat buzzed while it was live on the glass.
+            val mine = AwayWatch.watchSilence(store.chats.value, isForeground, viewingChatId)
+            for (a in awayCursor.sweep(AwayWatch.parse(body), mine)) {
+                when (a.kind) {
+                    AwayWatch.Kind.Approval -> {
+                        Log.i(TAG, "away-watch: approval parked ${a.profile}/${a.chatId} ${a.tool}")
+                        Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments)
+                    }
+                    AwayWatch.Kind.Finished -> {
+                        Log.i(TAG, "away-watch: answer finished ${a.profile}/${a.chatId} msgs=${a.messageCount}")
+                        Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false)
+                    }
+                }
+            }
+        }
+
+        private val awayCursor = SweepCursor()
+
+        /** Chat opened/foregrounded: clear its flag + notifications (M5 U1/U4 "cleared on open"). */        fun clearAttention(chatId: String) {
             if (chatId.isEmpty() || !::store.isInitialized) return
             store.get(chatId)?.let { meta ->
                 if (meta.pendingAttention) {
