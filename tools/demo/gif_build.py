@@ -45,8 +45,8 @@ for i, tt in enumerate(times):
 
 # per-frame hold time: hero/end linger, feature frames 850ms
 durations = []
-for i in range(19):
-    durations.append(1600 if i in (0, 18) else 850)
+for i in range(len(frames)):
+    durations.append(1600 if i in (0, len(frames) - 1) else 850)
 
 with open(f"{G}/concat.txt", "w") as fh:
     for f, ms in zip(frames, durations):

@@ -85,7 +85,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 6 | Image card — **3-day weather plot** inline | `03-image-card.png` | S03 | shot ✓ |
 | 7 | Image viewer: pinch-zoom + pan | `04-viewer-zoom.png` | S04 | shot ✓ |
 | 8 | Mermaid via watchkit render | `05-mermaid.png` | S05 | shot ✓ |
-| 9 | ⌘ commands/skills overlay (aurora visible) | `27-commands-overlay.png` | S27 | shot ✓ |
+| 9 | ⌘ commands/skills overlay (`/compact` + SKILLS rows visible) | `27-commands-overlay.png` | S27 | shot ✓ |
 | 10 | Model picker stage 1 (providers) | `25-model-picker.png` NEW | S25 | shot ✓ |
 | 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 | shot ✓ |
 | 12 | Edit & resend | `16-edit-resend.png` | S16 | shot ✓ |
@@ -106,24 +106,24 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 27 | ⚙ settings lane opens Settings | `30-settings-lane.png` NEW | S30 | shot ✓ |
 | 28 | Settings ▸ Home | `18-settings-home.png` | S19 | shot ✓ |
 | 29 | Settings ▸ Display | `19-settings-display.png` | S13→S14 | shot ✓ |
-| 30 | Settings ▸ Connection | `20-settings-connection.png` | S19 | shot ✓ |
+| 30 | ~~Settings ▸ Connection~~ — **merged into Gateways (row 26)** in the v0.6 registry work; legacy `20-settings-connection.png` retired (it leaked the raw token) | — | — | n/a |
 | 31 | Settings ▸ tail (about) | `15-settings-tail.png` | S15 | shot ✓ |
 | 32 | Font scale min / max (both ends) | `14a-fontscale-min.png`, `14b-fontscale-max.png` | S14 (both) | shot ✓ |
 | 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | shot ✓ |
 | 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | shot ✓ |
-| 35 | 🔊 voice-out mute lane (0 dB floor = speaks NOTHING, live queue cut) | (shown in 01) | S01 (release) | todo |
-| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut) | `35-splash-film.png` NEW | S35a, S35b | todo |
-| 37 | Splash modes in Settings (none / orb / built-in film / custom media) | `36-splash-picker.png` NEW | S36 | todo |
-| 38 | Voice-out settings: engine picker, voice + fallback, speech rate, preview | `37-voice-output.png` NEW | S37 | todo |
-| 39 | Reply volume = **dB-taper double sliders** (mute-lane pair + settings mirror, −60 dB floor) | `38-volume-db.png` NEW | S38 | todo |
-| 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | todo |
-| 41 | STT source: on-watch Vosk ⇄ Gateway · parakeet streaming | `40-stt-source.png` NEW | S40 | todo |
-| 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | todo |
-| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | todo |
-| 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | todo |
-| 45 | DESKTOP WATCH — approval park from a DESKTOP/API session buzzes the wrist with the parked command (beacon-derived); **Open adopts the session** and finishes it with ✅/❌ in chat (watch-started runs keep inline Approve/Deny) | `44-notify-desktop-approval.png` NEW | S44a | todo |
-| 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | todo |
-| 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | todo |
+| 35 | 🔊 voice-out mute lane (0 dB floor = speaks NOTHING, live queue cut) | (shown in 01) | S01 (release) | shot ✓ |
+| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut) | `35-splash-film.png` NEW | S35a, S35b | shot ✓ |
+| 37 | Splash modes in Settings (none / orb / built-in film / custom media) | `36-splash-picker.png` NEW | S36 | shot ✓ |
+| 38 | Voice-out settings: engine picker, voice + fallback, speech rate, preview | `37-voice-output.png` NEW | S37 | shot ✓ |
+| 39 | Reply volume = **dB-taper double sliders** (mute-lane pair + settings mirror, −60 dB floor) | `38-volume-db.png` NEW | S38 | shot ✓ |
+| 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | shot ✓ |
+| 41 | STT source: on-watch Vosk ⇄ Gateway · parakeet streaming | `40-stt-source.png` NEW | S40 | shot ✓ |
+| 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | shot ✓ |
+| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | shot ✓ |
+| 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | shot ✓ |
+| 45 | DESKTOP WATCH — approval park from a DESKTOP/API session buzzes the wrist with the parked command (beacon-derived); **Open adopts the session** and finishes it with ✅/❌ in chat (watch-started runs keep inline Approve/Deny) | `44-notify-desktop-approval.png` NEW | S44a | shot ✓ |
+| 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | shot ✓ |
+| 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | shot ✓ |
 | 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
@@ -155,12 +155,12 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `17-agent-picker.png` | re-shot | names check | refreshed |
 | `21/22/23/24` sessions | re-shot | keep claims | refreshed |
 | `27-commands-overlay.png` | re-shot | aurora note | refreshed |
-| — (new, 2026-11 round) | `35-splash-film.png`, `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy | todo |
-| hero film | RE-CUT: new A0 splash act + voice/desktop-watch beats; new YouTube upload + README link swap (owner uploads scored master) | yes | todo |
-| `demo-walkthrough.gif` | RE-CUT from the new film's keyframes; committed as **`demo-walkthrough-v<VER>.gif`** (version in the name — README links the current one) | — | todo |
-| `21-session-search.png` | re-shot | YES → one-tap keyboard ladder + ⌨ chip + singleLine search key | todo |
-| `11-gateways.png` | re-shot or superseded by 42 | keep claim | todo |
-| `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5) | todo |
+| — (new, 2026-11 round) | `35-splash-film.png`, `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy | refreshed |
+| hero film | RE-CUT complete (`demo-vertical-v0.6.0-raw.mp4`, 20 beats, 149 s) — owner scores + uploads, then README YouTube link swap | yes | refreshed (owner upload pending) |
+| `demo-walkthrough.gif` | RE-CUT from the new film's keyframes; committed as **`demo-walkthrough-v0.6.0.gif`** (version in the name — README links the current one; old GIF purged) | — | refreshed |
+| `21-session-search.png` | re-shot | honest: query is `harbors ` with IME up; results = 2 seeded wear-demo rows | refreshed |
+| `11-gateways.png` | re-shot (from the r7d film raw — live registry); 42 shows the same registry a beat later | alt re-worded to pixels | refreshed |
+| `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5); ● marks the live agent | refreshed |
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
@@ -350,6 +350,25 @@ Branch keeps exactly ONE generation of every tracked media path.
 
 ## 10. Feature changelog (append when a feature lands)
 
+- **2026-11-01 (v0.6.0 media round)** — full re-shoot of every §2 row against the v0.6.0 build;
+  film re-cut from seven fresh `screenrecord` takes (`vid/raw/r[0-8]*`, logcat marks per take via
+  `rec.sh`/`rec-stop.sh`) into the 20-beat `demo-vertical-v0.6.0-raw.mp4` (149 s). Honest capture
+  notes: `06-ptt-overlay.png` renders the shipped overlay via `-e ptt_demo` (the film's PTT beat is
+  a REAL Vosk partial); `21-session-search.png` query is `harbors ` (IME up doubles as row 34's
+  keyboard shot); `35-splash-film.png` is a film frame from the built-in intro movie; the desktop-
+  watch pair came from farm-advisor (owner's desktop agent) parking a real `uptime` approval while
+  the watch was backgrounded. Assemble trap re-confirmed: `screenrecord` raws are VFR — all frame
+  checks and cuts must use OUTPUT-side seeks (`-i` then `-ss`, or `trim`); input-side `-ss` lands
+  on the wrong second and invents content (an "approval card" frame that never existed at t=18).
+  Vision-gate round 1 (16 fails) forced honest remaps: `26-model-picked` = the pick TOAST frame
+  (model-26e), `27-commands-overlay` = the SKILLS frame (cmd-27b — no aurora-filter frame ever
+  existed), `33/34` = pending card vs post-approve streaming (the wedges hide during a live tool),
+  `34` approved = wedge-less stop-orb frame, `35-splash-film` = a REAL film frame (opened watch
+  over clouds, from r0), `30-settings-lane` = `dial_preview` over the empty new-session home,
+  `40-stt-source` re-shot after switching Voice in back to Local Vosk (owner default), `42` = the
+  clean r7d registry frame (its 20 s twin was a black screen), `14a/b` re-shot as chat text at
+  ×0.75/×1.6 (the first bank showed the Display-page multiplier label, not chat). `28` is the
+  example.com placeholder page (Arabic + Chinese below the English) — captions rewritten to pixels.
 - **2026-10-27 (film round + owner-feedback re-cut)** — silent master `demo-vertical.mp4`
   (3:35, 1080×1920, 20 segments) + `demo-walkthrough.gif` (20 keyframes, 16.4 s loop) shipped;
   old `hermes-wear-vertical.*` / `orb-dial.gif` retired. First cut FAILED owner review: black
@@ -420,6 +439,7 @@ Branch keeps exactly ONE generation of every tracked media path.
   loop (no double-buzz; 4 new pins). Wrist-proven: unattended off-wrist settle buzz, 3 sweeps
   through 4 minutes of screen-off darkness (old build: zero). Rows 45/46's shots were captured
   THROUGH this path — the desktop watch pixels are honest pixels now.
+- **2026-11-01 (One UI shade hides approval actions)** — the Approve/Deny ACTIONS still post (verified `actions=3` via `dumpsys notification --noredact`) but this watch's One UI notification UI renders only the Open + Clear chips on the expanded card; the stacked-approvals sheet captured 10-27 came from the older AOSP-style shade. The action INTENTS (broadcast `dev.hermes.wearos.APPROVE` with extra `run`) are the shipped answer path — test them via adb rather than chasing the retired sheet.
 - **2026-11-01 (standard versioning)** — repo-root `VERSION` (semver, now `0.6.0`) is the single
   source for app versionName/versionCode, watchkit `/health`+MCP version, in-app About, and the
   demo pipeline: versioned film/GIF filenames, container metadata, and a permanent `v<VER> ·

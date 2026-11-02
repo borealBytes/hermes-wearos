@@ -26,8 +26,8 @@ carries on. Expect small per-OEM tweaks for non-Samsung watches (IME and notific
 mannerisms); a OnePlus Watch is next on the test bench.
 
 <p align="center">
-  <a href="https://youtu.be/Cd4Y_ESQoQ0"><img src="docs/demo/demo-walkthrough.gif" width="480" alt="Animated walkthrough: voice ask, streaming answer, the weather plot, the diagram, an approval tap — every feature at real wrist speed"/></a><br/>
-  <sub>Click the strip for the <a href="https://youtu.be/Cd4Y_ESQoQ0">▶ full vertical tour</a> — 3:35,
+  <a href="https://youtu.be/Cd4Y_ESQoQ0"><img src="docs/demo/demo-walkthrough-v0.6.0.gif" width="480" alt="Animated walkthrough: the splash film, dial, voice ask, streaming answer, a stopped run, an approval tap, the karaoke reply — every feature at real wrist speed"/></a><br/>
+  <sub>Click the strip for the <a href="https://youtu.be/Cd4Y_ESQoQ0">▶ full vertical tour</a> — 2:30,
   1080×1920, with a score by the owner's agent. Every feature at real wrist speed, captured live off a
   Galaxy Watch with no edits to the answers.</sub><br/>
   <sub>Splash art: <a href="docs/art-selfportrait.webp">her self-portrait</a> — engraved by the on-gateway
@@ -53,19 +53,19 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
 | **Sessions, from your wrist** — every session your agent has, newest first, filtered per agent with one tap (`all` / `wear-demo` / `💻 computer` / `archived`); one-tap new, and a **voice-or-type search** over every chat (server-side full-text). Opening a session re-pulls its gateway tail by itself — a chat that kept talking elsewhere shows the rest without a manual refresh. | **A notification opens the session itself** — deep links land in the chat that produced the notice, long history intact, even when that chat lives on another agent (the app switches first). |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
-| **Images at full resolution** — a gateway skill drew this 3-day weather plot; the watch shows it inline, cards and skill charts mixed into the answer. Tap any card to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit; close with the ✕ chip or the back button. |
+| **Images at full resolution** — a gateway image skill's aurora render, shown inline full-res; cards and skill charts mix into the answer flow. Tap any card to open the viewer. | **Zoom viewer** — double-tap jumps to 2.5× (pinch works too), drag to pan, close with the ✕ chip or the back button. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
 | **Tap-to-talk** — tap the orb and just talk; a pause sends it (on-device VAD). Tap again mid-speech to *cancel* the half-sentence, tap after a pause to send now. | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. |
 | <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/27-commands-overlay.png" width="180"/> |
-| **Mermaid diagrams render** — flowchart answers come back as pictures, via a gateway render helper (and cached): the prompt chip above, the rendered card below, real skill data inside the nodes. | **Slash commands and skills** — flick the ⌘ lane at 6:00 for a searchable overlay: the gateway's command catalog, your agent's **skills** (`/aurora-viewing-forecast`, `/daily-weather-plot`), and watch-local actions; an unrecognized `/text` just goes to the agent as a prompt. |
+| **Mermaid diagrams render** — flowchart answers come back as pictures, via a gateway render helper (and cached): the prompt chip above, the rendered card below, real skill data inside the nodes. | **Slash commands and skills** — flick the ⌘ lane for a searchable overlay: the gateway's command catalog, your agent's **skills** (this wear-demo agent lists `/compact`, `/academic-paper`, `/academic-pipeline`…), and watch-local actions; an unrecognized `/text` just goes to the agent as a prompt. |
 | <img src="docs/screens/21-session-search.png" width="180"/> | <img src="docs/screens/22-session-sheet.png" width="180"/> |
 | **Search every session, every agent** — one query hits the gateway's full-text index; results come back across all your agents with the matching line quoted and the hit bracketed. | **Long-press any session row** — ⑂ fork it into your agent and keep talking, 🗃 archive it off-canvas (undo one more long-press away), or 🗑 delete behind a real double-tap confirm. |
 | <img src="docs/screens/16-edit-resend.png" width="180"/> | <img src="docs/screens/12-keyboard.png" width="180"/> |
-| **Edit & resend** — tap any sent prompt: the sheet quotes it back with **Edit & resend** (and Copy); the edited copy goes out as a fresh run while the original thread stays intact. | **Or type it** — the keyboard lane opens the full system composer right on the watch; long prompts get room to breathe and a big `send`. |
+| **Edit & resend** — tap any sent prompt: the sheet quotes it back with **Edit & resend** (and Copy); the edited copy goes out as a fresh run while the original thread stays intact. | **Or type it anywhere** — the system keyboard sits one flick away and rides every text surface: composer, editor, session search — with the keyboard's own mic for dictation. |
 | <img src="docs/screens/14a-fontscale-min.png" width="180"/> | <img src="docs/screens/14b-fontscale-max.png" width="180"/> |
 | **Pinch to scale text — the full range, honestly captured.** At the minimum (×0.75) whole paragraphs sit per line. | Same chat at the maximum (×1.6) — one glanceable line at a time. Transcript type scales; images, charts, and cards keep their own size; double-tap resets to 1.0. |
 | <img src="docs/screens/25-model-picker.png" width="180"/> | <img src="docs/screens/26-model-picked.png" width="180"/> |
-| **Per-chat model picker** — the 🧠 lane lists what your gateway exposes (default, provider back-ends, counts) and the header says the scope: *this chat only*. Every other chat keeps its own model. | **Asked, it names its own model id** — pick a provider model, ask, and the reply carries exactly the id you chose (here a hosted OpenRouter pick). The watch never bakes model names in; it lists what the gateway lists. |
+| **Per-chat model picker** — the 🧠 lane lists what your gateway exposes (default, provider back-ends, counts) and the header says the scope: *this chat only*. Every other chat keeps its own model. | **Picked = routed** — the toast confirms the exact id (`claude-fable-5.1`), the next reply rides that model, and the gateway's usage log carries one call under it. The watch never bakes model names in; it lists what the gateway lists. |
 | <img src="docs/screens/28-browser-opened.png" width="180"/> | <img src="docs/screens/29-full-reply.png" width="180"/> |
 | **Links are links** — a markdown link in an answer is blue, underlined, tappable; the watch hands the URL to its browser and you read it on your wrist. | **Long replies land whole** — a full essay streams and stays scrollable, no truncation, history re-pull included. |
 | <img src="docs/screens/33-approval-card.png" width="180"/> | <img src="docs/screens/34-approval-approved.png" width="180"/> |
@@ -113,7 +113,7 @@ Remap any direction at **Settings ▸ Display ▸ Orb dial** — tap a direction
 the next action. The chat reads the change live: the very next flick obeys the new map, and the ring
 icons redraw with it.
 
-<img src="docs/screens/30-settings-lane.png" width="220" alt="Orb dial lane editor in Settings: clock positions 12:00 through 10:40 mapped to keyboard, mute, settings, model, commands, chats, sessions, agents, approvals" align="right" hspace="16"/>
+<img src="docs/screens/30-settings-lane.png" width="220" alt="Ask Hermes home with the orb dial open: circular lane buttons ringing the orb — approvals, keyboard, speaker, agents, settings, sessions, model — release toward one and it fires" align="right" hspace="16"/>
 
 ## The back button never quits
 
@@ -141,7 +141,32 @@ respect.
 | | |
 |---|---|
 | <img src="docs/screens/31-notify-plain.png" width="180"/> | <img src="docs/screens/32-notify-approval.png" width="180"/> |
-| **Settled while you're away** — the answer lands as an ordinary Wear notification, orb-spirit avatar and all; the reply text is right in the card. | **Approve from the shade** — an approval card names the pending command; expand it and Approve / Deny / Open session answer the run *without opening the app*. |
+| **Settled while you're away** — the answer lands as an ordinary Wear notification, orb-spirit avatar and all; the reply text is right in the card. | **Approve from the shade** — a parked command buzzes the wrist with its own approval card; *Open* deep-links straight to the run, and the card's Approve / Deny intents answer it without opening the app (OneUI Wear surfaces the Open/Clear chips on the watch itself). |
+
+## The voice suite, the splash, and the desktop watch
+
+| | |
+|---|---|
+| <img src="docs/screens/35-splash-film.png" width="180"/> | <img src="docs/screens/36-splash-picker.png" width="180"/> |
+| **A cold start opens on a moving film frame** — the intro film plays and the app *reveals itself mid-motion inside the film* (`revealIsMoving`, one clean cut), so the splash is a doorway, not a wallpaper. Held from the launcher it rides the same film. | **Splash modes are yours** — Settings ▸ Display: the built-in film, a static frame, your own picked media, or none at all. Markdown, launch splash, and the orb live on this one page. |
+| <img src="docs/screens/37-voice-output.png" width="180"/> | <img src="docs/screens/38-volume-db.png" width="180"/> |
+| **Voice out, fully on-device** — the engine picker, system voice with fallback, reply speed (this wrist reads at 1.81×), and a preview button, all on one Settings page. | **Reply volume in dB, in two places** — the slider here and the mute lane on the dial (dwell 2 s) mirror the same per-agent store down to a −60 dB floor; flooring the mute lane cuts even the *in-flight* queue. |
+| <img src="docs/screens/39-karaoke-follow.png" width="180"/> | <img src="docs/screens/40-stt-source.png" width="180"/> |
+| **The glass follows the voice** — while a reply is spoken the sentence being read stays in view, teleprompter-style; one touch hands scroll control back to you mid-speech. | **Pick your audio path per agent** — Vosk stays-on-the-watch (default) or Gateway streaming, where parakeet on your box returns text partials as you talk; the highlighted row is the live source. |
+| <img src="docs/screens/44-notify-desktop-approval.png" width="180"/> | <img src="docs/screens/45-notify-desktop-settled.png" width="180"/> |
+| **A desktop run parks on your wrist** — when a session running at your desk hits a gated command, the parked command buzzes your watch; *Open* adopts the session and answers it from the wrist. | **Answers finished off the wrist** — an ordinary notification says "answer ready", and one tap drops you into the thread mid-stream. The off-screen feed survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no double-post on handback). |
+
+| | |
+|---|---|
+| <img src="docs/screens/41-edge-circle-pair.png" width="420"/> | <img src="docs/screens/46-attention-pair.png" width="420"/> |
+| **Scroll by rolling the rim of the glass** — an edge-drag circles any list (settings, agents, models, approvals, chats), thumb never leaving the bezel — and normal swipes still scroll. | **The attention policy in two frames** — live on the glass the answer arrives inline and *spoken*, no notification; anywhere else it arrives *notified and silent*. It never shouts twice. |
+
+The gateways manager is a real registry — several gateways saved, one winner dot chosen by the
+health probe, failover in seconds — and underneath it the **agent-key matrix**: a ✓/— per profile,
+learned from watchkit's read of the profiles' `.env`s. Agents without a key still list their
+sessions; asking them needs the key:
+
+<img src="docs/screens/42-gateways-multi.png" width="180"/> <img src="docs/screens/43-agent-keys.png" width="180"/>
 
 ## Anatomy of a round trip
 
@@ -206,7 +231,7 @@ on a fixed cadence. First healthy endpoint wins, stays sticky, and every API cal
 the same winner so you never get split-brain rendering. Everything is visible and editable on the
 watch — Settings ▸ Gateways is a real multi-gateway manager, not a single URL box:
 
-<img src="docs/screens/18-settings-home.png" width="220" alt="Settings home: the Gateways section listing two saved gateway rows with their hosts and an add row, agent-keys section below" align="right" hspace="16"/>
+<img src="docs/screens/18-settings-home.png" width="220" alt="Settings home: the Gateways row showing two saved gateways with the current one checked, Voice out / Voice in / Display / Watch below" align="right" hspace="16"/>
 
 ```mermaid
 stateDiagram-v2
@@ -228,10 +253,11 @@ The watch itself does *not* need Tailscale today — it reaches the tailnet URL 
 when the watch sits on the tailnet (or a router that does). An embedded in-app tsnet node (watch joins
 the tailnet directly, no router help) is specced and deferred; see [SPEC §11.4](docs/SPEC.md).
 
-Inside the gateway manager, every saved gateway is a row — here a tailnet entry and a LAN entry, with
-live probe dots, the current auto-selected winner marked, and the per-agent key matrix underneath:
+Inside the gateway manager, every saved gateway is a row — here the owner's box and a parked
+fallback, each with its live probe dot, the current auto-selected winner marked, and the active
+endpoint begins below:
 
-<img src="docs/screens/11-gateways.png" width="220" alt="Gateways manager: two gateway rows (tailnet and LAN) with probe dots and winner marker, agent keys with green checks below"/>
+<img src="docs/screens/11-gateways.png" width="220" alt="Gateways manager: two saved gateway rows with live probe dots, the winner selected, an add row, and the Base URL editor label for the active entry beginning below"/>
 
 ## Body tools (opt-in, owner-off by default)
 
@@ -258,15 +284,9 @@ Every knob is on-device, and there are no hidden ones:
 | | |
 |---|---|
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
-| **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s — the key matrix under Gateways shows ✓ per agent), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
-| <img src="docs/screens/20-settings-connection.png" width="180"/> | <img src="docs/screens/13-launcher-icon.png" width="180"/> |
-| **Connection editor** — the active profile's base URL + gateway token (redacted here for the screenshot) with **Save** and a live **Test** button. | **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. |
-
-The diagnostics screen is the support story: STT model present ✅, TTS engine ready, last push status
-with bytes and age, health-services availability, location fix state — coordinates pixelated, because
-your house doesn't belong in a README:
-
-<img src="docs/screens/15-settings-tail.png" width="220" alt="Diagnostics screen: push status, health services, STT model present, TTS ready"/>
+| **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s — the key matrix under Gateways shows ✓ per agent), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, launch-splash modes, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
+| <img src="docs/screens/13-launcher-icon.png" width="180"/> | <img src="docs/screens/15-settings-tail.png" width="180"/> |
+| **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. | **Support without a support line** — the Settings tail puts the shipped version (`v0.6.0`), STT model presence, and push status on the watch itself; when something is off, you read it there, coordinates included (pixelated here — your house doesn't belong in a README). |
 
 ## Install — let your agent do it
 
@@ -338,7 +358,7 @@ mermaid as fence blocks (the watch renders them). Start the watchkit helper with
 
 ```bash
 source scripts/env.sh
-../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 353 tests
+../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 441 tests
 scripts/emulator.sh                        # optional headless Wear emulator
 scripts/doctor.sh                          # toolchain + link health report
 ```
