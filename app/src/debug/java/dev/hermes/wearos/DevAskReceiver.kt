@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
  *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
  *  flaky synthetic dial release; waits on the gateway catalog round-trip itself).
+ *  -e dev_lane <id> (fire ANY dial lane through the real router — the capture driver for lane
+ *  destinations like ⚙ settings; generalizes model_picker, adb can't hold a Compose drag).
  *  -e notify_demo plain|approval|both (post the REAL notification cards on command — the deterministic
  *  door for the demo's "off the wrist" act, see docs/DEMO.md).
  *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>, -e add_gw "label|api|wk",
@@ -76,6 +78,9 @@ class DevAskReceiver : BroadcastReceiver() {
         // SPEC §12.1), -e approvals → open the per-chat approvals sheet like the lane does.
         intent?.getStringExtra("orb_slot")?.let { spec -> WearApp.Graph.devOrbSlot(spec); return }
         if (intent?.hasExtra("approvals") == true) { WearApp.Graph.devApprovals.value = true; return }
+        // DEV LANE (`-e dev_lane settings`): fire any dial lane through the real router — the
+        // capture driver for lane DESTINATIONS (adb can't hold a Compose drag; see WearApp.devLane).
+        intent?.getStringExtra("dev_lane")?.let { WearApp.Graph.devLane.value = it; return }
         // -e agents 1 → open the agent picker dialog (batch-4 #6 dialog-padding proof).
         if (intent?.hasExtra("agents") == true) { WearApp.Graph.devAgents.value = true; return }
         // -e approval_demo 1 → park a PENDING approval on the open chat (batch-4 #5 hardware

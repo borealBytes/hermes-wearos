@@ -845,6 +845,17 @@ class MainActivity : ComponentActivity() {
                         approvalsOpen = true
                     }
                 }
+                // `-e dev_lane <id>`: fire any lane through the SAME router a drag-release uses —
+                // the capture driver for every lane destination (Settings first: adb can't hold
+                // the dial drag, and screenshots of lane destinations outrank gesture cosplay).
+                val devLane by WearApp.Graph.devLane.collectAsState()
+                LaunchedEffect(devLane) {
+                    val id = devLane ?: return@LaunchedEffect
+                    WearApp.Graph.devLane.value = null
+                    val lane = dev.hermes.wearos.domain.Lane.fromId(id)
+                    if (lane == null) android.util.Log.i("HermesWear", "dev: dev_lane unknown '$id'")
+                    else handleLane(lane)
+                }
                 LaunchedEffect(devModelPicker) {
                     if (devModelPicker) {
                         WearApp.Graph.devModelPicker.value = false

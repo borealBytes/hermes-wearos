@@ -160,6 +160,14 @@ class WearApp : Application() {
         /** Dev hook `-e approvals`: opens the per-chat approvals sheet like the ✅ lane does. */
         val devApprovals = MutableStateFlow(false)
 
+        /**
+         * Dev hook `-e dev_lane <id>`: fires ANY dial lane exactly like a drag-release would —
+         * adb cannot hold a Compose drag mid-stroke (that's why `dial_preview` pins the ring for
+         * screenshots), so capture runs that need a lane's DESTINATION (Settings, sessions…)
+         * drive this instead of faking the gesture. Debug harness only; the ring stays honest.
+         */
+        val devLane = MutableStateFlow<String?>(null)
+
         /** Dev hook `-e orb_slot "3|approvals"`: remap one dial direction (lane picker driver). */
         fun devOrbSlot(spec: String) = scope.launch {
             val bits = spec.split('|').map { it.trim() }
