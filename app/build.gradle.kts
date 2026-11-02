@@ -46,6 +46,9 @@ android {
 }
 
 dependencies {
+    // Embedded tailnet node (SPEC §11.4): gomobile-bound tsnet, COMMITTED artifact —
+    // rebuild with scripts/tailnet-build.sh only when tailnet/go changes.
+    implementation(files("libs/hermes-tailnet.aar"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)

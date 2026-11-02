@@ -150,7 +150,7 @@ class EndpointResolver(
      * [Failover.effective]: the old code fell back to the PRIMARY endpoint, and when that primary is
      * a tailnet hostname the watch cannot resolve, a plain LAN hiccup got the mirror rewritten to an
      * address guaranteed to fail DNS — the retry then surfaced as "Unable to resolve host
-     * …tailb12aa5.ts.net", which is the sentence the owner read as "couldn't connect over tailnet"
+     * …tailca7ee1.ts.net", which is the sentence the owner read as "couldn't connect over tailnet"
      * while sitting on Wi-Fi (SPEC §11.5). Silence here is honest; a pointer to a dead host is not.
      */
     suspend fun advanceFrom(usedBaseUrl: String): String = mutex.withLock {
@@ -182,6 +182,7 @@ class HttpProber : Prober {
         .connectTimeout(2500, TimeUnit.MILLISECONDS)
         .readTimeout(2500, TimeUnit.MILLISECONDS)
         .callTimeout(2800, TimeUnit.MILLISECONDS)
+        .proxySelector(dev.hermes.wearos.net.TailnetRoute.SELECTOR)   // probes ride the tunnel too (SPEC §11.4)
         .build()
 
     override suspend fun ok(url: String): Boolean = withContext(Dispatchers.IO) {

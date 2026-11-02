@@ -289,7 +289,7 @@ to make sure lan/tailnet routing is automatic in all agents."* Reproduced on the
 selecting a gateway whose only API endpoint is the MagicDNS name:
 
 ```
-submit failed (Unable to resolve host "tuxdesktop…ts.net": No address associated with hostname)
+submit failed (Unable to resolve host "labhost…ts.net": No address associated with hostname)
 ```
 
 **Root cause, measured on the device:** `adb shell ping <tailnet FQDN>` → `ping: unknown host`.
@@ -308,7 +308,7 @@ Two real bugs surfaced while reproducing it, both fixed:
   I/O failure `advanceFrom` dethrones the winner, probes the rest once, and — when nothing answered —
   fell back to `effective()`, i.e. the PRIMARY. With a tailnet primary that pointer is a hostname DNS
   cannot answer, so the mirror was rewritten to it, the retry died on DNS, and the owner's screen said
-  "…tailb12aa5.ts.net…" for what was just a LAN blip. Now `Failover` remembers `lastKnownGood` (the last
+  "…tailca7ee1.ts.net…" for what was just a LAN blip. Now `Failover` remembers `lastKnownGood` (the last
   endpoint that answered, never cleared) and hands callers `fallbackPointer()`, which returns **null**
   when nothing is known better than the base already in use — the caller keeps its endpoint and retries
   (which is what the function always promised in its own doc comment).
@@ -372,7 +372,7 @@ so the watch now re-picks its route before the owner taps anything.
 the watch?"* on the wrist. It is `vpn`/`ts-resolver` when a tunnel is genuinely in front of the watch
 (exit-node-for-LAN devices, or a future tsnet node, §11.4) and plain `wifi` when it is not — so the
 claim is checked in 20 seconds instead of by bug report. That is also why the endpoint list should
-carry the **tailnet IP** (`http://100.69.144.33:8642`), not only the MagicDNS name: forwarding to
+carry the **tailnet IP** (`http://100.99.1.42:8642`), not only the MagicDNS name: forwarding to
 100/10 is the reliable half of exit-node, resolving `.ts.net` for a tethered client is the flaky half.
 
 **Verified:** emulator (deterministic) — Wi-Fi off → `network change: network lost · no network` →

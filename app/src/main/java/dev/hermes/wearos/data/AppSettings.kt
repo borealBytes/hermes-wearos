@@ -50,6 +50,13 @@ class AppSettings(private val context: Context) {
         private val KEY_ACTIVE_CHAT = stringPreferencesKey("active_chat")
         private val KEY_WATCHKIT_URL = stringPreferencesKey("watchkit_url")
         private val KEY_WATCHKIT_TOKEN = stringPreferencesKey("watchkit_token")
+        // EMBEDDED TAILNET (SPEC §11.4): the watch's OWN tsnet node — the tunnel is the only
+        // transport ("tailnet only, always", owner 2026-11-02). The key enrolls a fresh node
+        // only; identity lives in filesDir/tailnet once enrolled. Enabled=false = plain sockets
+        // (dev escape hatch, not a user mode).
+        private val KEY_TAILNET_KEY = stringPreferencesKey("tailnet_key")
+        private val KEY_TAILNET_HOSTNAME = stringPreferencesKey("tailnet_hostname")
+        private val KEY_TAILNET_ENABLED = booleanPreferencesKey("tailnet_enabled")
         private val KEY_AGENTS_CACHE = stringPreferencesKey("agents_cache_json")
         private val KEY_SESSIONS_CACHE = stringPreferencesKey("gw_sessions_json")
         private val KEY_SESSIONS_TS = longPreferencesKey("gw_sessions_ts")
@@ -70,6 +77,9 @@ class AppSettings(private val context: Context) {
         const val DEFAULT_BASE_URL = "http://hermes.tailnet.ts.net:8642/p/wear"
         // watchkit helper daemon (server/watchkit): mermaid render + whisper STT, tailnet-only.
         const val DEFAULT_WATCHKIT_URL = "http://hermes.tailnet.ts.net:8651"
+        // The watch's tailnet node name (SPEC §11.4) — admin-console-visible; per-owner suffix
+        // recommended (hermes-wearos-pilot) since every re-enroll creates a node.
+        const val DEFAULT_TAILNET_HOSTNAME = "hermes-wearos"
 
         // OWNER EPIC (multi-gateway, SPEC §11): the registry lives under these NEW keys while
         // the legacy base_url/token/watchkit_url keys above STAY — they are the live MIRROR every
@@ -99,6 +109,16 @@ class AppSettings(private val context: Context) {
     suspend fun token(): String = context.dataStore.data.first()[KEY_TOKEN] ?: ""
     suspend fun sessionId(): String = context.dataStore.data.first()[KEY_SESSION_ID] ?: ""
     suspend fun lastRun(): String = context.dataStore.data.first()[KEY_LAST_RUN] ?: ""
+
+    // EMBEDDED TAILNET accessors (SPEC §11.4).
+    suspend fun tailnetKey(): String = context.dataStore.data.first()[KEY_TAILNET_KEY] ?: ""
+    suspend fun tailnetHostname(): String = context.dataStore.data.first()[KEY_TAILNET_HOSTNAME] ?: DEFAULT_TAILNET_HOSTNAME
+    suspend fun tailnetEnabled(): Boolean = context.dataStore.data.first()[KEY_TAILNET_ENABLED] ?: true
+    suspend fun setTailnetKey(v: String) { context.dataStore.edit { it[KEY_TAILNET_KEY] = v.trim() } }
+    suspend fun setTailnetHostname(v: String) {
+        context.dataStore.edit { it[KEY_TAILNET_HOSTNAME] = v.trim().ifEmpty { DEFAULT_TAILNET_HOSTNAME } }
+    }
+    suspend fun setTailnetEnabled(v: Boolean) { context.dataStore.edit { it[KEY_TAILNET_ENABLED] = v } }
 
     suspend fun setBaseUrl(v: String, foldRegistry: Boolean = true) {
         val t = v.trim().trimEnd('/')

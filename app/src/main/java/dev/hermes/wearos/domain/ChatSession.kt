@@ -74,6 +74,7 @@ class ChatSession(
     private val http = okhttp3.OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)   // events stream: server keepalive is every 10 s
+        .proxySelector(dev.hermes.wearos.net.TailnetRoute.SELECTOR)   // SPEC §11.4: SSE rides the tunnel
         .build()
 
     private var askJob: Job? = null

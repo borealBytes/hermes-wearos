@@ -444,7 +444,7 @@ Branch keeps exactly ONE generation of every tracked media path.
   pairs at build and captions each half as its own beat (four single-screen beats), rule in §4.
 
 - **2026-11-01 (batch-7: honesty round)** — owner's eye found what the gates missed. SHIPPED CHANGES:
-  `/home/clay` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
+  `/home/user` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
   the vision endpoint after OCR went blind on dissolves; mask must be ALPHA-PRESERVING — plain imread
   silently squares the circle); SPEC text anonymized; §8 privacy gate extended (OCR every PNG + EVERY GIF
   frame, fades by vision; `Clayton` whitelisted — it's a credit, not a leak). Honest re-shoots: `26` =

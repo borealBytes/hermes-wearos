@@ -38,6 +38,7 @@ class HermesApi(
         val DEFAULT = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)   // SSE: rely on server keepalive
+            .proxySelector(TailnetRoute.SELECTOR)    // SPEC §11.4: the tunnel, when it's up
             .build()
 
         fun parse(data: String): JsonObject = Json_.parseToJsonElement(data).jsonObject

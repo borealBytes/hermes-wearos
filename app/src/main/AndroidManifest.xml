@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Embedded tailnet keeper (SPEC §11.4): specialUse, NOT dataSync — dataSync's 6h/day
+         cap on API 34 would drop the tunnel every night. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- The tunnel must exist BEFORE the first ask: start the keeper at boot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Location tool (owner ask B): fail-soft one-shot fix; NOT required features so the APK
          still installs on images without GPS. Runtime grant via scripts/watch-health.sh grant. -->
@@ -93,6 +98,28 @@
             android:name=".notify.RunKeeperService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- TUNNEL KEEPER (SPEC §11.4): the permanent FGS owning the embedded tsnet node.
+             specialUse — dataSync's 6h/day cap (API 34) would tear the tunnel down nightly.
+             The silent ongoing notification is the visible cost of "tailnet only, always". -->
+        <service
+            android:name=".notify.TailnetService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Embedded tailnet node (tsnet): always-on private transport to the Hermes gateway" />
+        </service>
+
+        <!-- Boot lifeline: start the keeper before the first ask, not after the first launch. -->
+        <receiver
+            android:name=".notify.TailnetBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- M5: "Ask Hermes" tile (SPEC §5 U3): full-screen tap launches talk mode. -->
         <service

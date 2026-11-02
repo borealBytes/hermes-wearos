@@ -1,6 +1,7 @@
 package dev.hermes.wearos
 
 import android.app.Application
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import dev.hermes.wearos.data.AgentsRepo
@@ -19,6 +20,9 @@ import dev.hermes.wearos.notify.Notifs
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.EndpointResolver
 import dev.hermes.wearos.net.NetworkMonitor
+import dev.hermes.wearos.net.TailnetEngine
+import dev.hermes.wearos.domain.TailnetLogic
+import dev.hermes.wearos.domain.TailnetPhase
 import dev.hermes.wearos.net.SnapshotPusher
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
@@ -365,6 +369,40 @@ class WearApp : Application() {
                 network.start() // LAST: its hook reaches into every other Graph member
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).
                 scope.launch { store.chats.collect { chats -> Attention.publish(app, chats.any { it.pendingAttention }) } }
+                // TUNNEL KEEPER (SPEC §11.4 "tailnet only, always"): start the embedded node NOW
+                // so the tunnel predates the first ask; no-op when disabled/keyless (the service
+                // reads prefs and stops itself). The boot receiver covers cold boots.
+                scope.launch {
+                    if (settings.tailnetEnabled() && settings.tailnetKey().isNotEmpty()) {
+                        androidx.core.content.ContextCompat.startForegroundService(
+                            app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
+                        )
+                    }
+                }
+                // THE TUNNEL GATES THE TRUTH (SPEC §11.4): the boot probe below races node
+                // enrollment and can legitimately fail every .ts.net entry BEFORE the node is
+                // up — lastKnownGood keeps that harmless, but the moment the tunnel goes ACTIVE
+                // the probe verdicts are stale by definition. Forced re-probe on the edge into
+                // ACTIVE (and back on DEGRADED, where the old winner may again be the right one).
+                scope.launch {
+                    var last: TailnetPhase? = null
+                    TailnetEngine.status.collect { st ->
+                        val phase = TailnetLogic.phase(
+                            st,
+                            enabled = settings.tailnetEnabled(),
+                            gatewayHost = runCatching { android.net.Uri.parse(settings.baseUrl()).host.orEmpty() }.getOrDefault(""),
+                        )
+                        if (phase != last && (phase == TailnetPhase.ACTIVE || last == TailnetPhase.ACTIVE)) {
+                            last = phase
+                            if (hasEndpoints()) {
+                                val api = endpoints.ensure(force = true)
+                                Log.i(TAG, "tailnet ${phase.name.lowercase()} — endpoints re-picked: ${api.ifEmpty { "none" }}")
+                            }
+                        } else {
+                            last = phase
+                        }
+                    }
+                }
             }
         }
 
@@ -550,6 +588,42 @@ class WearApp : Application() {
                 val api = endpoints.ensure(force = true)
                 Log.i(TAG, "gw_probe done api=$api winner=${endpoints.status.value.apiWinner} wk=${endpoints.status.value.watchkitWinner}")
             }
+        }
+
+        /** Dev-only (adb `-e tailnet_status`): tunnel truth + engine log tail (SPEC §11.4). */
+        fun devTailnetStatus() {
+            scope.launch {
+                val st = TailnetEngine.status.value
+                val gwHost = runCatching { android.net.Uri.parse(settings.baseUrl()).host.orEmpty() }.getOrDefault("")
+                val phase = TailnetLogic.phase(st, settings.tailnetEnabled(), gwHost)
+                Log.i(TAG, "tailnet_status phase=$phase ${TailnetLogic.describe(phase, st, gwHost)} socks=${st.socksPort} self=${st.self?.dnsName}")
+                TailnetEngine.engineLogs().lines().takeLast(12).forEach { Log.i(TAG, "tailnet_log | $it") }
+            }
+        }
+
+        /** Dev-only (adb `-e set_tailnet_key <key>`): store + (re)start the keeper (SPEC §11.4). */
+        fun devSetTailnetKey(key: String) = scope.launch {
+            settings.setTailnetKey(key)
+            androidx.core.content.ContextCompat.startForegroundService(
+                app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
+            )
+            Log.i(TAG, "set_tailnet_key stored (${key.length} chars) — keeper started")
+        }
+
+        /** Dev-only (adb `-e tailnet_on on|off`): the escape hatch — off = plain sockets (dev). */
+        fun devTailnetOn(v: String) = scope.launch {
+            val on = !v.trim().matches(Regex("(?i)(off|false|0|no)"))
+            settings.setTailnetEnabled(on)
+            val i = Intent(app, dev.hermes.wearos.notify.TailnetService::class.java)
+            if (on) androidx.core.content.ContextCompat.startForegroundService(app, i)
+            else { i.action = dev.hermes.wearos.notify.TailnetService.ACTION_STOP; app.startService(i) }
+            Log.i(TAG, "tailnet_on=$on")
+        }
+
+        /** Dev-only (adb `-e tailnet_reenroll`): wipe node identity + re-enroll with stored key. */
+        fun devTailnetReenroll() = scope.launch {
+            TailnetEngine.reEnroll(app, settings.tailnetHostname(), settings.tailnetKey())
+            Log.i(TAG, "tailnet_reenroll kicked (old node stays in admin until pruned)")
         }
 
         fun setWatchkitBase(url: String) {

@@ -36,7 +36,9 @@ import kotlinx.coroutines.launch
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
  *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags),
- *  -e set_agent_key <agent>=<key> / -e agent_keys (per-profile gateway keys, SPEC §12.2). */
+ *  -e set_agent_key <agent>=<key> / -e agent_keys (per-profile gateway keys, SPEC §12.2).
+ *  Tailnet-epic additions (SPEC §11.4): -e set_tailnet_key <tskey-auth-…>, -e tailnet_status,
+ *  -e tailnet_on on|off (dev escape hatch to plain sockets), -e tailnet_reenroll. */
 class DevAskReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         val token = intent?.getStringExtra("set_token")
@@ -96,6 +98,15 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
+        // TAILNET (SPEC §11.4): `-e set_tailnet_key tskey-…` stores the enrollment key and
+        // starts the keeper (the watch can't type 60 chars comfortably — this is the front
+        // door); `-e tailnet_status` dumps phase + engine log tail to logcat; `-e tailnet_on
+        // off` is the dev escape hatch back to plain sockets; `-e tailnet_reenroll` wipes
+        // node identity and re-enrolls with the stored key.
+        intent?.getStringExtra("set_tailnet_key")?.let { WearApp.Graph.devSetTailnetKey(it); return }
+        if (intent?.hasExtra("tailnet_status") == true) { WearApp.Graph.devTailnetStatus(); return }
+        intent?.getStringExtra("tailnet_on")?.let { WearApp.Graph.devTailnetOn(it); return }
+        if (intent?.hasExtra("tailnet_reenroll") == true) { WearApp.Graph.devTailnetReenroll(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
         intent?.getStringExtra("del_gw")?.let { WearApp.Graph.devGwDelete(it); return }
         // -e add_gw "label|https?://api|https?://watchkit" → upsert a gateway reusing the current

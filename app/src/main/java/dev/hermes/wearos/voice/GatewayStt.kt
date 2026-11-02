@@ -82,7 +82,9 @@ class GatewayStt(
     }
 
     @Volatile private var stopping = false
-    private val client = OkHttpClient.Builder().pingInterval(15, TimeUnit.SECONDS).build()
+    private val client = OkHttpClient.Builder().pingInterval(15, TimeUnit.SECONDS)
+        .proxySelector(dev.hermes.wearos.net.TailnetRoute.SELECTOR)   // the STT WebSocket rides the tunnel (SPEC §11.4)
+        .build()
 
     override fun start(scope: CoroutineScope): Flow<SttEvent> = channelFlow {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
