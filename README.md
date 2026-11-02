@@ -148,11 +148,11 @@ respect.
 | | |
 |---|---|
 | <img src="docs/screens/35-splash-film.png" width="180"/> | <img src="docs/screens/36-splash-picker.png" width="180"/> |
-| **A cold start opens on a moving film frame** — the intro film plays and the app *reveals itself mid-motion inside the film* (`revealIsMoving`, one clean cut), so the splash is a doorway, not a wallpaper. Held from the launcher it rides the same film. | **Splash modes are yours** — Settings ▸ Display: the built-in film, a static frame, your own picked media, or none at all. Markdown, launch splash, and the orb live on this one page. |
+| **A cold start opens on a moving film frame** — the intro film plays and the app *reveals itself mid-motion inside the film* (`revealIsMoving`, one clean cut), so the splash is a doorway, not a wallpaper. Held from the launcher it rides the same film. **Tap anywhere while it plays and you're in** — the tap cuts the film and lands you in the app the moment it's ready, so the 14 s intro never stands between you and an ask. And the film is strictly for fun: the owner's first fully AI-generated video, made locally end to end (Qwen Image stills, MiniMax motion, stitched on the same box) — and it has audio. Fun. | **Splash modes are yours** — Settings ▸ Display: the built-in film, a static frame, your own picked media, or none at all. Markdown, launch splash, and the orb live on this one page. |
 | <img src="docs/screens/37-voice-output.png" width="180"/> | <img src="docs/screens/38-volume-db.png" width="180"/> |
 | **Voice out, fully on-device** — the engine picker, system voice with fallback, reply speed (this wrist reads at 1.81×), and a preview button, all on one Settings page. | **Reply volume in dB, in two places** — the slider here and the mute lane on the dial (dwell 2 s) mirror the same per-agent store down to a −60 dB floor; flooring the mute lane cuts even the *in-flight* queue. |
 | <img src="docs/screens/39-karaoke-follow.png" width="180"/> | <img src="docs/screens/40-stt-source.png" width="180"/> |
-| **The glass follows the voice** — while a reply is spoken the sentence being read stays in view, teleprompter-style; one touch hands scroll control back to you mid-speech. | **Pick your audio path per agent** — Vosk stays-on-the-watch (default) or Gateway streaming, where parakeet on your box returns text partials as you talk; the highlighted row is the live source. |
+| **The glass follows the voice** — while a reply is spoken the sentence being read stays in view, teleprompter-style; one touch hands scroll control back to you mid-speech. | **Pick your audio path per agent** — Local Vosk (offline default), the vendor recognizer honestly labeled OFF-DEVICE (Google or Samsung, whichever your watch ships), or Gateway: whisper rows (final when you stop) and parakeet (streaming partials) — the highlighted row is the live source. |
 | <img src="docs/screens/44-notify-desktop-approval.png" width="180"/> | <img src="docs/screens/45-notify-desktop-settled.png" width="180"/> |
 | **A desktop run parks on your wrist** — when a session running at your desk hits a gated command, the parked command buzzes your watch; *Open* adopts the session and answers it from the wrist. | **Answers finished off the wrist** — an ordinary notification says "answer ready", and one tap drops you into the thread mid-stream. The off-screen feed survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no double-post on handback). |
 
@@ -213,13 +213,16 @@ Three moving parts:
 
 ## Voice, honestly
 
-There is no free, offline, *perfect* STT on a watch today. Here's the truth ladder:
+There is no free, offline, *perfect* STT on a watch today. The Voice-in page offers three honest
+paths (and one keyboard back door):
 
-| Path | Where audio goes | Quality | Default |
+| Path (the picker's own words) | Where audio goes | Quality | Default |
 |---|---|---|---|
-| **Vosk `small-en-us`** | never leaves the watch | Good, not great. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. | ✅ primary |
-| **Gateway whisper** (`watchkit /stt/whisper`) | your own LAN/tailnet, your own box | Noticeably better — but the endpoint is opt-in and the automatic low-confidence fallback is **not wired into the app loop yet** (endpoint is live; see roadmap). | off |
-| **GBoard typing → its mic** | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
+| **Local Vosk · offline** | never leaves the watch | Best-effort on-device. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. | ✅ default |
+| **OFF-DEVICE · vendor (Google or Samsung)** | the vendor's cloud — whatever recognizer your watch ships | Usually the best raw accuracy on the watch, at the cost of the vendor hearing it. The picker says **OFF-DEVICE** even when the vendor caches locally — that's deliberate. | your choice |
+| **Gateway · whisper** (`watchkit /stt/whisper`) | your own LAN/tailnet, your own box | Noticeably better than Vosk — but buffered: the final text lands when you stop talking. Model choice is a row on the Voice page. | opt-in |
+| **Gateway · parakeet** (streaming) | your own LAN/tailnet, your own box | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. | opt-in |
+| GBoard typing → its mic | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
 
 TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
 without touching a cloud voice. Mute is one dial flick (drag the orb toward 1:20) — since batch 3 the orb is the *only* control on the chat screen: nine drag directions stand in for every button, and the ⌘ lane at 5:20 opens the slash overlay. Reply loudness is PER AGENT — the Voice page slider, the mute-lane dwell slider on the dial, and the satellite all ride the same per-agent store. While it reads aloud, the chat keeps the SPOKEN sentence in view (karaoke follow); and a fresh reply rests just above the orb from sentence one, growing upward, instead of starting at the top of the circle.
@@ -286,7 +289,7 @@ Every knob is on-device, and there are no hidden ones:
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
 | **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s — the key matrix under Gateways shows ✓ per agent), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, launch-splash modes, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
 | <img src="docs/screens/13-launcher-icon.png" width="180"/> | <img src="docs/screens/15-settings-tail.png" width="180"/> |
-| **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. | **Support without a support line** — the Settings tail puts the shipped version (`v0.6.0`), STT model presence, and push status on the watch itself; when something is off, you read it there, coordinates included (pixelated here — your house doesn't belong in a README). |
+| **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. | **Support without a support line** — the Settings tail puts the shipped version (`v0.6.0`), STT model presence, and push status on the watch itself; when something is off, you read it there. |
 
 ## Install — let your agent do it
 
@@ -390,13 +393,14 @@ scripts/doctor.sh                          # toolchain + link health report
 - **OpenCode** driving development end to end — **against a self-hosted `Qwen3.8-Flash-Next-Uncensored`
   served locally by SGLang**. Yes: this app was mostly written by a local model talking to a local
   agent harness, on the same machine it serves the watch from. The build log in
-  `docs/SPEC.md` Appendix A is that collaboration's fossil record (including the moment the gateway
-  agent **self-patched its own watch client** to add a feature nobody asked for — and the owner, with
-  final say, deleted it at 11:47 the same morning).
+  `docs/SPEC.md` Appendix A is that collaboration's fossil record. Along the way we studied a few
+  reference components of the Wear OS stack — the Wear Compose sample app, Vosk's Android examples,
+  Google's watch-assistant demos — purely as learning material: **no code was reused**, everything
+  here was written for this app.
 - Wear Compose 1.4.1, OkHttp + SSE, `androidx.health`, Vosk, nothing else you'd spot in a
   dependency audit.
 
 ## License
 
 MIT — see [LICENSE](LICENSE). Screenshots were captured on a physical Galaxy Watch Ultra; the demo
-chats use neutral scripted prompts; the diagnostics coordinates are pixelated, and every visible pixel is exactly what the watch showed.
+chats use neutral scripted prompts, and every visible pixel is exactly what the watch showed.
