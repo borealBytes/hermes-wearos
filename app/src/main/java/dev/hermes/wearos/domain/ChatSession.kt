@@ -293,17 +293,32 @@ class ChatSession(
      * "OPEN SESSION" from a notification (owner: *"go straight to that session, not just open
      * the app — it may need to switch agents from wherever the app currently is"*). Same-agent
      * ids take the plain path; cross-agent ids switch first, then land on THAT chat.
+     *
+     * The away-watch (BATCH-6 #25) notifications carry a GATEWAY SESSION id, not a local chat
+     * id — those resolve through the adoption registry (an already-adopted desktop session
+     * opens its own chat), and when not adopted yet they ADOPT via [resumeGatewaySession] on
+     * [profileHint]'s agent (owner bug 2026-11-02: the tap silently no-opped).
      */
-    fun openFromNotification(id: String) {
+    fun openFromNotification(id: String, profileHint: String = "") {
         scope.launch {
             store.loadIfNeeded()
-            val meta = store.get(id)
-            val (route, agent) = NotificationDeepLink.plan(settings.profileSync(), meta?.profile ?: "", meta != null)
+            val meta = store.get(id) ?: store.chats.value.firstOrNull { it.sessionTitle == id }
+            Notifs.cancelChat(app, id, id) // the tapped notification is keyed by the id it carries
+            if (meta == null) {
+                if (profileHint.isNotEmpty()) {
+                    Log.i("HermesWear", "deep link: session $id lives on '$profileHint' — adopting there")
+                    if (profileHint != settings.profileSync())
+                        switchAgent(profileHint) { _, _, _ -> resumeGatewaySession(id, "", profileHint) }
+                    else resumeGatewaySession(id, "", profileHint)
+                } else openChat(id) // unknown/local-only id: plain open (no-op if gone)
+                return@launch
+            }
+            val (route, agent) = NotificationDeepLink.plan(settings.profileSync(), meta.profile, true)
             if (route == NotificationDeepLink.Route.SWITCH_THEN_OPEN) {
                 Log.i("HermesWear", "deep link: chat $id lives on '$agent' — switching first")
-                switchAgent(agent) { _, _, _ -> openChat(id) }
+                switchAgent(agent) { _, _, _ -> openChat(meta.id) }
             } else {
-                openChat(id)
+                openChat(meta.id)
             }
         }
     }

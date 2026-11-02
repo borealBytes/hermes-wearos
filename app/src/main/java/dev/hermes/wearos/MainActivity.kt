@@ -132,7 +132,7 @@ import kotlin.math.roundToInt
 enum class Screen { Chat, Chats, Settings, Sessions }
 
 /** Deep-link targets (M5): notification tap (open_chat), tile tap (talk), adb parity. */
-private data class DeepLink(val openChat: String? = null, val talk: Boolean = false, val nonce: Long = 0L)
+private data class DeepLink(val openChat: String? = null, val openProfile: String = "", val talk: Boolean = false, val nonce: Long = 0L)
 
 class MainActivity : ComponentActivity() {
     private companion object { const val TAG = "HermesWear" }
@@ -381,7 +381,7 @@ class MainActivity : ComponentActivity() {
                 val link by deepLink.collectAsState()
                 LaunchedEffect(link) {
                     val l = link ?: return@LaunchedEffect
-                    l.openChat?.let { session.openFromNotification(it); screen = Screen.Chat }
+                    l.openChat?.let { session.openFromNotification(it, l.openProfile); screen = Screen.Chat }
                     if (l.talk) {
                         draft = ""; composing = false; speak.stop()
                         if (micGranted.value) startListening(true) else composing = true
@@ -1078,6 +1078,7 @@ class MainActivity : ComponentActivity() {
 
     private fun parseDeepLink(intent: Intent?) {
         val openChat = intent?.getStringExtra(dev.hermes.wearos.notify.Notifs.EXTRA_OPEN_CHAT)
+        val openProfile = intent?.getStringExtra(dev.hermes.wearos.notify.Notifs.EXTRA_OPEN_PROFILE).orEmpty()
         val talk = if (intent?.hasExtra("talk") == true) try {
             intent.getBooleanExtra("talk", false)
         } catch (e: Exception) { // adb --es talk true arrives as a String
@@ -1085,7 +1086,7 @@ class MainActivity : ComponentActivity() {
         } else false
         if (openChat != null || talk) {
             navNonce++
-            deepLink.value = DeepLink(openChat, talk, navNonce)
+            deepLink.value = DeepLink(openChat, openProfile, talk, navNonce)
         }
     }
 }

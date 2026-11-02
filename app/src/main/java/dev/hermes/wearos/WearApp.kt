@@ -424,11 +424,11 @@ class WearApp : Application() {
                 when (a.kind) {
                     AwayWatch.Kind.Approval -> {
                         Log.i(TAG, "away-watch: approval parked ${a.profile}/${a.chatId} ${a.tool}")
-                        Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments)
+                        Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments, a.profile)
                     }
                     AwayWatch.Kind.Finished -> {
                         Log.i(TAG, "away-watch: answer finished ${a.profile}/${a.chatId} msgs=${a.messageCount}")
-                        Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false)
+                        Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false, a.profile)
                     }
                 }
             }
