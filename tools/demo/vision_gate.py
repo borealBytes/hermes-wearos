@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Vision review: each screenshot vs ONE exact claim, T=0, sglang endpoint."""
+"""Vision review: each screenshot vs ONE exact claim, T=0, sglang endpoint.
+
+Note: the endpoint is T=0 but reasoning is non-deterministic — a FAIL whose reason is
+absent or cut mid-sentence is a reasoning-budget overflow, not a verdict: re-run the shot.
+A FAIL WITH a concrete visual reason is real: fix the CLAIM to describe pixels (pixel-check
+first) or remap the shot. Claims that invite counting ("fifteen lines") burn the budget —
+claim PRESENCE of visible strings instead."""
 import base64, json, re, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -10,7 +16,7 @@ S = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs",
 # Claims rewritten 2026-11-01 for the v0.6.0 media generation: every claim describes ONLY
 # what the shipped shot actually shows (pixel-verified against the bank before writing).
 CLAIMS = {
- "01-orb-cluster.png": "A watch home screen with a dark chat behind shows a circular avatar orb at the bottom-center (engraved black-haired girl portrait) ringed by small circular lane icons (green check, keyboard, gear, person, list, feather) arranged in a circle around it.",
+ "01-orb-cluster.png": "A watch home screen with a dark chat behind shows a circular avatar orb at the bottom-center (engraved black-haired girl portrait) ringed by small circular lane buttons, including a green checkmark, a keyboard, and a pink brain icon.",
  "02-chat-markdown.png": "A watch chat reply shows a paragraph in which the single word 'tide' is BOLD, above a four-item bulleted list with dot bullets about harbor conditions (Water level, Wind, Two slips, Fog).",
  "02b-chat-table.png": "A chat reply shows a markdown table: header row 'Day' and 'Water temp F', a rule under the headers, and aligned data rows Fri 61, Sat 60, Sun 59.",
  "03-image-card.png": "A watch chat screen shows a full-color photo of the aurora (green and purple northern lights above a snowy tree line) embedded inline as an image card within the conversation.",
@@ -24,14 +30,14 @@ CLAIMS = {
  "11-gateways.png": "A Gateways settings screen titled Gateways with '‹ all settings' shows a note about no tailnet route on this device, a selected card row 'tuxdesktop' with a filled radio and IP 192.168.10.62:8642, a 'harbor-lab' row with IP 192.168.99.9:8642, a '+ add' button, and the label 'Base URL (active' cut off at the bottom edge.",
  "12-keyboard.png": "A watch search screen shows the system QWERTY keyboard with a query field containing 'harbor', suggestion chips 'harbor' and 'harbors', and a blue search button.",
  "13-launcher-icon.png": "A smartwatch app grid where the top-left icon is a black-and-white engraved spirit girl portrait, next to a rocket-style icon and standard app icons.",
- "14a-fontscale-min.png": "A watch chat shows a long multi-message exchange rendered in small text: two blue user prompts and two grey assistant answers all fit on one screen.",
+ "14a-fontscale-min.png": "One watch chat screen shows an entire exchange together: grey answer text containing 'ran clean (exit 0', a blue user prompt with 'echo wrist-offscreen-demo && date', a timestamp 'Sun Nov 1 05:12:35 PM EST 2026', a second blue prompt with 'sudo rm -rf', and further grey answer text containing 'A terminal is required to authenticate'.",
  "14b-fontscale-max.png": "A watch chat screen rendered at very LARGE text: only a few short lines of an answer ('Done — rm -rf', 'ran clean (exit 0', 'the path no longer') fit on screen.",
  "15-settings-tail.png": "A settings list tail shows a 'Watch' row with subtitle mentioning 'Body tools' and notifications, and an 'About' row showing version text 'v0.6.0' with 'stt model' beneath.",
  "16-edit-resend.png": "A bottom sheet quotes the sent message 'count' and offers buttons: '✎ Edit & resend' (highlighted blue), 'Copy', and 'close'.",
  "17-agent-picker.png": "An agent list shows pill buttons for profiles: redridge-treasurer, research, resume-builder, squawkbox, wear, and 'wear-demo' highlighted in blue as selected.",
  "18-settings-home.png": "A screen titled Settings shows rows: '🌐 Gateways' with subtitle '2 saved · ✓ tuxdesktop', '🔊 Voice out' with subtitle 'off · 1.81×', and '🎙 Voice in'.",
  "19-settings-display.png": "A Display settings page scrolled down shows 'Launch splash' with a blue 'Video' chip beside a 'Static' chip, a blue 'Pick media' button, 'Media: built-in', 'Pinch text ×1.00' with 'pinch the chat to resize text', and an 'Orb dial — drag 8 ways' section with rows '12:00 keyboard' and mute.",
- "21-session-search.png": "A search screen shows the query 'harbors' in a field with a ✕ button, a heading 'Search · 2', a result row titled 'Essay: history of harbor lamps' whose snippet contains the word harbors, and a second result row starting 'Okay, let's see. The user'.",
+ "21-session-search.png": "A search screen shows 'harbors' in a text field with a ✕ button, a heading 'Search · 2', and two result rows, the top one titled 'Essay: history of harbor lamps'.",
  "22-session-sheet.png": "A sheet opened on the session row 'Generate Aurora Borealis photo via Comfy' shows buttons: '⑂ fork & open' (blue), 'archive' with a box icon, 'delete…' in red, and 'close'.",
  "23-archived-chip.png": "A Sessions screen titled 'Sessions · 12' shows filter chips at top (all, computer, wear-dem, and a partially visible archived chip) above a row titled 'Generate Aurora Borealis photo via Comfy'.",
  "24-unarchive.png": "A sheet on the archived session row 'Generate Aurora Borealis photo via Comfy' shows buttons: '⑂ fork & open', green 'unarchive', red 'delete…', and 'close'.",
