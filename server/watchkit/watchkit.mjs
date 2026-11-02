@@ -760,7 +760,12 @@ async function handleImg(req, res, ip, params) {
   const width = Math.min(1200, Math.max(100, Number(params.width) || 460));
   const resolved = path.resolve(p);
   // Containment BEFORE existence: outside-roots is always 403, never a "file exists?" probe.
-  if (!underRoots(resolved)) return done(res, sendErr(res, 403, 'path outside img_roots'), t0, ip, 'img', 403);
+  // The path is the whole diagnosis for a 403 (owner bug 2026-11-02: wrist said "image 403"
+  // with no way to see WHICH path) — log it; the caller already knew this path.
+  if (!underRoots(resolved)) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), ev: "img403", ip, path: resolved }));
+    return done(res, sendErr(res, 403, "path outside img_roots"), t0, ip, "img", 403);
+  }
   let real;
   try { real = fs.realpathSync(resolved); }
   catch (e) {

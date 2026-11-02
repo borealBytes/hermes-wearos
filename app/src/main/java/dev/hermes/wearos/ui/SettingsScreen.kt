@@ -1647,11 +1647,17 @@ private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClic
         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.5f)),
     ) {
-        Column(horizontalAlignment = Alignment.Start) {
-            Text("$emoji  $title", style = MaterialTheme.typography.button)
-            Text(subtitle, style = MaterialTheme.typography.caption2, color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        // LEADING chevron (owner 2026-11-02: "that arrow doohickey in the middle of the button
+        // makes no sense where it is"). The wear Button content scope does NOT lay children in a
+        // row — an explicit Row is the only way the chevron sits beside the text instead of
+        // floating over it; Wear list convention puts drill-in chevrons in FRONT of the content.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("›  ", style = MaterialTheme.typography.title3)
+            Column(horizontalAlignment = Alignment.Start) {
+                Text("$emoji  $title", style = MaterialTheme.typography.button)
+                Text(subtitle, style = MaterialTheme.typography.caption2, color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
         }
-        Text("  ›", style = MaterialTheme.typography.title3)
     }
     Spacer(Modifier.height(4.dp))
 }
