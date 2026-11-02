@@ -219,7 +219,10 @@ fun SettingsScreen(
             // while you read, and the LAST line comes to rest in the meat of the circle.
             .padding(horizontal = 20.dp)
             .verticalScroll(settingsScroll)
-            .padding(top = 12.dp, bottom = circleSafeBottomDp(20f, 12f).dp),
+            // BATCH-7: 12.dp was fine at the owner's 1.81× text scale, but at default scale the
+            // page title lands dead-center under OneUI's persistent clock pill (About proved it).
+            // Clear the pill band on EVERY page, at every font scale.
+            .padding(top = 34.dp, bottom = circleSafeBottomDp(20f, 12f).dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
