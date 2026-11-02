@@ -27,7 +27,7 @@
 - **Screenshots show what WORKS.** A model-picked toast must name a model that
   actually answers (claude-fable-5.1 400s on this gateway — never on screen);
   verify the pick by making it answer (`luna-online` pattern) before capturing.
-  A browser shot loads a REAL page (this repo's GitHub, the Dokploy board),
+  A browser shot loads a REAL page (this repo's GitHub),
   never `example.com`. Notification shots show the notification EXPANDED.
   Settings shots scroll until the interesting rows are IN FRAME (Voice-in must
   show every audio path incl. the whisper engine/model rows).
@@ -105,11 +105,11 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 8 | Mermaid via watchkit render | `05-mermaid.png` | S05 | shot ✓ |
 | 9 | ⌘ commands/skills overlay (`/compact` + SKILLS rows visible) | `27-commands-overlay.png` | S27 | shot ✓ |
 | 10 | Model picker stage 1 (providers) | `25-model-picker.png` NEW | S25 | shot ✓ |
-| 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 | re-shoot ▢ — **must name a model that answers**: gpt-6-luna pick + `luna-online` proof reply banked (`/tmp/opencode/demo/square/model-26c.png` + `-26d-verify.png`); claude-fable-5.1 400s — never show a broken pick |
+| 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 · capture: gpt-6-luna pick TOAST (`model-26c`), answer proven: `Reply with exactly: luna-online` → `finish run=… error=false len=11`; restored to gateway default after | shot ✓ |
 | 12 | Edit & resend | `16-edit-resend.png` | S16 | shot ✓ |
 | 13 | Stop a running answer | `07-stop-running.png` | S08 | shot ✓ |
 | 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | shot ✓ |
-| 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 | re-shoot ▢ — load **this repo's GitHub page** (`github.com/borealBytes/hermes-wearos`), not example.com; tap the link via blue-pixel forensics (§4) |
+| 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 · capture: ask via `-e text` (editor swipes = handwriting junk), blue-cluster CENTROID tap, GitHub `borealBytes/hermes-wearos` page rendered on the watch | shot ✓ |
 | 16 | Approval card **in-session** + Approve tap | `33-approval-card.png` NEW, `34-approval-approved.png` NEW | S33, S34 | shot ✓ |
 | 17 | Sessions list (wear-demo rows) | `08-sessions.png` | S17 | shot ✓ |
 | 18 | Session search `harbor` | `21-session-search.png` | S21 | shot ✓ |
@@ -117,7 +117,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 20 | Archive (🗃 chip) | `23-archived-chip.png` | S23 | shot ✓ |
 | 21 | Unarchive ♻️ | `24-unarchive.png` | S24 | shot ✓ |
 | 22 | Settle notification (orb largeIcon, spirit stencil in bar) | `31-notify-plain.png` NEW | S31 | shot ✓ |
-| 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) | re-shoot ▢ — must be **EXPANDED** (action chips visible; OneUI Wear caps at Open+Clear on this watch, DENY is proven by broadcast — README wording matches); post via `notify_demo approval`, tap card once, capture |
+| 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) · capture: EXPANDED in place via `notify_demo approval` + one card tap: **Approve / Deny / Open session** pills all visible (OneUI does NOT cap at Open+Clear — earlier claim was wrong); demo run denied via the receiver afterwards | shot ✓ |
 | 24 | Open-session deep link from notification | `09-resumed.png` | S09 | shot ✓ |
 | 25 | Agent picker (wear-demo + names OK) | `17-agent-picker.png` | S18 | shot ✓ |
 | 26 | Gateways: ● winner, tailnet/LAN failover | `11-gateways.png` | S11 | shot ✓ |
@@ -130,12 +130,12 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | shot ✓ |
 | 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | shot ✓ |
 | 35 | 🔊 voice-out mute lane (0 dB floor = speaks NOTHING, live queue cut) | (shown in 01) | S01 (release) | shot ✓ |
-| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut); tap-anywhere skips into the app the moment it's ready | `35-splash-film.gif` (was `.png`) | S35a, S35b | re-shoot ▢ — a real GIF cut from the SHIPPED asset (`app/src/main/assets/hermes-watch-intro.mp4`, lid-open→rise window, circle-masked, transparent bg), not a still; README img + §3 caption swap to `.gif` |
+| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut); tap-anywhere skips into the app the moment it's ready | `35-splash-film.gif` (was `.png`) | S35a, S35b · capture: real 240×240 transparent circle GIF cut from the SHIPPED asset (t≈1→10.5: lid opens → eclipse light → Hermes rise, 10 fps, 95 frames, ~3.4 MB); README img + ledger now say `.gif` | shot ✓ |
 | 37 | Splash modes in Settings (none / orb / built-in film / custom media) | `36-splash-picker.png` NEW | S36 | shot ✓ |
 | 38 | Voice-out settings: engine picker, voice + fallback, speech rate, preview | `37-voice-output.png` NEW | S37 | shot ✓ |
 | 39 | Reply volume = **dB-taper double sliders** (mute-lane pair + settings mirror, −60 dB floor) | `38-volume-db.png` NEW | S38 | shot ✓ |
 | 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | shot ✓ |
-| 41 | STT source: on-watch Vosk ⇄ OFF-DEVICE vendor (Google/Samsung) ⇄ Gateway whisper/parakeet engines | `40-stt-source.png` NEW | S40 | re-shoot ▢ — SCROLL the Voice-in page until EVERY audio-path row is in frame (Vosk · OFF-DEVICE vendor · gateway engine rows incl. the whisper model choice) |
+| 41 | STT source: on-watch Vosk ⇄ OFF-DEVICE vendor (Google/Samsung) ⇄ Gateway whisper/parakeet engines | `40-stt-source.png` NEW | S40 · capture: Voice-in scrolled with the gateway row CLICKED OPEN: engine picker shows `★ gateway default · parakeet` (selected), `whisper · text streaming ✗ · final when you stop`, `parakeet · text streaming ✓` (watchkit v0.6.0 from this worktree; Voice in restored to Local Vosk after) | shot ✓ |
 | 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | shot ✓ |
 | 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | shot ✓ |
 | 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | shot ✓ |
@@ -143,8 +143,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | shot ✓ |
 | 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | shot ✓ |
 | 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
-| 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` NEW | S47 | todo ▢ — Settings ▸ ℹ️ About row (`SettingsScreen.kt` `SettingsPage.About`) |
-| 50 | Dokploy on the wrist — the browser rides the gateway box's Dokploy board (scroll down to show the services, top of the page is not the shot) | `48-browser-dokploy.png` NEW | S48 | todo ▢ — ask the agent for the Dokploy URL as a markdown link, tap it (`http://<gateway>:3001` on LAN), scroll once, capture |
+| 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` NEW | S47 · capture: Settings ▸ ℹ️ About (also fixed: page title sat under OneUI's clock pill at default text scale — SettingsScreen top padding 12→34dp) | shot ✓ |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -175,7 +174,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `17-agent-picker.png` | re-shot | names check | refreshed |
 | `21/22/23/24` sessions | re-shot | keep claims | refreshed |
 | `27-commands-overlay.png` | re-shot | aurora note | refreshed |
-| — (new, 2026-11 round) | `35-splash-film.png`, `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy | refreshed |
+| — (new, 2026-11 round) | `35-splash-film.gif` (REAL looping intro film, cut from the shipped asset — superseded `.png`), `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png`, `47-about-screen.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy, About | refreshed |
 | hero film | RE-CUT complete (`demo-vertical-v0.6.0-raw.mp4`, 20 beats, 149 s) — owner scores + uploads, then README YouTube link swap | yes | refreshed (owner upload pending) |
 | `demo-walkthrough.gif` | RE-CUT from the new film's keyframes; committed as **`demo-walkthrough-v0.6.0.gif`** (version in the name — README links the current one; old GIF purged) | — | refreshed |
 | `21-session-search.png` | re-shot | honest: query is `harbors ` with IME up; results = 2 seeded wear-demo rows | refreshed |
@@ -254,12 +253,14 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
   chat screen — capture THERE; then send `Reply with exactly: <token>` and
   confirm the reply in logcat (`finish run=… error=false len=…`) BEFORE trusting
   the shot. Restore model to gateway default afterwards.
-- **Browser rows (15 + 50):** ask wear-demo for exactly one markdown link
-  (repo GitHub / Dokploy board `http://<gateway>:3001`); uiautomator reports
-  bogus bounds inside Compose text — locate the link by BLUE-PIXEL FORENSICS
-  (find saturated-blue text pixels in the frame, tap their centroid), verify
-  the browser tile appears in the shade, capture the loaded page (scroll once
-  for Dokploy).
+- **Browser row (15):** deliver the ask with `-e text` (NOT the editor — adb swipes
+  inside the editor are parsed as HANDWRITING and silently type junk like "CT"/"VG");
+  ask wear-demo for exactly one markdown link (this repo's GitHub page). uiautomator
+  reports bogus bounds inside Compose text — locate the link by BLUE-PIXEL FORENSICS
+  (saturated-blue HSV cluster in the frame) and tap the CLUSTER CENTROID — the node
+  center can ride off the chip's right edge and land on the user-message sheet
+  (✎ Edit & resend) instead of the link. Then the browser page renders on the
+  watch — capture it directly.
 - **Expanded approval (23):** `-e notify_demo approval` → swipe-down shade →
   tap the card ONCE (OneUI expands in place: Open + Clear) → screencap. Deny
   the demo run afterwards: `am broadcast -n dev.hermes.wearos/.notify.ApprovalNotificationReceiver -a dev.hermes.wearos.DENY`.
@@ -404,6 +405,28 @@ strings only) → restore from `refs/original` on any botched pass → single
 Branch keeps exactly ONE generation of every tracked media path.
 
 ## 10. Feature changelog (append when a feature lands)
+
+- **2026-11-01 (batch-7: honesty round)** — owner's eye found what the gates missed. SHIPPED CHANGES:
+  `/home/clay` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
+  the vision endpoint after OCR went blind on dissolves; mask must be ALPHA-PRESERVING — plain imread
+  silently squares the circle); SPEC text anonymized; §8 privacy gate extended (OCR every PNG + EVERY GIF
+  frame, fades by vision; `Clayton` whitelisted — it's a credit, not a leak). Honest re-shoots: `26` =
+  **gpt-6-luna** (an answerable model — fable-5.1 400s here), `28` = this repo's REAL GitHub page (ask via
+  `-e text`; the editor parses adb swipes as HANDWRITING — it typed "CT"/"VG" into drafts; tap the blue
+  cluster CENTROID, node bounds lie), `32` = EXPANDED approval card — Approve/Deny/Open session ALL render
+  (the "OneUI caps at Open+Clear" ledger note was wrong), `40` = gateway engine picker (whisper/parakeet
+  rows; needed the v0.6.0 watchkit — the boot-restored systemd daemon was the old main-branch copy), `47`
+  = About page (new row; its title sat under the clock pill at default scale → SettingsScreen top padding
+  12→34dp shipped), `35-splash-film` = real transparent GIF cut from the shipped asset. The walkthrough GIF
+  no longer needs the master mp4: `gif_build.py` composes committed circle-masked stills + asset-motion
+  intro on the film's canvas, 1.5 s holds — 59.5 s legible loop, vision-gated 48/48. Dev hooks: `-e dev_lane`
+  (adb can't hold a Compose drag — lane destinations are now deterministic). README: OpenCode paragraph
+  says learned-from ≠ reused (self-patch anecdote deleted per owner), splash caption gains tap-to-skip +
+  the film's provenance (owner's first fully-local AI video; Qwen Image + MiniMax, audio included), voice
+  ladder rebuilt around the real three-way picker incl. parakeet.sh one-shot setup, body tools say which
+  signals TRULY work (SpO2/sleep: wired, waiting, quiet — RE is the plan), and a size-and-aging section
+  with the watch's own numbers (60 MB APK debug, 68 MB optional model, 25 KB cache that never grows).
+  Dokploy was never real — ignore every past mention.
 
 - **2026-11-01 (v0.6.0 media round)** — full re-shoot of every §2 row against the v0.6.0 build;
   film re-cut from seven fresh `screenrecord` takes (`vid/raw/r[0-8]*`, logcat marks per take via
