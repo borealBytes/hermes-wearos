@@ -5,7 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pinch font-scale clamp + quantize math (0.75×–1.6×, 0.05 grid). */
+/** Pinch font-scale clamp + quantize math (0.55×–1.6×, 0.05 grid). */
 class FontScaleTest {
 
     @Test fun `clamps to the approved range`() {
@@ -20,7 +20,7 @@ class FontScaleTest {
         assertEquals(1.10f, FontScale.quantize(1.124f), 0.0001f)
         assertEquals(1.00f, FontScale.quantize(0.99f), 0.0001f)
         assertEquals(1.05f, FontScale.quantize(1.03f), 0.0001f)
-        assertEquals(FontScale.MIN, FontScale.quantize(0.7f), 0.0001f)
+        assertEquals(FontScale.MIN, FontScale.quantize(0.5f), 0.0001f)
         assertEquals(FontScale.MAX, FontScale.quantize(1.62f), 0.0001f)
         assertEquals(FontScale.DEFAULT, FontScale.quantize(Float.NaN), 0.0001f)
         assertEquals(FontScale.DEFAULT, FontScale.quantize(Float.POSITIVE_INFINITY), 0.0001f)
