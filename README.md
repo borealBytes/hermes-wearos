@@ -264,22 +264,30 @@ endpoint begins below:
 
 ## Body tools (opt-in, owner-off by default)
 
-The watch can feed its own sensors to the agent — behind four independent toggles, all default **off**:
+The watch can feed its own sensors to the agent — behind independent toggles, all default **off**.
+Stated with zero marketing:
 
-| Tool | Toggle | Data path |
+| Tool | Today, on the Galaxy Watch this was built against | Data path |
 |---|---|---|
-| `watch_heart_rate` | Body tools ▸ Heart rate | Health Services → signed snapshot → gateway → agent |
-| `watch_steps` | Body tools ▸ Steps | same, with daily counter semantics |
-| `watch_location` | Body tools ▸ Location | one-shot GPS fix (fresh on chat-ask, last-known on timers) |
-| auto-attach digest | Body tools ▸ Attach with questions | piggybacks the digest on each ask, battery-aware |
+| `watch_heart_rate` | ✅ works — streams what Health Services actually delivers | Health Services → signed snapshot → gateway → agent |
+| `watch_steps` | ✅ works — same, with daily counter semantics | same |
+| `watch_location` | one-shot GPS fix (fresh on chat-ask, last-known on timers) | watch GPS → snapshot |
+| `watch_spo2` · `watch_sleep` | ⚠️ **toggle is live; data is not** — Samsung's Health Services exposes neither to Wear apps, so the toggle flips and nothing arrives | wiring complete, source silent |
+| auto-attach digest | piggybacks the digest on each ask, battery-aware | snapshot → ask body |
 
 <img src="docs/screens/10-settings-body.png" width="220" alt="Body tools section in Settings with heart rate and steps toggles" align="right" hspace="16"/>
 
 Snapshots are pushed over TLS to *your* watchkit, cached server-side with a freshness cap, and exposed
-to the agent as both MCP-style tools and raw JSON. Nothing is forwarded anywhere else. On Samsung,
-Health Services currently exposes heart-rate and steps only — no sleep/SpO2 — and its `DataType`
-constants are matched tolerantly (real-world crashes taught us that). On non-Samsung vendors the
-toggles simply report "vendor not available" and everything else keeps working.
+to the agent as both MCP-style tools and raw JSON. Nothing is forwarded anywhere else. The `DataType`
+constants are matched tolerantly (real-world crashes taught us that), so the moment a device *does*
+expose SpO2 or sleep it surfaces with no watch update. On non-Samsung vendors the toggles simply
+report "vendor not available" and everything else keeps working.
+
+The ⚠️ rows are a target, not a resignation: the plan for blood oxygen, sleep, and every other signal
+Samsung keeps behind its own apps is to **reverse-engineer the vendor channels** until they talk.
+The goal is honestly greedy — pull in every measurement this watch is physically capable of, whether
+Health Services offers it politely or not. Until then the toggles tell the truth: wired, waiting,
+quiet.
 
 Everything about the app — gateways, tokens, toggles, font scale, session — lives on the watch.
 Every knob is on-device, and there are no hidden ones:
@@ -382,6 +390,7 @@ scripts/doctor.sh                          # toolchain + link health report
 ## Limitations & roadmap
 
 - [ ] **Whisper auto-fallback** wired into the voice loop (endpoint exists today; app-side confidence gate is next).
+- [ ] **Blood oxygen + sleep data**: toggles are wired and waiting; Samsung exposes neither to Wear — the path is reverse-engineering the vendor channels (and every other signal the watch can emit that we're not yet pulling).
 - [ ] **tsnet node** in-app: watch joins your tailnet itself — no tailscale router required (gomobile shim over `tsnet`, ~1 dev-day, specced in SPEC §11.4).
 - [ ] Play-store signing + R8 hardening pass; today it's a debug-build project.
 - [ ] Complications + tile. On-wrist launch currently = app icon (or voice link).
