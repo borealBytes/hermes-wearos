@@ -4,10 +4,12 @@
 #   scripts/setup.sh [--dry-run] [--config FILE] [--serial SERIAL] [--skip-build] [--no-device]
 #                    [--gateway-label L] [--api URL]... [--watchkit URL]...
 #                    [--token T] [--watchkit-token T] [--install-soul] [--agent-keys]
+#                    [--tailnet-key TSKEY-…]
 #
 # Reads watchos.config.json (cp watchos.config.example.json first); flags override config.
 # Flow: build APK → install on the watch (chunked+md5-verified push for wireless devices) →
-# push token/gateways via DevAskReceiver (debug builds) → health-check the gateway → next steps.
+# push token/gateways/tailnet-key via DevAskReceiver (debug builds) → health-check the
+# gateway → next steps.
 # Idempotent: every step is overwrite-or-skip, run it again freely. --dry-run prints the plan.
 #
 # NO hidden deps: bash (≥4.4) + python3 (config parse) + adb/gradle via scripts/env.sh
@@ -26,6 +28,7 @@ PROFILE=wear                              # wear-agent profile segment (/p/wear)
 DRY=0; SKIP_BUILD=0; NO_DEVICE=0; INSTALL_SOUL=0
 CONFIG="$ROOT/watchos.config.json"
 SERIAL=""; LABEL=""; TOKEN=""; WK_TOKEN=""
+TAILNET_KEY=""; TAILNET_HOST=""
 APIS=(); WKS=()
 
 say()  { printf '\033[1;36m==\033[0m %s\n' "$*"; }
@@ -46,6 +49,7 @@ while [ $# -gt 0 ]; do
     --token)          TOKEN="$2"; shift ;;
     --agent-keys)     AGENT_KEYS=1 ;;
     --watchkit-token) WK_TOKEN="$2"; shift ;;
+    --tailnet-key)    TAILNET_KEY="$2"; shift ;;
     --skip-build)     SKIP_BUILD=1 ;;
     --no-device)      NO_DEVICE=1 ;;
     --install-soul)   INSTALL_SOUL=1 ;;
@@ -57,6 +61,7 @@ done
 
 # ── config file (watchos.config.json; example ships placeholders) ────────────
 CFG_LABEL=""; CFG_TOKEN=""; CFG_WK_TOKEN=""; CFG_SERIAL=""
+CFG_TAILNET_KEY=""; CFG_TAILNET_HOST=""
 CFG_APIS=(); CFG_WKS=()
 if [ -f "$CONFIG" ]; then
   say "config: $CONFIG"
@@ -72,6 +77,9 @@ print(f"CFG_WK_TOKEN={s('watchkitToken')}")
 print(f"CFG_SERIAL={s('watchSerial')}")
 print(f"CFG_APIS={a('apiEndpoints')}")
 print(f"CFG_WKS={a('watchkitEndpoints')}")
+t = c.get("tailnet") or {}
+print(f"CFG_TAILNET_KEY={shlex.quote(str(t.get('authKey','')))}")
+print(f"CFG_TAILNET_HOST={shlex.quote(str(t.get('hostname','')))}")
 PY
   )"
 else
@@ -80,6 +88,7 @@ fi
 # flags win over config
 LABEL="${LABEL:-$CFG_LABEL}"; TOKEN="${TOKEN:-$CFG_TOKEN}"
 WK_TOKEN="${WK_TOKEN:-$CFG_WK_TOKEN}"; SERIAL="${SERIAL:-$CFG_SERIAL}"
+TAILNET_KEY="${TAILNET_KEY:-$CFG_TAILNET_KEY}"; TAILNET_HOST="${TAILNET_HOST:-$CFG_TAILNET_HOST}"
 [ ${#APIS[@]} -gt 0 ] || APIS=("${CFG_APIS[@]}")
 [ ${#WKS[@]}  -gt 0 ] || WKS=("${CFG_WKS[@]}")
 
@@ -98,6 +107,7 @@ say "plan: gateway '${LABEL:-hermes}'"
 printf '   api      : %s\n' "${APIS[@]}"
 printf '   watchkit : %s\n' "${WKS[@]:-<none — optional, needed for mermaid/images/whisper>}"
 printf '   token    : %s\n' "$([ -n "$TOKEN" ] && echo "set (${#TOKEN} chars)" || echo "<missing>")"
+printf '   tailnet  : %s\n' "$([ -n "$TAILNET_KEY" ] && echo "key set (${#TAILNET_KEY} chars)${TAILNET_HOST:+ as $TAILNET_HOST}" || echo "<no key — tunnel stays off (dev-direct)>")"
 
 # ── adb ──────────────────────────────────────────────────────────────────────
 ADB="$(command -v adb 2>/dev/null || true)"
@@ -205,6 +215,9 @@ if [ "$NO_DEVICE" = 0 ]; then
   i=$(( ${#WKS[@]} - 1 ))
   while [ "$i" -ge 0 ]; do broadcast set_watchkit_base "${WKS[$i]}"; i=$((i-1)); done
   [ -n "$TOKEN" ]    && broadcast set_token "$TOKEN"
+  # EMBEDDED TAILNET (SPEC §11.4): the key rides the same debug channel as the tokens. The
+  # watch's own tsnet node enrolls with it and every call thereafter goes through the tunnel.
+  [ -n "$TAILNET_KEY" ] && broadcast set_tailnet_key "$TAILNET_KEY"
   # --agent-keys (SPEC §12.2): a multiplexed gateway resolves API_SERVER_KEY PER PROFILE, so one
   # token only works for the profile it came from. When the gateway lives on THIS box we can read
   # every profiles/<p>/.env and push the whole map — otherwise "switch agent" 401s on every agent

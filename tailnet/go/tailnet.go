@@ -19,13 +19,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	_ "tailscale.com/feature/androiddns" // dnsproxyd resolver: no /etc/resolv.conf on Android (auto-registers its hook)
+	"tailscale.com/net/netmon"
 	"tailscale.com/tsnet"
 )
 
@@ -43,6 +47,81 @@ var (
 // authURLRe matches the login link tsnet prints through UserLogf when the
 // node needs interactive enrollment ("To authenticate, visit: https://…").
 var authURLRe = regexp.MustCompile(`https://login\.tailscale\.com/a/\S+`)
+
+// ── Android app-sandbox survival (tailscale#2293, golang/go#40569) ─────────
+// Android denies app UIDs the NETLINK_ROUTE socket, so Go's net.Interfaces
+// always fails and tsnet dies at Start with "route ip+net: netlinkrib:
+// permission denied". tailscale's own answer is feature/androidbin — but its
+// auto-registration is excluded for `android && cgo` builds (gomobile!),
+// because the official app feeds interface state from Java instead. We are
+// gomobile with no Java feed, so we register the same synthetic-interface
+// fallback the Termux/raw-binary path uses: one made-up interface carrying
+// the source addresses the kernel picks for outbound UDP sockets (permitted
+// under the sandbox; sends nothing). androiddns (imported above) covers the
+// matching resolv.conf gap for name resolution.
+func init() {
+	if onAndroidSandbox() {
+		netmon.RegisterInterfaceGetter(syntheticInterfaces)
+	}
+}
+
+// onAndroidSandbox mirrors androidbin.onAndroid: true for our gomobile
+// binaries, and for GOOS=linux binaries under an Android kernel (the host
+// smoketest on desktop Linux stays false, keeping real interface data).
+func onAndroidSandbox() bool {
+	if runtime.GOOS == "android" {
+		return true
+	}
+	_, err := os.Stat("/dev/__properties__")
+	return err == nil
+}
+
+func syntheticInterfaces() ([]netmon.Interface, error) {
+	var addrs []net.Addr
+	for _, probe := range []struct{ net, addr string }{
+		{"udp4", "8.8.8.8:53"}, {"udp6", "[2001:4860:4860::8888]:53"},
+	} {
+		if ip, ok := outboundIP(probe.net, probe.addr); ok {
+			bits := 32
+			if probe.net == "udp6" {
+				bits = 128
+			}
+			addrs = append(addrs, &net.IPNet{IP: ip.AsSlice(), Mask: net.CIDRMask(bits, bits)})
+		}
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("tailnet(android): no outbound routes found")
+	}
+	return []netmon.Interface{{
+		Interface: &net.Interface{MTU: 1500, Name: "android", Flags: net.FlagUp | net.FlagRunning},
+		AltAddrs:  addrs,
+	}}, nil
+}
+
+// outboundIP asks the kernel which source address it picks for an outbound
+// UDP socket — route selection without sending a packet, permitted where
+// interface enumeration is not.
+func outboundIP(network, addr string) (netip.Addr, bool) {
+	d := net.Dialer{Timeout: 2 * time.Second}
+	c, err := d.Dial(network, addr)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	defer c.Close()
+	ua, ok := c.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	ip, ok := netip.AddrFromSlice(ua.IP)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() || ip.IsUnspecified() {
+		return netip.Addr{}, false
+	}
+	return ip, true
+}
 
 func ringLogf(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
@@ -74,6 +153,7 @@ func userLogf(format string, args ...any) {
 // Kotlin owns the wait via StatusJSON(). Safe to call twice — second call is
 // a no-op returning the live port.
 func Start(dir string, hostname string, authKey string, forceLogin bool) (int, error) {
+	ringLogf("node starting (host=%s)", hostname)
 	mu.Lock()
 	if srv != nil {
 		p := socksPort
@@ -85,6 +165,17 @@ func Start(dir string, hostname string, authKey string, forceLogin bool) (int, e
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return 0, fmt.Errorf("tailnet dir: %w", err)
 	}
+	// Android app sandbox: logpolicy's fallback chain ends at a /tmp-style temp
+	// dir that does not exist here, and it PANICS in an internal goroutine
+	// ("no safe place found to store log state") — fatal under gomobile, caught
+	// on the emulator 2026-11-02. TS_LOGS_DIR only counts if the directory
+	// ALREADY EXISTS (LogsDir os.Stats it, never creates), so create it first.
+	// Also opt out of log.tailscale.com log sharing (the library default): no log
+	// upload from a personal watch node, one fewer network path to fail.
+	if logsDir := filepath.Join(dir, "logs"); os.MkdirAll(logsDir, 0700) == nil {
+		os.Setenv("TS_LOGS_DIR", logsDir)
+	}
+	os.Setenv("TS_NO_LOGS_NO_SUPPORT", "1")
 	if forceLogin {
 		if err := WipeState(dir); err != nil {
 			return 0, err

@@ -38,6 +38,14 @@ object TailnetEngine {
      *  `forceLogin` wipes local identity state first (the Re-enroll path). */
     fun startOnce(context: Context, hostname: String, key: String, forceLogin: Boolean = false) {
         val dir = java.io.File(context.filesDir, "tailnet").absolutePath
+        // The Go env is read at runtime-init under cgo; set the logpolicy jail
+        // escapes from the JVM side too (android.system.Os.setenv) so they exist
+        // BEFORE the Go runtime snapshots its environment. (Go Start() re-sets them.)
+        runCatching {
+            android.system.Os.setenv("TS_LOGS_DIR", java.io.File(dir, "logs").absolutePath, true)
+            android.system.Os.setenv("TS_NO_LOGS_NO_SUPPORT", "1", true)
+            android.util.Log.i("HermesWear", "tailnet: JVM setenv TS_LOGS_DIR=" + android.system.Os.getenv("TS_LOGS_DIR"))
+        }.onFailure { android.util.Log.w("HermesWear", "tailnet: JVM setenv failed: ${it.message}") }
         synchronized(this) {
             if (running) { Log.i(TAG, "tailnet already running (port=${TailnetRoute.socksPort})"); return }
             running = true

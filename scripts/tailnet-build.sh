@@ -9,6 +9,11 @@
 # an NDK r27 in $ANDROID_HOME/ndk. gomobile itself is installed into
 # devkit/go-home/bin on first run.
 #
+# -tags=version_android is NOT optional: without it tailscale assumes a full
+# Linux and dies at Start with "route ip+net: netlinkrib: permission denied" —
+# SELinux untrusted_app cannot read netlink routes (caught on the emulator,
+# 2026-11-02). The official tailscale Android client builds with the same tag.
+#
 #   scripts/tailnet-build.sh            # → app/libs/hermes-tailnet.aar
 #   scripts/tailnet-build.sh --smoke    # also runs the host-side smoketest
 set -euo pipefail
@@ -48,6 +53,7 @@ mkdir -p "$ROOT/app/libs"
 # strip via ldflags (Go symbols are the bulk of the AAR size).
 "$GO" env >/dev/null   # fail fast on a bad GOROOT
 CGO_ENABLED=1 gomobile bind -v -trimpath \
+  -tags=version_android \
   -ldflags="-s -w" \
   -target=android/arm,android/amd64 \
   -androidapi=30 \
