@@ -26,6 +26,10 @@
  *        for png/jpeg/webp (watch downsamples at decode); gif/bmp still fall back to the 460 scaler.
  *        15MB cap + img_roots allowlist always apply. X-Cache key = realpath|mtime|width ("full").
  *   POST /img             → same, JSON body {path[,width]}
+ *   GET  /media           → scaled A/V stream (bearer, HTTP Range). ?path=…[&q=0..100&mono=1&ab=64]
+ *        → mp4 (H.264/AAC faststart) for video extensions, m4a (AAC) for audio; ffmpeg pre-shrinks
+ *        to watch-size presets and caches per realpath|mtime|params (.cache/media). &poster=1 → one
+ *        JPEG frame for the inline card; &probe=1 → {duration_s,width,height,kind}. img_roots apply.
  *   POST /render/mermaid  → image/png  {code, width, format?}  (mmdc, .cache/ renders)
  *   POST /stt/whisper     → {text}     multipart "audio" wav/webm ≤10MB     (faster-whisper CPU)
  *   WS   /stt/stream      ← BINARY 16 kHz mono PCM16 mic frames from the watch, TEXT {"end":true}
@@ -93,7 +97,8 @@ const MODELS_DIR = path.join(WK_DIR, '.models');
 const VENV_PY = path.join(WK_DIR, '.venv', 'bin', 'python');
 const TRANSCRIBER = path.join(WK_DIR, 'whisper_transcribe.py');
 const PUPPETEER_CFG = path.join(CACHE_DIR, 'puppeteer.json');
-for (const d of [CACHE_DIR, TMP_DIR, NPM_CACHE, PUPPETEER_CACHE, MODELS_DIR]) fs.mkdirSync(d, { recursive: true });
+const MEDIA_DIR_EARLY = path.join(CACHE_DIR, 'media');
+for (const d of [CACHE_DIR, TMP_DIR, NPM_CACHE, PUPPETEER_CACHE, MODELS_DIR, MEDIA_DIR_EARLY]) fs.mkdirSync(d, { recursive: true });
 fs.writeFileSync(PUPPETEER_CFG, JSON.stringify({ args: ['--no-sandbox', '--disable-dev-shm-usage'] }));
 
 const START_MS = Date.now();
@@ -244,10 +249,46 @@ function agentKeys() {
 }
 
 async function handleAgentKeys(req, res, ip) {
+  seedProfileKeys(true); // a LEARN is the moment new agents should join the map (owner below)
   const agents = agentKeys();
   const withKey = agents.filter((a) => a.has_key).length;
   const body = JSON.stringify({ agents, source: 'profiles-env' });
   return done(res, send(res, 200, body), Date.now(), ip, 'agent_keys', 200, undefined, withKey);
+}
+
+/**
+ * AUTO-KEY NEW AGENTS (owner 2026-11-02: "two new agents had no keys and Learn said none —
+ * watchkit should look for new agents and get that key in there"). Agents created AFTER first
+ * setup carry no `API_SERVER_KEY` in their profile .env, and the gateway fails CLOSED for a
+ * keyless named profile (SPEC §12.2) — while the one-login convention says the default profile's
+ * key (read from ~/.hermes/.env) is THE key on this box. So: append it to every keyless profile,
+ * exactly the `scripts/setup.sh --agent-keys` recipe, but automatic. `force` = a Learn request
+ * always sweeps; otherwise the away-sweep poll (every 20 s) throttles this to once a minute —
+ * new agents are keyed within a minute of appearing, with no human step. Never logs key values;
+ * append-only, and a missing .env is created (0600 like its siblings).
+ */
+let lastKeySeedMs = 0;
+function seedProfileKeys(force = false) {
+  const now = Date.now();
+  if (!force && now - lastKeySeedMs < 60_000) return [];
+  lastKeySeedMs = now;
+  const homeKey = readEnvKey(path.join(HERMES_HOME, '.env'));
+  if (!homeKey) return [];
+  const seeded = [];
+  for (const profile of listAgents()) {
+    if (profile === 'default') continue; // default resolves ~/.hermes/.env directly in agentKeys()
+    const envPath = path.join(PROFILES_DIR, profile, '.env');
+    try {
+      if (readEnvKey(envPath)) continue;
+      let body = '';
+      try { body = fs.readFileSync(envPath, 'utf8'); } catch { /* no .env yet — one gets made */ }
+      const glue = body && !body.endsWith('\n') ? '\n' : ''; // never glue onto a newline-less tail
+      fs.appendFileSync(envPath, `${glue}API_SERVER_KEY=${homeKey}\n`, { mode: 0o600 });
+      seeded.push(profile);
+    } catch { /* vanished profile / read-only fs — that agent just stays keyless this round */ }
+  }
+  if (seeded.length) logLine({ ev: 'agent_keys_seeded', profiles: seeded });
+  return seeded;
 }
 
 // ── /search (session search over the profile's FTS index, SPEC §12.4) ───────
@@ -833,6 +874,157 @@ async function handleImg(req, res, ip, params) {
   }
 }
 
+// ── /media ─────────────────────────────────────────────────────────────────
+// A/V streaming (owner 2026-11-02: "the desktop shows generated video/audio — the wrist should
+// too, but there's no reason for a big-ass video over the wire"). ffmpeg pre-shrinks to a watch
+// shape (H.264 mp4 +faststart / AAC m4a), cached by realpath|mtime|params, served with HTTP
+// Range so ExoPlayer can seek. The WATCH picks the shape: q=0..100 quality slider,
+// mono=1 (watch speaker default; BT headphones ⇒ stereo), ab=audio kbit/s.
+// Modes: play (default) → mp4/m4a · poster=1 → one JPEG frame for the inline card ·
+//        probe=1 → JSON {duration_s,width,height} (inline card meta, no transcode).
+const MEDIA_MAX_INPUT_BYTES = 200 * 1024 * 1024;
+const MEDIA_TIMEOUT_MS = 5 * 60_000;      // full transcode hard cap
+const POSTER_TIMEOUT_MS = 30_000;
+const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.3gp', '.ts']);
+const AUDIO_EXT = new Set(['.mp3', '.m4a', '.aac', '.wav', '.ogg', '.opus', '.flac', '.wma', '.amr']);
+const MEDIA_DIR = MEDIA_DIR_EARLY;
+const FFMPEG = cfg.ffmpeg_path || 'ffmpeg';
+const FFPROBE = cfg.ffprobe_path || 'ffprobe';
+// Watch faces top out at 480×480; presets ladder down from there for bandwidth.
+const VIDEO_PRESETS = [
+  { max: 360, vbit: 350_000, fps: 24 },   // q < 34
+  { max: 480, vbit: 700_000, fps: 30 },   // q < 67 (default)
+  { max: 540, vbit: 1_200_000, fps: 30 }, // q ≥ 67
+];
+const videoPreset = (q) => VIDEO_PRESETS[q < 34 ? 0 : q < 67 ? 1 : 2];
+const mediaInflight = new Map(); // cacheKey → Promise<{file,type}>; joiners share one transcode
+
+/** ffprobe JSON (duration/streams); null on any failure — callers treat meta as optional. */
+async function ffprobeMeta(file) {
+  const r = await runChild(FFPROBE, [
+    '-v', 'error', '-show_entries', 'format=duration:stream=width,height',
+    '-of', 'json', file,
+  ], { timeout: 15_000 });
+  if (r.code !== 0) return null;
+  try {
+    const j = JSON.parse(r.out || '{}');
+    const v = (j.streams || []).find((s) => s.width) || {};
+    return {
+      duration_s: Math.round(Number(j.format?.duration) || 0),
+      width: v.width || null, height: v.height || null,
+    };
+  } catch { return null; }
+}
+
+async function runMediaFfmpeg(args, timeout) {
+  const r = await runChild(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args], { timeout });
+  return r;
+}
+
+/** Build (or join) the cached derivative. Throws {status,msg} for HTTP mapping. */
+async function mediaDerivative(real, stKey, mode, q, mono, ab) {
+  const key = sha256(`${real}|${stKey}|${mode}|${mode === 'play' ? q : '-'}|${mode === 'play' ? mono : '-'}|${mode === 'play' ? ab : '-'}`);
+  const extOut = mode === 'poster' ? '.jpg' : VIDEO_EXT.has(path.extname(real).toLowerCase()) ? '.mp4' : '.m4a';
+  const file = path.join(MEDIA_DIR, key + extOut);
+  if (fs.existsSync(file)) return { file, type: mode === 'poster' ? 'image/jpeg' : extOut === '.mp4' ? 'video/mp4' : 'audio/mp4', cached: true };
+  if (mediaInflight.has(key)) return mediaInflight.get(key);
+
+  const job = (async () => {
+    const tmp = path.join(TMP_DIR, `media-${crypto.randomBytes(6).toString('hex')}${extOut}`);
+    try {
+      let r;
+      if (mode === 'poster') {
+        const meta = await ffprobeMeta(real);
+        const at = meta && meta.duration_s > 2 ? Math.min(10, Math.floor(meta.duration_s / 3)) : 0;
+        const seek = at > 0 ? ['-ss', String(at)] : [];
+        r = await runMediaFfmpeg([...seek, '-i', real, '-frames:v', '1',
+          '-vf', 'scale=240:-2', '-q:v', '5', '-y', tmp], POSTER_TIMEOUT_MS);
+        if (r.code !== 0 && at > 0) r = await runMediaFfmpeg(['-i', real, '-frames:v', '1',
+          '-vf', 'scale=240:-2', '-q:v', '5', '-y', tmp], POSTER_TIMEOUT_MS);
+      } else if (VIDEO_EXT.has(path.extname(real).toLowerCase())) {
+        const p = videoPreset(q);
+        r = await runMediaFfmpeg(['-i', real,
+          '-vf', `scale='min(${p.max},iw)':'min(${p.max},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=${p.fps}`,
+          '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
+          '-b:v', String(p.vbit), '-maxrate', String(Math.round(p.vbit * 1.5)), '-bufsize', String(p.vbit * 2),
+          '-c:a', 'aac', '-b:a', `${ab}k`, '-ac', String(mono ? 1 : 2),
+          '-movflags', '+faststart', '-y', tmp], MEDIA_TIMEOUT_MS);
+      } else {
+        r = await runMediaFfmpeg(['-i', real, '-vn', '-c:a', 'aac', '-b:a', `${ab}k`, '-ac', String(mono ? 1 : 2), '-y', tmp], MEDIA_TIMEOUT_MS);
+      }
+      if (r.killed) throw { status: 504, msg: `${mode} timeout — ${mode === 'poster' ? '30s' : '300s'}` };
+      if (r.code !== 0) throw { status: 500, msg: ('ffmpeg failed: ' + (r.err || '')).slice(-600) };
+      await fsp.rename(tmp, file); // same fs (.cache) — atomic
+      return { file, type: mode === 'poster' ? 'image/jpeg' : extOut === '.mp4' ? 'video/mp4' : 'audio/mp4', cached: false };
+    } finally {
+      fs.rmSync(tmp, { force: true });
+      mediaInflight.delete(key);
+    }
+  })();
+  mediaInflight.set(key, job);
+  return job;
+}
+
+/** Stream with HTTP Range support (ExoPlayer seek). */
+function sendFile(req, res, file, type, extra = {}) {
+  const st = fs.statSync(file);
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  let start = 0, end = st.size - 1, partial = false;
+  if (range && (range[1] || range[2])) {
+    partial = true;
+    if (range[1]) { start = Math.min(Number(range[1]), Math.max(0, st.size - 1)); if (range[2]) end = Math.min(Number(range[2]), st.size - 1); }
+    else { start = Math.max(0, st.size - Number(range[2])); } // suffix form: bytes=-N
+    if (start > end) { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); res.end(); return; }
+  }
+  res.writeHead(partial ? 206 : 200, {
+    'Content-Type': type, 'Content-Length': end - start + 1,
+    ...(partial ? { 'Content-Range': `bytes ${start}-${end}/${st.size}` } : {}),
+    'Accept-Ranges': 'bytes', ...extra,
+  });
+  if (req.method === 'HEAD') { res.end(); return; }
+  fs.createReadStream(file, { start, end }).pipe(res);
+}
+
+async function handleMedia(req, res, ip, params) {
+  const t0 = Date.now();
+  const p = String(params.path || '').trim();
+  if (!p) return done(res, sendErr(res, 400, 'missing "path"'), t0, ip, 'media', 400);
+  const mode = params.poster === '1' ? 'poster' : params.probe === '1' ? 'probe' : 'play';
+  const q = Math.max(0, Math.min(100, Number(params.q ?? 50) || 0));
+  const mono = String(params.mono ?? '1') !== '0';
+  const ab = Math.max(24, Math.min(192, Number(params.ab ?? 64) || 64));
+
+  const resolved = path.resolve(p);
+  if (!underRoots(resolved)) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), ev: 'media403', ip, path: resolved }));
+    return done(res, sendErr(res, 403, 'path outside img_roots'), t0, ip, 'media', 403);
+  }
+  let real;
+  try { real = fs.realpathSync(resolved); } catch { return done(res, sendErr(res, 404, 'file not found'), t0, ip, 'media', 404); }
+  if (!underRoots(real)) return done(res, sendErr(res, 403, 'symlink escapes img_roots'), t0, ip, 'media', 403);
+  const ext = path.extname(real).toLowerCase();
+  if (!VIDEO_EXT.has(ext) && !AUDIO_EXT.has(ext))
+    return done(res, sendErr(res, 415, 'not a media extension'), t0, ip, 'media', 415);
+  const st = fs.statSync(real);
+  if (!st.isFile()) return done(res, sendErr(res, 400, 'not a file'), t0, ip, 'media', 400);
+  if (st.size > MEDIA_MAX_INPUT_BYTES)
+    return done(res, sendErr(res, 413, `media >${Math.round(MEDIA_MAX_INPUT_BYTES / 1048576)}MB`), t0, ip, 'media', 413);
+
+  if (mode === 'probe') {
+    const meta = await ffprobeMeta(real);
+    if (!meta) return done(res, sendErr(res, 500, 'ffprobe failed'), t0, ip, 'media', 500);
+    return done(res, send(res, 200, JSON.stringify({ ...meta, kind: VIDEO_EXT.has(ext) ? 'video' : 'audio' })), t0, ip, 'media', 200);
+  }
+  try {
+    const { file, type, cached } = await mediaDerivative(real, String(st.mtimeMs), mode, q, mono, ab);
+    const tBytes = { bytes: 0 };
+    done(res, sendFile(req, res, file, type, { 'X-Cache': cached ? 'hit' : 'miss' }), t0, ip, 'media', 200, cached ? 'hit' : 'miss', fs.statSync(file).size);
+    return tBytes;
+  } catch (e) {
+    return done(res, sendErr(res, e.status || 500, String(e.msg || e).slice(0, 300)), t0, ip, 'media', e.status || 500);
+  }
+}
+
 // ── /stt/whisper ───────────────────────────────────────────────────────────
 async function handleStt(req, res, ip) {
   const t0 = Date.now();
@@ -977,6 +1169,8 @@ function parseToolCallNames(toolCallsJson) {
 
 async function handleApprovalsWaiting(req, res, ip) {
   const t0 = Date.now();
+  seedProfileKeys(false); // throttled auto-key sweep: brand-new agents join the key map within a
+  // minute of appearing, driven by the watch's own 20 s away-poll — no human step (owner 2026-11-02).
   const waiting = [];
   const pulses = [];
   let names = [];
@@ -1194,6 +1388,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url === '/img') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleImg(req, res, ip, q);
+    }
+    if (req.method === 'GET' && url === '/media') {
+      const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
+      return await handleMedia(req, res, ip, q);
     }
     if (req.method === 'POST' && url === '/img') {
       let body;
