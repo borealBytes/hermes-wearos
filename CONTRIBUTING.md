@@ -63,11 +63,11 @@ they lie about the round glass (SPEC §14, owner rule).
 ## The alignment rule: one worktree owns the loop (owner rule, 2026-10-31)
 
 While a worktree is under test, **it must own both ends of the loop**: the watchkit serving
-port 8651 is started from THIS worktree's `scripts/watchkit.sh`, and the APK on the watch is
+port 42651 is started from THIS worktree's `scripts/watchkit.sh`, and the APK on the watch is
 byte-identical to THIS worktree's build. A stale daemon (or one from another checkout — the
 watch is indifferent to which repo answered) plus a newer APK is a phantom test harness:
 features get proven against the wrong code. Owner caught this exact drift — main-checkout
-watchkit squatting on 8651 while a splash-video worktree build rode the watch. Check both
+watchkit squatting on 42651 while a splash-video worktree build rode the watch. Check both
 before any hardware claim:
 
 ```bash
@@ -80,7 +80,7 @@ P=$(adb -s "$SERIAL" shell pm path dev.hermes.wearos | tr -d '\r' | sed 's/packa
 If the daemon is from another checkout: kill its pid, `scripts/watchkit.sh start` here. If the
 md5s differ: reinstall (chunked push, AGENTS.md §1) before trusting a single screenshot or
 logcat line. A stray `watchkit.mjs mcp` child belongs to the gateway (stdio, no port) — leave
-it; only the 8651 listener must be yours.
+it; only the 42651 listener must be yours.
 
 ## THE MEDIA RULE: pixels ship with the PR (owner rule, 2026-11-01)
 

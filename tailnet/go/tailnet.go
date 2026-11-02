@@ -407,48 +407,64 @@ func socksHandshake(c net.Conn) error {
 
 // socksReadTarget parses the CONNECT request and returns host:port.
 func socksReadTarget(c net.Conn) (string, error) {
-	req := make([]byte, 5)
-	if _, err := io.ReadFull(c, req); err != nil {
-		return "", err
-	}
-	if req[0] != 5 {
-		return "", fmt.Errorf("socks ver %d", req[0])
-	}
-	if req[1] != 1 { // CONNECT
-		return "", fmt.Errorf("socks cmd %d (want CONNECT)", req[1])
-	}
-	var host string
-	switch req[3] {
-	case 1: // IPv4
-		b := make([]byte, 4)
-		if _, err := io.ReadFull(c, b); err != nil {
-			return "", err
+	// The 5th CONNECT byte IS the domain length ([VER,CMD,RSV,ATYP,DOMLEN,…])
+	// — a separate "read domLen" after a 5-byte header misreads the first
+	// hostname char as the length and eats the request (the bug that made
+	// every Android-side CONNECT die, 2026-11-02; IP dials masked it).
+	// Accumulate whatever arrives, any segmentation — Android libcore is NOT
+	// curl; a multi-chunk CONNECT is anomaly-logged for the ring.
+	c.SetReadDeadline(time.Now().Add(15 * time.Second))
+	defer c.SetReadDeadline(time.Time{})
+	var buf []byte
+	chunk := make([]byte, 512)
+	for {
+		n, err := c.Read(chunk)
+		if n > 0 {
+			if len(buf) > 0 {
+				ringLogf("socks CONNECT split (%d so far): % x", len(buf)+n, chunk[:n])
+			}
+			buf = append(buf, chunk[:n]...)
 		}
-		host = net.IP(b).String()
-	case 3: // DOMAIN — resolved INSIDE the tailnet (MagicDNS truth)
-		domLen := make([]byte, 1)
-		if _, err := io.ReadFull(c, domLen); err != nil {
-			return "", err
+		if err != nil {
+			return "", fmt.Errorf("target read: %w (got %d: % x)", err, len(buf), buf)
 		}
-		dom := make([]byte, domLen[0])
-		if _, err := io.ReadFull(c, dom); err != nil {
-			return "", err
+		if len(buf) >= 5 {
+			if buf[0] != 5 {
+				return "", fmt.Errorf("socks ver %d", buf[0])
+			}
+			if buf[1] != 1 {
+				return "", fmt.Errorf("socks cmd %d (want CONNECT)", buf[1])
+			}
+			var host string
+			switch buf[3] {
+			case 1: // IPv4
+				if len(buf) < 10 {
+					continue
+				}
+				host = net.IP(buf[4:8]).String()
+				return net.JoinHostPort(host, fmt.Sprint(int(buf[8])<<8|int(buf[9]))), nil
+			case 3: // DOMAIN — resolved INSIDE the tailnet (MagicDNS truth)
+				if len(buf) < 6 {
+					continue
+				}
+				dl := int(buf[4])
+				if len(buf) < 5+dl+2 {
+					continue
+				}
+				host = string(buf[5 : 5+dl])
+				p := buf[5+dl:]
+				return net.JoinHostPort(host, fmt.Sprint(int(p[0])<<8|int(p[1]))), nil
+			case 4: // IPv6
+				if len(buf) < 22 {
+					continue
+				}
+				host = net.IP(buf[4:20]).String()
+				return net.JoinHostPort(host, fmt.Sprint(int(buf[20])<<8|int(buf[21]))), nil
+			default:
+				return "", fmt.Errorf("socks atyp %d", buf[3])
+			}
 		}
-		host = string(dom)
-	case 4: // IPv6
-		b := make([]byte, 16)
-		if _, err := io.ReadFull(c, b); err != nil {
-			return "", err
-		}
-		host = net.IP(b).String()
-	default:
-		return "", fmt.Errorf("socks atyp %d", req[3])
 	}
-	pb := make([]byte, 2)
-	if _, err := io.ReadFull(c, pb); err != nil {
-		return "", err
-	}
-	return net.JoinHostPort(host, fmt.Sprint(int(pb[0])<<8|int(pb[1]))), nil
 }
 
 func socksReply(c net.Conn, rep byte) {

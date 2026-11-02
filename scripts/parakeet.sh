@@ -10,7 +10,7 @@
 # Everything stays folder-local (never ~): anyone can run this on any Linux box.
 # Idempotent: every step skips what already exists. Run once, then restart the daemon:
 #   scripts/parakeet.sh && scripts/watchkit.sh stop && scripts/watchkit.sh start
-# Verify:   curl -s localhost:8651/health | jq .stt   → engines[] lists parakeet ready+streaming
+# Verify:   curl -s localhost:42651/health | jq .stt   → engines[] lists parakeet ready+streaming
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WK="$(cd "$HERE/../server/watchkit" && pwd)"

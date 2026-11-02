@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# watchkit — mermaid render + whisper STT helper daemon (tailnet :8651).
+# watchkit — mermaid render + whisper STT helper daemon (tailnet :42651).
 # Usage: scripts/watchkit.sh setup|run|start|stop|status|logs
 # Standalone on purpose: no env.sh — the daemon is plain node + a folder-local venv.
 set -euo pipefail
@@ -16,7 +16,7 @@ import json,sys; print(json.load(open(sys.argv[1])).get("host","127.0.0.1"))
 EOF
 )
 HOST="${HOST:-127.0.0.1}"
-PORT=8651
+PORT=42651
 URL="http://$HOST:$PORT"
 # keep npx + chromium downloads folder-local (same dirs watchkit.mjs uses)
 export PUPPETEER_CACHE_DIR="$WK/.cache/puppeteer"
@@ -37,7 +37,7 @@ case "${1:-}" in
       umask 077
       python3 - "$CONFIG" <<'EOF'
 import json, secrets, sys
-json.dump({"host": "0.0.0.0", "port": 8651, "token": secrets.token_hex(32)}, open(sys.argv[1], "w"))
+json.dump({"host": "0.0.0.0", "port": 42651, "token": secrets.token_hex(32)}, open(sys.argv[1], "w"))
 EOF
       chmod 600 "$CONFIG"
       echo "created $CONFIG (chmod 600, random token)"

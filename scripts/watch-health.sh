@@ -15,7 +15,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG="$ROOT/server/watchkit/config.json"
 
 PKG=dev.hermes.wearos
-WATCHKIT_URL="${WATCHKIT_URL:-http://192.168.1.50:8651}"
+WATCHKIT_URL="${WATCHKIT_URL:-http://192.168.1.50:42651}"
 SERIAL_ARGS=()
 if [ -n "${ANDROID_SERIAL:-}" ]; then SERIAL_ARGS=(-s "$ANDROID_SERIAL"); fi
 

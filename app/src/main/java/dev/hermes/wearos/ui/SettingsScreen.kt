@@ -808,7 +808,7 @@ fun SettingsScreen(
             )
         }
 
-        // watchkit helper daemon (server/watchkit, tailnet :8651): health probe like the Hermes Test.
+        // watchkit helper daemon (server/watchkit, tailnet :42651): health probe like the Hermes Test.
         }
         if (page == SettingsPage.Gateways) {
         FieldLabel("Watchkit")
@@ -1308,7 +1308,7 @@ private fun GatewayEditor(
         }
         FieldLabel("Watchkit URL (optional)")
         EditLine(value = draft.wkA, onChange = { onChange(draft.copy(wkA = it)) },
-            placeholder = "http://host:8651", onDone = { onSave(draft) })
+            placeholder = "http://host:42651", onDone = { onSave(draft) })
         FieldLabel("Token")
         EditLine(value = draft.token, onChange = { onChange(draft.copy(token = it)) },
             placeholder = "••••••", password = true, onDone = { onSave(draft) })

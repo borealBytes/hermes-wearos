@@ -54,8 +54,8 @@ object GatewayModel {
     const val SEED_LABEL = "hermes"
     const val TAILNET_API = "http://hermes.tailnet.ts.net:8642"
     const val LAN_API = "http://192.168.1.50:8642"
-    const val TAILNET_WATCHKIT = "http://hermes.tailnet.ts.net:8651"
-    const val LAN_WATCHKIT = "http://192.168.1.50:8651"
+    const val TAILNET_WATCHKIT = "http://hermes.tailnet.ts.net:42651"
+    const val LAN_WATCHKIT = "http://192.168.1.50:42651"
 
     // Stock URLs shipped by the pre-publication builds (the author's own box) are kept ONLY as
     // SHA-256 hashes, so neither the original machine name nor its tailnet/LAN addresses appear
@@ -72,7 +72,12 @@ object GatewayModel {
 
     /** Stock defaults (all shipped builds) that migration treats as "untouched". */
     private val STOCK_API = setOf(TAILNET_API, LAN_API)
-    private val STOCK_WATCHKIT = setOf(TAILNET_WATCHKIT, LAN_WATCHKIT)
+    // The published example once used :8651 for watchkit (moved to :42651, SPEC §11.4) — builds
+    // installed back then still carry those URLs and must migrate as untouched, not custom.
+    private val STOCK_WATCHKIT = setOf(
+        TAILNET_WATCHKIT, LAN_WATCHKIT,
+        "http://hermes.tailnet.ts.net:8651", "http://192.168.1.50:8651",
+    )
 
     private fun sha256hex(url: String): String =
         java.security.MessageDigest.getInstance("SHA-256")
@@ -161,7 +166,7 @@ object GatewayModel {
     fun tokenFor(gateway: Gateway?, agent: String, mirrorToken: String): String =
         gateway?.keyFor(agent)?.takeIf { it.isNotEmpty() } ?: mirrorToken.trim()
 
-    /** Same host, watchkit port convention (:8651) — owner's layout on every gateway box. */
+    /** Same host, watchkit port convention (:42651) — owner's layout on every gateway box. */
     fun derivedWatchkit(apiEndpoint: String): String {
         val u = normalizeEndpoint(apiEndpoint)
         val scheme = u.indexOf("://")
@@ -169,7 +174,7 @@ object GatewayModel {
         val authority = (u.substring(scheme + 3).substringBefore('/')).substringBefore('@').substringAfterLast('@')
         val host = authority.substringBefore(':')
         if (host.isEmpty()) return ""
-        return u.substring(0, scheme + 3) + (if (authority.contains(':')) authority.substringBeforeLast(':') else host) + ":8651"
+        return u.substring(0, scheme + 3) + (if (authority.contains(':')) authority.substringBeforeLast(':') else host) + ":42651"
     }
 
     /** Stable id from a URL host: `http://vps.example.com:8642` → `vps-example-com`. */

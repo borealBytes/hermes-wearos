@@ -76,7 +76,7 @@ class AppSettings(private val context: Context) {
         // scripts/setup.sh; production path is the pairing flow (S5). Mirrors GatewayModel.seed().
         const val DEFAULT_BASE_URL = "http://hermes.tailnet.ts.net:8642/p/wear"
         // watchkit helper daemon (server/watchkit): mermaid render + whisper STT, tailnet-only.
-        const val DEFAULT_WATCHKIT_URL = "http://hermes.tailnet.ts.net:8651"
+        const val DEFAULT_WATCHKIT_URL = "http://hermes.tailnet.ts.net:42651"
         // The watch's tailnet node name (SPEC §11.4) — admin-console-visible; per-owner suffix
         // recommended (hermes-wearos-pilot) since every re-enroll creates a node.
         const val DEFAULT_TAILNET_HOSTNAME = "hermes-wearos"

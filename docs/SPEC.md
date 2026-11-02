@@ -202,7 +202,7 @@ First run / untouched stock defaults seed `hermes` with
 
 ```
 api:      [http://hermes.tailnet.ts.net:8642,  http://192.168.1.50:8642]
-watchkit: [http://hermes.tailnet.ts.net:8651,  http://192.168.1.50:8651]
+watchkit: [http://hermes.tailnet.ts.net:42651, http://192.168.1.50:42651]
 ```
 
 — placeholder tailnet identity FIRST (MagicDNS publishes `.ts.net` names → CGNAT 100.64.0.0/10
@@ -258,11 +258,62 @@ action as its explicit button, and the explicit Save/Send button is always visib
 (`send ➤`), settings (Save), gateway editor (Save/Cancel), rename (Save), prompt editor (send ➤).
 A misbehaving IME can slow input, never strand it.
 
-### 11.4 In-app tailnet (tsnet) — STATUS: researched, NOT shipped (timebox stop)
+### 11.4 In-app tailnet (tsnet) — STATUS: SHIPPED (2026-11-02, lane (a))
 
-Plan was `github.com/tailscale/tsnet-go` embedded via gomobile (tsnet node in-process + SOCKS5,
-no system VPN). **VERIFIED 2026-10-24: that repository does not exist** (GitHub 404; Go module
-proxy `not found` for both `tailscale/tsnet-go` and `tailscale/tsnet`). The real landscape:
+**Doctrine (owner, 2026-11-02): "tailnet only, always."** The watch's own embedded node is THE
+transport — the §11.2 tailnet-first/LAN-fallback doctrine is retired as a *transport* story
+(endpoint failover between listed endpoints survives, but every one of them is reached THROUGH
+the tunnel; LAN-direct exists only as the `-e tailnet_on off` dev escape hatch).
+
+**Shipped shape (lane (a) from the research below):** `tailnet/go/` — a Go shim wrapping
+`tailscale.com/tsnet` v1.104.4 + a CONNECT-only SOCKS5 server on loopback (tsnet has no native
+SOCKS listener), exposed via `gomobile bind` as the COMMITTED `app/libs/hermes-tailnet.aar`
+(rebuild: `scripts/tailnet-build.sh`). All four OkHttp clients install one
+`TailnetRoute.SELECTOR` proxy — non-loopback URI ⇒ SOCKS to `127.0.0.1:<port>` ⇒ hostnames
+resolve inside the tailnet (MagicDNS truth). Keeper: permanent `specialUse` FGS (NOT dataSync —
+its 6 h/day cap on API 34 would tear the tunnel down nightly) + partial wake lock + boot
+receiver, so the tunnel predates the first ask. Health doctrine: node Running is NOT health —
+the gateway peer answering is (`domain/TailnetState` phase rules; DEGRADED covers
+node-up/gateway-down). Enrollment: reusable, non-ephemeral authkey (an ephemeral key strands a
+reinstalled app in NEEDS_AUTH); identity persists in `filesDir/tailnet`; Re-enroll = wipe +
+NEW admin-console node.
+
+**Android app-sandbox survival (all measured live on the Wear emulator, 2026-11-02 — none of
+this guessable from docs):**
+
+1. `route ip+net: netlinkrib: permission denied` — SELinux denies apps the NETLINK_ROUTE
+   socket, so Go's `net.Interfaces` always fails and tsnet dies at Start. `feature/androidbin`
+   is excluded from `android && cgo` builds (gomobile!), so we register the same
+   synthetic-interface fallback ourselves via `netmon.RegisterInterfaceGetter` (addresses from
+   kernel UDP route selection, permitted) + blank-import `androiddns` (dnsproxyd resolver).
+2. `panic: no safe place found to store log state` — logpolicy's fallback chain ends at a `/tmp`
+   that doesn't exist in the sandbox and PANICS in an internal goroutine (fatal under gomobile).
+   `TS_LOGS_DIR` is honored only if the dir ALREADY EXISTS (LogsDir Stats, never creates) —
+   create first, then set (JVM-side `Os.setenv` mirrors both before the Go runtime snapshots env).
+   `TS_NO_LOGS_NO_SUPPORT=1`: no log.tailscale.com upload from a personal watch node.
+3. `-tags=version_android` on the AAR build (the official Android client's build profile).
+4. **SOCKS5 parser off-by-one:** the domain length IS the 5th CONNECT byte
+   (`[VER,CMD,RSV,ATYP,DOMLEN,…]`); reading it as a separate byte behind a 5-byte header
+   misreads `t` as length 0x74 and strands every domain CONNECT (IP targets pass — the bug
+   hid behind working loopback tests until a live ask). Parser accumulates any TCP
+   segmentation: Android libcore is NOT curl.
+
+**Gateway-box truth (measured with nft counters):** tailscaled installs its own `ts-input`
+chain that ACCEPTS all traffic arriving on `tailscale0` — **no ufw rule is needed for tunnel
+traffic** (a hand-added `allow from 100.64.0.0/10` rule counted zero packets; the SYN was
+already accepted upstream of it). The only real requirements: tailscaled running + MagicDNS on
++ services listening (`:8642`, watchkit `:42651`). "Connection refused" through the tunnel =
+service not listening; timeout = node data-path problem — read `tailnet_log`.
+
+**Known costs:** APK 40 → ~105 MB (Go runtime × 2 ABIs; packaging squeeze open:
+`useLegacyPackaging`); permanent silent ongoing notification; battery impact to be measured on
+real metal (milestone 5). `TS_DEBUG_DISCO=1` in the engine env turns on disco tracing in
+`tailnet_log` when endpoint discovery is the suspect.
+
+**Research history (2026-10-24, kept as decision record).** Plan was
+`github.com/tailscale/tsnet-go` embedded via gomobile. **VERIFIED 2026-10-24: that repository
+does not exist** (GitHub 404; Go module proxy `not found` for both `tailscale/tsnet-go` and
+`tailscale/tsnet`). The real landscape:
 
 | Option | Shape | Fit here |
 |---|---|---|
@@ -271,14 +322,9 @@ proxy `not found` for both `tailscale/tsnet-go` and `tailscale/tsnet`). The real
 | `leondgarse/tailscale_mobile` | community fork exposing tsnet as c-shared + C API | JNI/JNA glue + same size/ABI/auth caveats; no SOCKS5 |
 | exit-node fallback (ships TODAY, §2 badge 🌐) | BT-tethered phone holds the tailnet; watch default-routes through it | zero APK size, works; costs the phone radio; the endpoint system already handles it — LAN/phone-absent failover picks the tailnet URL when reachable |
 
-**Stop decision (per this ticket's own timebox):** ship the gateway system; the tailnet DEFAULT
-already behaves correctly at home via failover, and away-from-home works via the tethered-phone
-path. To make the watch a first-class tailnet node, the owner picks the lane: (a) gomobile tsnet
-shim (SOCKS5, +size, battery note: goroutine lives in Graph scope, state on
-`filesDir/tailnet` re-auths silently — WorkManager-gated cadence is the follow-up), or (b) ride
-libtailscale/VpnService (official, consent dialog, heavier on Wear). Either needs a tsnet
-**authkey** (or once-per-node approval on his phone: AuthURL → tailscale.com/key). Dev hook
-today: none — this section IS the Phase B artifact.
+**Stop decision (2026-10-24, superseded 2026-11-02):** the owner picked lane (a) and it shipped —
+see the SHIPPED block above; the authkey flow is `-e set_tailnet_key`/Settings ▸ Tailnet, and
+the "Phase B artifact" this section was is now `tailnet/go/` + `TailnetService`.
 
 
 ### 11.5 What "tailnet endpoint" can and cannot mean on the watch (owner bug, 2026-10-29)

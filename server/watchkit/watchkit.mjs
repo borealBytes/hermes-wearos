@@ -75,7 +75,7 @@ try {
 const TOKEN = process.env.WATCHKIT_TOKEN || cfg.token || '';
 if (!TOKEN) { console.error('watchkit: empty token in config'); process.exit(2); }
 const HOST = process.env.WATCHKIT_HOST || cfg.host || '127.0.0.1'; // bind: set your LAN/tailnet IP in config.json
-const PORT = Number(process.env.WATCHKIT_PORT || cfg.port || 8651);
+const PORT = Number(process.env.WATCHKIT_PORT || cfg.port || 42651);
 // Stdio MCP mode (`node watchkit.mjs mcp`): stdout is reserved for JSON-RPC; logs go to stderr.
 const MCP_MODE = process.argv.slice(2).includes('mcp');
 const IMG_TIMEOUT_MS = 30_000;        // Pillow scale hard cap (used by handleImg)

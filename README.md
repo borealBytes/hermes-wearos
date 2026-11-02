@@ -8,10 +8,11 @@ memory, cron jobs, and your files — answers on your wrist, out loud, before yo
 
 Everything heavy runs on your gateway. The watch streams text in, streams tokens back, renders the
 answer (markdown, code, tables, **mermaid**, full-res images), and speaks it with an on-device voice.
-The whole app is ~1 MB of Kotlin + a zero-dependency Node helper on the server side.
+The app is Kotlin + an embedded Tailscale node (Go runtime via gomobile — it's why the APK is chunky)
++ a zero-dependency Node helper on the server side.
 
 *Works with any [Hermes](https://github.com/borealBytes) gateway exposing its API server; the watch
-needs nothing but HTTP on your LAN or tailnet.*
+brings its own Tailscale node, so it reaches your gateway from anywhere — no LAN, no router tricks.*
 
 **Round-first — that's why every image here is a circle.** We mask screenshots to a circle because
 that is exactly what the owner's Galaxy Watch shows. Under the mask the app renders a normal
@@ -41,7 +42,7 @@ mannerisms); a OnePlus Watch is next on the test bench.
 Your assistant shouldn't have to phone home to survive. This stack is *yours* end to end: the model,
 the gateway, the watch client, the microphone path — all self-hosted, default-configured to leak
 nothing. Voice stays on the watch unless you explicitly send audio to your own server. Replies stream
-over your LAN or your tailnet, never through a third-party relay, and the cache on the watch is
+over your tailnet (through the watch's own node), never through a third-party relay, and the cache on the watch is
 encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 
 ## What you get
@@ -195,7 +196,7 @@ flowchart LR
     end
     subgraph server [Your gateway box]
         HG[Hermes gateway API :8642<br/>/p/wear profile] --> LLM[Self-hosted LLM<br/>OpenAI-compatible]
-        WK[watchkit helper :8651<br/>zero-dep Node] --- IMG[img / mermaid render]
+        WK[watchkit helper :42651<br/>zero-dep Node] --- IMG[img / mermaid render]
         WK --- BODY[health snapshot cache]
     end
     UI -- "LAN or Tailscale<br/>HTTP + SSE" --> HG
@@ -227,34 +228,41 @@ paths (and one keyboard back door):
 TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
 without touching a cloud voice. Mute is one dial flick (drag the orb toward 1:20) — since batch 3 the orb is the *only* control on the chat screen: nine drag directions stand in for every button, and the ⌘ lane at 5:20 opens the slash overlay. Reply loudness is PER AGENT — the Voice page slider, the mute-lane dwell slider on the dial, and the satellite all ride the same per-agent store. While it reads aloud, the chat keeps the SPOKEN sentence in view (karaoke follow); and a fresh reply rests just above the orb from sentence one, growing upward, instead of starting at the top of the circle.
 
-## Networking: LAN at home, tailnet everywhere
+## Networking: the watch's own tailnet node is the transport
 
-The watch holds an ordered list of gateway endpoints (e.g. `tailnet → LAN`) and probes every endpoint
-on a fixed cadence. First healthy endpoint wins, stays sticky, and every API call + image fetch rides
-the same winner so you never get split-brain rendering. Everything is visible and editable on the
-watch — Settings ▸ Gateways is a real multi-gateway manager, not a single URL box:
+The app embeds a real Tailscale node (`tsnet`, no system Tailscale needed anywhere). Enrollment
+takes one reusable authkey from your tailnet admin console (Settings ▸ Gateways ▸ Tailnet, or
+setup), and from then on **every** call — REST, answer streams, image fetches, the STT WebSocket —
+leaves the watch through a private WireGuard tunnel to your gateway, over any Wi-Fi. No LAN
+requirement, no phone in the path, no third-party relay: your tailnet is the network.
+
+The watch still keeps an ordered list of gateway endpoints (probe, pick, sticky winner — so a
+second tailnet FQDN or a LAN literal reached *through* the tunnel can serve as fallback) — and
+everything is visible and editable on the watch: Settings ▸ Gateways is a real multi-gateway
+manager, not a single URL box. Tailnet truth lives one level down in Settings ▸ Gateways ▸
+Tailnet: node name, key, live phase, and a Test button that health-checks the gateway through
+the exact tunnel an ask rides:
 
 <img src="docs/screens/18-settings-home.png" width="220" alt="Settings home: the Gateways row showing two saved gateways with the current one checked, Voice out / Voice in / Display / Watch below" align="right" hspace="16"/>
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Probing
-    Probing --> Tailnet: tailnet answers
-    Probing --> LAN: LAN answers first
-    Tailnet --> LAN: tailnet fails probe
-    LAN --> Tailnet: tailnet healthy again
-    LAN --> Probing: all endpoints fail
-    Tailnet --> Probing: all endpoints fail
+    [*] --> Enrolling: first run, authkey entered
+    Enrolling --> Tunnel: node enrolled (persisted)
+    Tunnel --> Probing: endpoints probed THROUGH the tunnel
+    Probing --> Tunnel: healthy endpoint found (sticky winner)
+    Tunnel --> Degraded: gateway peer offline on the tailnet
+    Degraded --> Tunnel: gateway peer back
 ```
 
-| Mode | You get | Setup |
+| Piece | You get | Setup |
 |---|---|---|
-| **LAN** (`http://192.168.1.50:8642`) | fastest, zero deps | gateway listens on your LAN; done |
-| **Tailnet** (`http://hermes.tailnet.ts.net:8642`) | answers from anywhere your watch has wifi | run `tailscale` on the gateway box; the watch just resolves the name |
+| **Watch node** (`hermes-wearos-<you>.your-tailnet.ts.net`) | answers from anywhere with Wi-Fi | mint a *reusable, non-ephemeral* authkey (admin ▸ Keys), hand it over once |
+| **Gateway** (`http://<gateway-fqdn>.ts.net:8642`) | the API the watch rides the tunnel to | run `tailscale` on the gateway box; nothing else — tailscaled accepts tunnel traffic itself |
+| **LAN literal** (`http://192.168.1.50:8642`) | optional extra endpoint | reached THROUGH the tunnel too; useful only with the dev escape hatch (`tailnet_on off`) |
 
-The watch itself does *not* need Tailscale today — it reaches the tailnet URL through ordinary DNS
-when the watch sits on the tailnet (or a router that does). An embedded in-app tsnet node (watch joins
-the tailnet directly, no router help) is specced and deferred; see [SPEC §11.4](docs/SPEC.md).
+The old model — watch outside the tailnet, reaching `.ts.net` names only when the *router* did
+the resolving, LAN at home as fallback — is retired; SPEC §11.4 keeps the full decision record.
 
 Inside the gateway manager, every saved gateway is a row — here the owner's box and a parked
 fallback, each with its live probe dot, the current auto-selected winner marked, and the active
@@ -417,7 +425,9 @@ scripts/doctor.sh                          # toolchain + link health report
 
 - [ ] **Whisper auto-fallback** wired into the voice loop (endpoint exists today; app-side confidence gate is next).
 - [ ] **Blood oxygen + sleep data**: toggles are wired and waiting; Samsung exposes neither to Wear — the path is reverse-engineering the vendor channels (and every other signal the watch can emit that we're not yet pulling).
-- [ ] **tsnet node** in-app: watch joins your tailnet itself — no tailscale router required (gomobile shim over `tsnet`, ~1 dev-day, specced in SPEC §11.4).
+- [x] **tsnet node in-app** — shipped: the watch joins your tailnet itself (embedded `tsnet` via
+      a gomobile shim), and the tunnel is THE transport — no LAN path, no tailscale-enabled router
+      required (SPEC §11.4).
 - [ ] Play-store signing + R8 hardening pass; today it's a debug-build project.
 - [ ] Complications + tile. On-wrist launch currently = app icon (or voice link).
 - [ ] Six-digit pairing flow polish (S5) for first-run UX on a stranger's watch.

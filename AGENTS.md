@@ -55,7 +55,8 @@ adb -s "$SERIAL" shell dumpsys deviceidle disable     # no Doze mid-install (re-
 ```
 
 **Chunked-push install (this is what makes installs survive REAL watches):** one-shot `adb
-install` of the ~40 MB APK over the BT-tethered link frequently dies mid-push (EOF/socket
+install` of the large APK (~105 MB since the embedded tailnet node joined it) over the
+BT-tethered link frequently dies mid-push (EOF/socket
 errors). Instead split into ≤14 chunks, push each with retries, reassemble on-device, and only
 `pm install` after an md5 match:
 
@@ -78,7 +79,27 @@ adb -s "$SERIAL" shell 'cat /data/local/tmp/part_* > /data/local/tmp/app.apk'
 cp watchos.config.example.json watchos.config.json   # gitignored; the ONLY thing to edit here
 # gatewayLabel · apiEndpoints[] (first = DEFAULT entry, rest = failover fallbacks, SPEC §11)
 # watchkitEndpoints[] · token · watchkitToken? · watchSerial?
+# tailnet{ hostname, authKey } — the watch's own tsnet node (SPEC §11.4, see below)
 ```
+
+**EMBEDDED TAILNET — the tunnel IS the transport (SPEC §11.4, owner doctrine "tailnet only,
+always"):** the app ships a real Tailscale node (`tsnet` bound via gomobile, ~17 MB AAR at
+`app/libs/hermes-tailnet.aar`); every REST/SSE/WebSocket call rides it through a loopback
+SOCKS5 shim — no LAN path, no phone-tailnet dependency. What an installer must do:
+
+1. **Get an authkey from the tailnet admin console** (Keys ▸ generate): *reusable* and
+   *non-ephemeral* (an ephemeral key dies with the first enrollment and a reinstall then
+   strands the app in NEEDS_AUTH). Never commit it, never echo it into logs.
+2. `scripts/setup.sh --tailnet-key tskey-auth-…` (or the `tailnet{}` config block; also
+   `-e set_tailnet_key` over the debug channel). The node enrolls once as `tailnet.hostname`
+   (suffix it per owner — `hermes-wearos-pilot` — every Re-enroll creates a NEW admin-console
+   node row to prune); identity then lives in app data, the key is not needed again.
+3. **Gateway box:** run `tailscale` + enable MagicDNS; nothing else. ufw needs NO rule for
+   tunnel traffic — tailscaled installs its own `ts-input` nft chain that ACCEPTS everything
+   arriving on `tailscale0` (verified live 2026-11-02: a hand-added ufw allow rule saw zero
+   packets because tailscale already handled it). Watchkit listens on **:42651**.
+4. Dev escape hatch when you must bypass the tunnel to debug: `-e tailnet_on off` → plain
+   sockets (this is a dev switch, not a user mode).
 
 **Multi-agent = per-profile keys (SPEC §12.2, this is the #1 gotcha):** a Hermes gateway multiplexes
 every profile on one port, but `API_SERVER_KEY` resolves **per profile** and fails *closed* for a
@@ -110,8 +131,14 @@ Many screens (session search, fork/archive/delete, images, mermaid) ride the wat
 `scripts/watchkit.sh setup && scripts/watchkit.sh start` on the gateway box — `setup.sh` doesn't own it.
 The first build needs network; once `../devkit/` is warm, `gradle --offline` is the fast lane.
 
+The tailnet AAR is a COMMITTED artifact — rebuild only when `tailnet/go` changes:
+`scripts/tailnet-build.sh` (folder-local Go + NDK r27 in `../devkit/`; ABIs = the app's
+`armeabi-v7a`+`x86_64`; `-tags=version_android` is NOT optional — without it tsnet dies at
+Start with `netlinkrib: permission denied`, Android SELinux forbids app netlink route reads).
+
 Setup pushes config via the **debug-only** `DevAskReceiver` (extras: `set_token`, `set_base`,
-`set_watchkit_base`, `set_watchkit`) — chain `set_base` LAST-endpoint-first so the DEFAULT entry
+`set_watchkit_base`, `set_watchkit`, `set_tailnet_key`, `tailnet_status`, `tailnet_on`,
+`tailnet_reenroll`) — chain `set_base` LAST-endpoint-first so the DEFAULT entry
 lands first (URL edits fold into the registry by prepending). Re-runnable: every step is
 overwrite-or-skip. Tests: `gradle :app:testDebugUnitTest` (must stay green, JVM-only, no device).
 
@@ -119,14 +146,18 @@ overwrite-or-skip. Tests: `gradle :app:testDebugUnitTest` (must stay green, JVM-
 
 - **Gateway URLs** — if a Hermes gateway runs on THIS machine, check Tailscale first:
   `tailscale status --json | jq -r '.Self.DnsName'` → your FQDN (use `http://<fqdn>:8642`;
-  MagicDNS resolves `.ts.net` only inside the tailnet). LAN: `ip -4 addr` for the local IP.
-  Remote gateway: ask for both URLs (tailnet + LAN fallback).
+  MagicDNS resolves `.ts.net` only inside the tailnet — and since §11.4 the watch reaches it
+  THROUGH its own node, so a tailnet URL is the only one that works; LAN literals are
+  reachable through the tunnel too if you must use one).
 - **Token** — same machine: `grep API_SERVER_KEY ~/.hermes/profiles/wear/.env` (setup.sh
   auto-detects this). Elsewhere: ask; it's that profile's `API_SERVER_KEY`.
+- **Tailnet authkey** — undetectable by design: it lives in the admin console, not on the
+  box. Ask the human to mint/reuse one (reusable + non-ephemeral, §2). If `watchos.config.json`
+  already carries `tailnet.authKey`, you have it — never print the value anywhere.
 - **Watch present or emulator?** — `adb devices`; zero devices + no watch → run the emulator
   path and report that instead of stalling on hardware.
 
-Do NOT ask about: build flags, ports (8642 API / 8651 watchkit / 9119 dashboard are fixed
+Do NOT ask about: build flags, ports (8642 API / 42651 watchkit / 9119 dashboard are fixed
 defaults), where files go — everything else is detectable or in `docs/SPEC.md`.
 
 ## 5. Wear agent persona (optional but the fun part)
@@ -141,13 +172,20 @@ scripts/setup.sh --install-soul    # copies docs/wear-SOUL.example.md in (backs 
 It teaches short replies, unicode math, `![desc](/abs/path.png)` image lines (the watch renders
 them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron delivery.
 
-## 6. Verify (all three must pass before you claim success)
+## 6. Verify (all four must pass before you claim success)
 
-1. **Health:** `curl http://<api-endpoint>/p/wear/v1/health` (or `/health`) → HTTP 200 from the
+1. **Tunnel:** `adb -s "$SERIAL" shell am broadcast -n dev.hermes.wearos/dev.hermes.wearos.DevAskReceiver -e tailnet_status 1`
+   → logcat shows `tailnet_status phase=ACTIVE … gateway <ip> online`. Not ACTIVE? the
+   `tailnet_log` ring lines right after it name the reason (needs a key? node down? engine
+   error?). The ask cannot work before this — the tunnel is the only transport (SPEC §11.4).
+2. **Health:** `curl http://<api-endpoint>/p/wear/v1/health` (or `/health`) → HTTP 200 from the
    dev machine AND the watch badge flips 🏠/🌐 in Settings ▸ Gateways (● winner dot).
-2. **One ask:** `adb -s "$SERIAL" shell am broadcast -n dev.hermes.wearos/dev.hermes.wearos.DevAskReceiver -e text "what is 12 times 12"`
+3. **One ask:** `adb -s "$SERIAL" shell "am broadcast -n dev.hermes.wearos/dev.hermes.wearos.DevAskReceiver -e text 'what is 12 times 12'"`
    → streamed answer lands (watch screen + `logcat -s HermesWear` shows `run accepted` → final).
-3. **Screenshot proof:** `adb -s "$SERIAL" exec-out screencap -p > verify.png` shows the answer
+   ⚠ **Quote trap:** the text value MUST survive to the device shell quoted (note the outer
+   double quotes above — same trick `setup.sh` uses). Unquoted, `am` takes only the first
+   word and your "answer" proves nothing about streaming a real message.
+4. **Screenshot proof:** `adb -s "$SERIAL" exec-out screencap -p > verify.png` shows the answer
    (or `scripts/verify-chat.sh` for the whole ask+capture+logcat dance in one command).
 
 ## 7. Troubleshooting
@@ -160,7 +198,11 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | 401 from gateway | Wrong profile token → `set_token` the **wear** profile's key (per-profile keys are a thing) |
 | One agent works, others 401 on every call (Test still says ✅) | That profile has no `API_SERVER_KEY` in its `.env` — `setup.sh --agent-keys` (on a gateway box it also SEEDS missing profile keys from `~/.hermes/.env`, the one-login convention), or Settings ▸ Gateways ▸ Agent keys ▸ ⟳ learn (SPEC §12.2) |
 | 401 from watchkit but gateway fine | watchkit has its OWN bearer (`server/watchkit/config.json token`) — set `watchkitToken`/`set_watchkit` |
-| tailnet entry always fails at home | Expected while the watch is off-tailnet: failover lands LAN in ~2.5 s (SPEC §11.2) — that's working |
+| Ask times out but `phase=ACTIVE` | the tunnel is up but the leg to the gateway is not — dump `-e tailnet_status 1` and read `tailnet_log`: `socks dial …: connection was refused` = nothing listening (watchkit on **:42651** down? `scripts/watchkit.sh start`); `timed out`/no dial line = tailnet data path (from the gateway box: `tailscale status` — is the watch node online? `tailscale ping <it>`?) |
+| `phase=NEEDS_AUTH` | key spent/identity wiped — mint a fresh REUSABLE key, `-e set_tailnet_key` (Settings ▸ Gateways ▸ Tailnet works too, Re-enroll needs two taps) |
+| Watch node absent from `tailscale status` on the gateway box | node never enrolled (NEEDS_AUTH above) or enrolled under a different tailnet — compare `tailnet_status` self FQDN with the gateway's `tailscale status --json` |
+| `am broadcast -e text` only delivered the first word | quote trap (§6.3) — outer double quotes, inner single |
+| Repeated `hermes-wearos*` rows in the admin console | each Re-enroll enrolls a NEW node — expected; prune the stale rows there |
 | No mermaid/images/whisper | watchkit daemon down → `scripts/watchkit.sh start` (check `status`/`logs`) |
 | A session row "vanished" after long-press | It was 🗃 **archived**, not lost — Sessions ▸ 🗃 archived chip ▸ hold the row ▸ ♻️ unarchive |
 | `--offline` build fails on a fresh clone | Run once **online** to populate the devkit, then go offline |
@@ -168,7 +210,12 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 
 ## 8. Where things live
 
-- `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints/failover).
+- `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints,
+  §11.4 the embedded tailnet node — the transport).
+- `tailnet/go/` — the Go side: tsnet node + CONNECT-only SOCKS5 shim (gomobile surface
+  `start/stop/statusJSON/logsJSON/wipeState`). `tailnet/go/cmd/smoketest` = host-side proof.
+- `scripts/tailnet-build.sh` — rebuilds `app/libs/hermes-tailnet.aar` from `tailnet/go`
+  (committed artifact; see §3 for when/why).
 - `CONTRIBUTING.md` — developer rules: the `wear-demo` test-agent policy, dev workflow quick card,
   mask-before-analysis discipline, watch connection gotchas.
 - `scripts/parakeet.sh` — one-shot installer for watchkit's streaming STT engine (transcribe.cpp +

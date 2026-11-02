@@ -5,7 +5,7 @@
     "http://hermes.tailnet.ts.net:8642"
   ],
   "watchkitEndpoints": [
-    "http://hermes.tailnet.ts.net:8651"
+    "http://hermes.tailnet.ts.net:42651"
   ],
   "tailnet": {
     "_comment": "authKey = reusable, non-ephemeral key from the Tailscale admin console (Keys ▸ generate). It enrolls the watch node ONCE (identity then lives in app data); re-enroll needs a fresh key. hostname = node name shown in the admin console.",
