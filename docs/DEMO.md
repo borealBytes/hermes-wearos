@@ -279,6 +279,10 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
   caption pills (`canvas_build.py` fonts/patterns) + intro-motion frames cut
   from the shipped asset; ~1500 ms still holds, ~2500 ms hero/end, ~125 ms
   motion frames; burn the `v<VER> · wear-demo` bug.
+- **One screen per watch frame (owner, 2026-11-02):** `*-pair.png` artifacts are README
+  side-by-side layouts — NEVER place one inside the GIF's watch circle (two tiny watches
+  read as broken). `gif_build` splits pairs at build (`pair_half`, cached) and captions each
+  half as its own beat.
 - **Caption typography (owner round 2, 2026-11-02):** every pill is centered
   by measuring the text with the SAME tracking it draws with (measure-track-6
   + draw-track-2 = off-center box, clipped text — the exact bug that shipped);
@@ -435,7 +439,9 @@ Branch keeps exactly ONE generation of every tracked media path.
   fixed in WearApp. 42 re-gated PASS; every emitted canvas frame pixel-checked (pill centered
   ±4 px, top text clear of the ring); privacy re-swept 0 leaks over 821 frames. Watch nudge
   trap: at default scale 14 px swipes inside rows read as CLICKS (hit a gateway ✕ twice) —
-  nudge scrollbars from dead space, ≥40 px.
+  nudge scrollbars from dead space, ≥40 px. Second owner pass: the README pair-comparisons
+  (41/46) had been dropped into the GIF's circle as two tiny watches — `gif_build` now splits
+  pairs at build and captions each half as its own beat (four single-screen beats), rule in §4.
 
 - **2026-11-01 (batch-7: honesty round)** — owner's eye found what the gates missed. SHIPPED CHANGES:
   `/home/clay` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
