@@ -10,36 +10,59 @@ C = f"{VID}/canvas"
 SEG = f"{VID}/segs"
 os.makedirs(SEG, exist_ok=True)
 OVL = {"bg": f"{C}/bg.png", "circle": f"{C}/circle.png", "ring": f"{C}/ring.png"}
+# Versioned outputs (owner rule): the RAW master carries the repo version in its name AND
+# metadata, so after the owner scores it in YouTube ("name-scored" keeps the stem), the
+# upload is always traceable to a build. gif_build.py finds it by the same version.
+with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "VERSION")) as _fh:
+    VER = _fh.read().strip()
+RAW = f"{VID}/demo-vertical-v{VER}-raw.mp4"
 
 # (source, in, dur, beat) ; None => canvas-only card. Arcs show the WHOLE feature:
 # action -> stream -> result. Durations tuned per raw's best window.
 SEGS = [
-    (None,           None, 3.0,  0),
-    ("a1b-full",      1.5,  7.0, 1),   # dial pins (lanes glow) - verified 10/27
-    ("a1b-full",      4.5,  6.5, 2),   # PTT overlay: red orb + partial-typing bubble
-    ("a1-stream",    13.0, 15.0, 3),   # streamed answer + live tool line + red stop orb
-    ("a1b-full",     16.0, 16.0, 4),   # rich cards + mermaid (white content 15-33)
-    ("a1b-full",     38.0,  7.0, 5),   # run stopped mid-flight: question + stopped stamp
-    ("a2-viewer",    19.0, 15.0, 6),   # mermaid tap -> zoomed viewer (white 20-34) -> pan
-    ("a3b-model",     2.0,  9.0, 7),   # picker: providers -> claude-fable-5.1 highlighted
-    ("a3b-model",    70.0,  4.1, 7),   # claude names itself verbatim
-    ("a4b-approval",  8.0, 20.0, 8),   # ⚠ Approve card + command preview + run running
-    ("a4b-approval", 46.0, 10.0, 8),   # resolved: final answer text on screen
-    ("a5-sessions",   6.0, 14.0, 9),   # search field + IME typing
-    ("a5b-unarchive",44.0,  8.0,10),   # sessions + archived chip row
-    ("a5b-unarchive",55.0, 12.0,10),   # long-press -> sheet (59-64) -> unarchive tap -> toast
-    ("a6-notify",    53.5, 10.0,11),   # drawer -> Hermes approval card fronts
-    ("a6-notify",    62.0, 14.0,11),   # expands (Approve/Deny) -> APPROVE TAP ~71
-    ("a6c-deeplink",  2.0, 24.0,12),   # settle card -> Open session -> landing
-    ("a7b-settings",  2.5, 10.0,13),   # live font-scale resize on real screens
-    ("a7b-settings", 13.5,  6.5,14),   # HOME -> launcher grid -> spirit tap -> launch
-    (None,           None, 3.5, 15),
+    (None,               None,  3.0,  0),   # hero card
+    ("r0-splash",         4.5,  9.0,  1),   # cold launch -> splash film -> reveal on moving frame (marks +5.3/+12.4)
+    ("r1-dial",           3.5,  4.0,  2),   # dial ring pinned, 8 lanes glow (dial_preview)
+    ("r1-dial",           7.5,  8.5,  3),   # press-hold red mic orb -> listening -> live STT partial "what"
+    ("r2b-chat",          4.0,  8.5,  4),   # streamed answer + red stop orb + scroll
+    ("r8-stopcards",     5.0, 14.0,  5),   # 700-word essay streams, tap orb -> "— stopped —" red stamp
+    ("img-table-02e",    0.0,  4.5,  6),   # markdown table card in the demo chat (still, slow push)
+    ("img-viewer-04e",    0.0,  4.5,  7),   # media viewer at 2.5x zoom (still, slow push)
+    ("r4b-pickers",       2.5,  9.0,  8),   # model picker: providers -> model list
+    ("r5b-approval",      8.0,  7.9,  9),   # ⚠ Approve card lands over the stream + ✅/❌ wedges
+    ("r5c-approve",       1.0,  7.0, 10),   # ✅ tap -> run resumes (gateway cancel -> continue)
+    ("img-sess-21d",      0.0,  4.5, 11),   # Search - 2 results for "harbors" (still, slow push)
+    ("r6e-sessions",      2.0, 14.0, 12),   # long-press row -> sheet -> archive -> count 11->10
+    ("img-shade-44",      0.0,  4.5, 13),   # desktop-session approval buzz card (still)
+    ("img-notify-31",     0.0,  4.5, 14),   # off-glass settle card, voice suppressed (still)
+    ("r3-voice",         17.0, 10.0, 15),   # voice-out speaks + karaoke follow on the reply
+    ("r7c-settings",      6.5, 11.0, 16),   # Display page + live font-scale 1.6 -> 0.75 -> reset
+    ("r7e-edge",          1.5,  6.9, 17),   # rim (edge-circle) drags scroll the list + normal swipe
+    ("r7d-gateways",      3.0, 13.0, 18),   # multi-gateway registry: winner dot + fallback + badge
+    (None,               None,  3.5, 19),   # end card
 ]
 
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         print("FAIL", " ".join(cmd[3:6]), r.stderr[-400:], flush=True); raise SystemExit(1)
+
+# Still-frame beats (owner rule: the circle is never static) — banked square captures get a
+# slow Ken-Burns push, pre-rendered once into vid/raw/img-<name>.mp4 and picked up below.
+STILL_SRC = DEMO + "/demo/square"
+for (src, tin, dur, beat) in SEGS:
+    if not (src or "").startswith("img-"):
+        continue
+    out = f"{VID}/raw/{src}.mp4"
+    png = f"{STILL_SRC}/{src[4:]}.png"
+    if os.path.exists(out) and os.path.getsize(out) > 10000:
+        continue
+    frames = str(int(dur * 30))
+    run(["ffmpeg", "-v", "error", "-loop", "1", "-framerate", "30", "-t", str(dur), "-i", png,
+         "-vf", f"scale=1520:1520,zoompan=z='1+0.10*on/({int(dur*30)})'"
+                f":x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=1:s=760x760:fps=30",
+         "-frames:v", frames, "-pix_fmt", "yuv420p", "-y", out])
+    print("still", src, flush=True)
 
 for i, (src, tin, dur, beat) in enumerate(SEGS):
     out = f"{SEG}/seg_{i:02d}.mp4"
@@ -59,7 +82,7 @@ for i, (src, tin, dur, beat) in enumerate(SEGS):
             ["-filter_complex", "[0:v][1:v]overlay=164:284[a];[a][2:v]overlay=0:0,format=yuv420p[out]",
              "-map", "[out]"] + common)
     else:
-        run(["ffmpeg", "-v", "error", "-i", f"{VID}/{src}.mp4",
+        run(["ffmpeg", "-v", "error", "-i", f"{VID}/raw/{src}.mp4",
              "-loop", "1", "-framerate", "30", "-t", str(dur), "-i", OVL["bg"],
              "-loop", "1", "-framerate", "30", "-t", str(dur), "-i", OVL["circle"],
              "-loop", "1", "-framerate", "30", "-t", str(dur), "-i", OVL["ring"],
@@ -74,8 +97,8 @@ with open(f"{SEG}/list.txt", "w") as f:
     for i in range(len(SEGS)):
         f.write(f"file '{SEG}/seg_{i:02d}.mp4'\n")
 run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", f"{SEG}/list.txt",
-     "-c", "copy", f"{VID}/demo-vertical-raw.mp4"])
+     "-c", "copy", "-metadata", f"comment=hermes-wearos v{VER} (wear-demo capture)", RAW])
 d = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                    "-of", "csv=p=0", f"{VID}/demo-vertical-raw.mp4"],
+                    "-of", "csv=p=0", RAW],
                    capture_output=True, text=True).stdout.strip()
 print("master:", d, "seconds", flush=True)

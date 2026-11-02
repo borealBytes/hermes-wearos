@@ -11,6 +11,14 @@ framework) is an optional helper on the gateway box for mermaid renders, image s
 STT fallback, and the health MCP. Architecture: `docs/SPEC.md` (read §1, §11 before changing
 networking).
 
+## 0. Developing? Read CONTRIBUTING.md first
+
+If you are only INSTALLING, follow this file top to bottom. If you are DEVELOPING (changing
+code, driving a watch to prove it), `CONTRIBUTING.md` holds the developer rules — starting with
+the hard one: **every test ask rides the `wear-demo` profile, never the owner's `wear`** (it's a
+copy of `wear` with its own key, made to be shouted at and reset). CONTRIBUTING.md also carries
+the demo-agent setup recipe, the dev workflow quick card, and the circle-mask rule.
+
 ## 1. Prereqs (detect, don't assume)
 
 | Need | Detect | Install |
@@ -150,7 +158,7 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | device shows *offline* | Port rotated (§1 warning) → `adb disconnect` + `adb connect IP:NEW_PORT` |
 | Watch answers then goes silent between asks | Doze — `dumpsys deviceidle disable`, `svc power stayon true` (§1) |
 | 401 from gateway | Wrong profile token → `set_token` the **wear** profile's key (per-profile keys are a thing) |
-| One agent works, others 401 on every call (Test still says ✅) | That profile has no `API_SERVER_KEY` in its `.env` — `setup.sh --agent-keys`, or Settings ▸ Gateways ▸ Agent keys ▸ ⟳ learn (SPEC §12.2) |
+| One agent works, others 401 on every call (Test still says ✅) | That profile has no `API_SERVER_KEY` in its `.env` — `setup.sh --agent-keys` (on a gateway box it also SEEDS missing profile keys from `~/.hermes/.env`, the one-login convention), or Settings ▸ Gateways ▸ Agent keys ▸ ⟳ learn (SPEC §12.2) |
 | 401 from watchkit but gateway fine | watchkit has its OWN bearer (`server/watchkit/config.json token`) — set `watchkitToken`/`set_watchkit` |
 | tailnet entry always fails at home | Expected while the watch is off-tailnet: failover lands LAN in ~2.5 s (SPEC §11.2) — that's working |
 | No mermaid/images/whisper | watchkit daemon down → `scripts/watchkit.sh start` (check `status`/`logs`) |
@@ -161,6 +169,10 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 ## 8. Where things live
 
 - `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints/failover).
+- `CONTRIBUTING.md` — developer rules: the `wear-demo` test-agent policy, dev workflow quick card,
+  mask-before-analysis discipline, watch connection gotchas.
+- `scripts/parakeet.sh` — one-shot installer for watchkit's streaming STT engine (transcribe.cpp +
+  its own parakeet GGUF); idempotent, folder-local, no GPU required.
 - `app/src/debug/java/dev/hermes/wearos/DevAskReceiver.kt` — every dev broadcast hook (the comment lists them).
 - `server/watchkit/watchkit.mjs` — helper daemon; its header comment is the endpoint reference (also `scripts/watchkit.sh`).
 - `scripts/` — `setup.sh` (this contract) · `env.sh` · `bootstrap.sh` · `doctor.sh` · `emulator.sh` ·

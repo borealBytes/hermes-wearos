@@ -8,8 +8,10 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.hermes.wearos.domain.FontScale
+import dev.hermes.wearos.domain.TtsConfig
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
+import dev.hermes.wearos.domain.SttProviders
 import dev.hermes.wearos.domain.CommandCatalog
 import dev.hermes.wearos.domain.CommandStat
 import dev.hermes.wearos.domain.CommandUsage
@@ -18,9 +20,11 @@ import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.domain.ProfileLogic
+import dev.hermes.wearos.domain.SplashIntro
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -32,6 +36,15 @@ class AppSettings(private val context: Context) {
         private val KEY_SESSION_ID = stringPreferencesKey("session_id")
         private val KEY_LAST_RUN = stringPreferencesKey("last_run")
         private val KEY_VOICE_OUT = booleanPreferencesKey("voice_out")
+        // SPEECH-INPUT PROVIDER (batch-4 #8): "local" (default, offline Vosk) | "system".
+        private val KEY_STT_PROVIDER = stringPreferencesKey("stt_provider")
+    private val KEY_STT_GATEWAY_ENGINE = stringPreferencesKey("stt_gateway_engine")
+        private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
+        private val KEY_TTS_ENGINE = stringPreferencesKey("tts_engine")
+        private val KEY_TTS_FALLBACK = stringPreferencesKey("tts_fallback")
+        private val KEY_TTS_RATE = floatPreferencesKey("tts_rate")
+        private val KEY_TTS_VOLUME = floatPreferencesKey("tts_volume")
+        private val KEY_TTS_VOLUMES = stringPreferencesKey("tts_volumes")
         private val KEY_MARKDOWN = booleanPreferencesKey("markdown_rendering")
         private val KEY_CHATS_JSON = stringPreferencesKey("chats_json")
         private val KEY_ACTIVE_CHAT = stringPreferencesKey("active_chat")
@@ -70,6 +83,16 @@ class AppSettings(private val context: Context) {
         private val KEY_SLASH_USAGE = stringPreferencesKey("slash_usage")
         private val KEY_SLASH_CATALOG = stringPreferencesKey("slash_catalog_json")
         private val KEY_GW_SELECTED = stringPreferencesKey("gateway_selected")
+        // Display ▸ "Launch video" — the PRE-CHOOSER switch (domain/SplashIntro). Kept as the
+        // legacy mirror of the mode for a downgrade, and read once by [splashModeNow] to migrate
+        // an explicit OFF to STATIC.
+        private val KEY_INTRO_VIDEO = booleanPreferencesKey("intro_video")
+        // Display ▸ "Launch splash" chooser (owner 2026-10-29): "video" | "static", plus the
+        // owner's OWN media picked from the watch (content URIs under a persistable read grant;
+        // film and still each keep their own slot so switching modes never loses a pick).
+        private val KEY_SPLASH_MODE = stringPreferencesKey("splash_mode")
+        private val KEY_SPLASH_IMAGE_URI = stringPreferencesKey("splash_image_uri")
+        private val KEY_SPLASH_VIDEO_URI = stringPreferencesKey("splash_video_uri")
     }
 
     suspend fun baseUrl(): String = context.dataStore.data.first()[KEY_BASE_URL] ?: DEFAULT_BASE_URL
@@ -77,7 +100,7 @@ class AppSettings(private val context: Context) {
     suspend fun sessionId(): String = context.dataStore.data.first()[KEY_SESSION_ID] ?: ""
     suspend fun lastRun(): String = context.dataStore.data.first()[KEY_LAST_RUN] ?: ""
 
-    suspend fun setBaseUrl(v: String) {
+    suspend fun setBaseUrl(v: String, foldRegistry: Boolean = true) {
         val t = v.trim().trimEnd('/')
         context.dataStore.edit { it[KEY_BASE_URL] = t }
         val seg = ProfileLogic.currentProfile(t)
@@ -85,12 +108,15 @@ class AppSettings(private val context: Context) {
         _profile.value = seg.ifEmpty { ProfileLogic.FALLBACK_AGENT }
         // Gateway fold (SPEC §11): an endpoint already on the selected gateway keeps its
         // position (failover/agent-switch re-set the base constantly); a NEW host prepends.
-        val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
-        val list = GatewayModel.decode(raw)
-        if (list.isNotEmpty()) {
-            val sel = context.dataStore.data.first()[KEY_GW_SELECTED].orEmpty()
-                .ifEmpty { list.first().id }
-            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(GatewayModel.foldBaseUrl(list, sel, t)) }
+        // foldRegistry=false for MECHANICAL mirror rewrites (agent switch): the mirror can hold
+        // a failover winner (LAN at home) that is NOT the owner's endpoint list, and folding it
+        // back re-polluted a tailnet-only gateway on every agent tap (wrist-caught, 2026-11-01).
+        val list = gateways()
+        if (foldRegistry && list.isNotEmpty()) {
+            val sel = selectedGatewayId().ifEmpty { list.first().id }
+            val folded = GatewayModel.foldBaseUrl(list, sel, t)
+            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+            gatewaysCache = folded
         }
     }
 
@@ -108,6 +134,12 @@ class AppSettings(private val context: Context) {
     private val _profile = MutableStateFlow(ProfileLogic.FALLBACK_AGENT)
     val profile: StateFlow<String> = _profile
     fun profileSync(): String = _profile.value
+
+    init {
+        // An agent switch (base-URL swap, dial agent lane, gateway fold) re-resolves the
+        // EFFECTIVE reply volume — the Voice slider and the dial must track the new agent.
+        kotlinx.coroutines.MainScope().launch { _profile.collect { refreshTtsVolumeFor() } }
+    }
 
     /** Persisted last-used agent (owner batch 2); default `wear`, garbage values fall back. */
     suspend fun savedAgent(): String =
@@ -144,11 +176,12 @@ class AppSettings(private val context: Context) {
 
     suspend fun setToken(v: String) {
         context.dataStore.edit { it[KEY_TOKEN] = v.trim() }
-        val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
-        val list = GatewayModel.decode(raw)
+        val list = gateways()
         if (list.isNotEmpty()) {
-            val sel = context.dataStore.data.first()[KEY_GW_SELECTED].orEmpty().ifEmpty { list.first().id }
-            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(GatewayModel.foldToken(list, sel, v)) }
+            val sel = selectedGatewayId().ifEmpty { list.first().id }
+            val folded = GatewayModel.foldToken(list, sel, v)
+            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+            gatewaysCache = folded
         }
     }
     suspend fun setSessionId(v: String) = context.dataStore.edit { it[KEY_SESSION_ID] = v }.let { }
@@ -158,6 +191,132 @@ class AppSettings(private val context: Context) {
     /** Master mute for speak-aloud (M2); default on. */
     suspend fun voiceOutEnabled(): Boolean = context.dataStore.data.first()[KEY_VOICE_OUT] ?: true
     suspend fun setVoiceOut(v: Boolean) = context.dataStore.edit { it[KEY_VOICE_OUT] = v }.let { }
+
+    /**
+     * SPEECH-INPUT PROVIDER (batch-4 #8): persisted id ("local"/"system"); the in-memory truth
+     * is `SttProviders.current` (voice/UI read it synchronously — same-moment switch promise),
+     * seeded here at startup and rewritten by setSttProvider. Default LOCAL even when the system
+     * recognizer exists: the watch keeps listening in airplane mode (SPEC §5 offline rule).
+     */
+    suspend fun sttProviderValue(): String =
+        context.dataStore.data.first()[KEY_STT_PROVIDER] ?: SttProviders.ID_LOCAL
+    suspend fun loadSttProvider() {
+        SttProviders.current = sttProviderValue()
+    }
+    suspend fun setSttProvider(v: String) {
+        val id = SttProviders.normalize(v) // any unknown collapses to local (offline default)
+        context.dataStore.edit { it[KEY_STT_PROVIDER] = id }
+        SttProviders.current = id
+    }
+
+    /**
+     * GATEWAY STT ENGINE pick (owner 2026-10-30: *"clicking … should let you select … installed
+     * models"*). "" = follow watchkit's configured default; a non-empty id rides on every
+     * /stt/stream as ?engine=. Readiness is watchkit's call (it errors honestly, and the
+     * GatewayStt local fallback always catches the wearer), so this stores the WORD, not a guess.
+     */
+    suspend fun sttGatewayEngineValue(): String =
+        context.dataStore.data.first()[KEY_STT_GATEWAY_ENGINE]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: ""
+    suspend fun loadSttGatewayEngine() {
+        SttProviders.gatewayEnginePick = sttGatewayEngineValue()
+    }
+    suspend fun setSttGatewayEngine(v: String) {
+        val id = v.trim().lowercase().take(32) // engine ids are short slugs; blank = gateway default
+        context.dataStore.edit { it[KEY_STT_GATEWAY_ENGINE] = id }
+        SttProviders.gatewayEnginePick = id
+    }
+
+    /**
+     * TTS voice + reply speed (owner 2026-10-29, domain/TtsConfig): voice is an engine voice NAME
+     * (blank = engine default), rate is clamped. StateFlow mirrors because SpeakAloud applies both
+     * live the moment Settings changes them (same pattern as fontScale).
+     */
+    private val _ttsVoice = MutableStateFlow("")
+    val ttsVoice: StateFlow<String> = _ttsVoice
+    suspend fun ttsVoiceValue(): String = context.dataStore.data.first()[KEY_TTS_VOICE].orEmpty()
+    suspend fun loadTtsVoice() { _ttsVoice.value = ttsVoiceValue() }
+    suspend fun setTtsVoice(v: String) {
+        context.dataStore.edit { it[KEY_TTS_VOICE] = v.trim() }
+        _ttsVoice.value = v.trim()
+    }
+
+    /**
+     * TTS engine PACKAGE (owner 2026-10-29: *"choose google/samsung/(other if exists)"*) — blank
+     * = system default. `tts_fallback` is a second VOICE NAME tried when the preferred one errors
+     * mid-utterance (*"network first … local fallback"*), blank = one attempt only.
+     */
+    private val _ttsEngine = MutableStateFlow("")
+    val ttsEngine: StateFlow<String> = _ttsEngine
+    suspend fun ttsEngineValue(): String = context.dataStore.data.first()[KEY_TTS_ENGINE].orEmpty()
+    suspend fun loadTtsEngine() { _ttsEngine.value = ttsEngineValue() }
+    suspend fun setTtsEngine(v: String) {
+        context.dataStore.edit { it[KEY_TTS_ENGINE] = v.trim() }
+        _ttsEngine.value = v.trim()
+    }
+
+    private val _ttsFallback = MutableStateFlow("")
+    val ttsFallback: StateFlow<String> = _ttsFallback
+    suspend fun ttsFallbackValue(): String = context.dataStore.data.first()[KEY_TTS_FALLBACK].orEmpty()
+    suspend fun loadTtsFallback() { _ttsFallback.value = ttsFallbackValue() }
+    suspend fun setTtsFallback(v: String) {
+        context.dataStore.edit { it[KEY_TTS_FALLBACK] = v.trim() }
+        _ttsFallback.value = v.trim()
+    }
+
+    private val _ttsRate = MutableStateFlow(TtsConfig.DEFAULT_RATE)
+    val ttsRate: StateFlow<Float> = _ttsRate
+    suspend fun ttsRateValue(): Float =
+        TtsConfig.clampRate(context.dataStore.data.first()[KEY_TTS_RATE] ?: TtsConfig.DEFAULT_RATE)
+    suspend fun loadTtsRate() { _ttsRate.value = ttsRateValue() }
+    suspend fun setTtsRate(v: Float) {
+        val r = TtsConfig.clampRate(v)
+        context.dataStore.edit { it[KEY_TTS_RATE] = r }
+        _ttsRate.value = r
+    }
+
+    /** Reply volume scale (mute-lane double slider): 0..1 utterance multiplier, default full. */
+    private val _ttsVolume = MutableStateFlow(TtsConfig.DEFAULT_VOLUME)
+    val ttsVolume: StateFlow<Float> = _ttsVolume
+    suspend fun ttsVolumeValue(): Float =
+        TtsConfig.clampVolume(context.dataStore.data.first()[KEY_TTS_VOLUME] ?: TtsConfig.DEFAULT_VOLUME)
+    suspend fun loadTtsVolume() {
+        _ttsVolume.value = ttsVolumeValue()
+        _ttsVolumes.value = TtsConfig.decodeVolumes(context.dataStore.data.first()[KEY_TTS_VOLUMES])
+        refreshTtsVolumeFor()
+    }
+    suspend fun setTtsVolume(v: Float) {
+        val x = TtsConfig.clampVolume(v)
+        context.dataStore.edit { it[KEY_TTS_VOLUME] = x }
+        _ttsVolume.value = x
+        refreshTtsVolumeFor()
+    }
+
+    /**
+     * PER-AGENT OVERRIDE MAP (owner 2026-10-29): agent → percent on the 5 % grid. An agent with
+     * no entry rides the global [ttsVolume]. The Voice-page slider, the dial double-slider and
+     * the mute satellite ALL write the current agent's override — one shared store, three faces.
+     */
+    private val _ttsVolumes = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val ttsVolumes: StateFlow<Map<String, Int>> = _ttsVolumes
+
+    /** Effective volume for an agent: its override when set, else the global slider. */
+    fun ttsVolumeFor(agent: String): Float =
+        _ttsVolumes.value[agent]?.let { TtsConfig.volumeFromPercent(it) } ?: _ttsVolume.value
+
+    /** Effective volume for the CURRENT agent — what the orb dial / Voice slider show. */
+    private val _ttsVolumeFor = MutableStateFlow(TtsConfig.DEFAULT_VOLUME)
+    val ttsVolumeFor: StateFlow<Float> = _ttsVolumeFor
+    fun ttsVolumeForSync(): Float = ttsVolumeFor(profileSync())
+    private fun refreshTtsVolumeFor() { _ttsVolumeFor.value = ttsVolumeFor(profileSync()) }
+
+    /** Set (or with [v]==null clear) the current agent's override; global untouched. */
+    suspend fun setTtsVolumeFor(agent: String, v: Float?) {
+        val map = _ttsVolumes.value.toMutableMap()
+        if (v == null) map.remove(agent) else map[agent] = TtsConfig.volumePercent(v)
+        context.dataStore.edit { it[KEY_TTS_VOLUMES] = TtsConfig.encodeVolumes(map) }
+        _ttsVolumes.value = map
+        refreshTtsVolumeFor()
+    }
 
     /**
      * Display ▸ "Markdown rendering" (SPEC §4/§5 F3): renders Hermes replies through
@@ -171,6 +330,72 @@ class AppSettings(private val context: Context) {
         context.dataStore.edit { it[KEY_MARKDOWN] = v }
         _markdownEnabled.value = v
     }
+
+    /**
+     * Display ▸ "Launch splash" (SPEC §4 Display node, gate in domain/SplashIntro): the whole
+     * splash preference set — mode ("video"|"static", shipped default video per the owner) and the
+     * custom media URIs per mode. The StateFlow mirrors are what the LAUNCH path reads — first
+     * composition cannot await a DataStore read, so [introSettingsLoaded] says when the mirrors
+     * hold the owner's real choices instead of the shipped defaults (MainActivity waits on it,
+     * bounded by SplashIntro.SETTING_BUDGET_MS).
+     */
+    private val _splashMode = MutableStateFlow("video")
+    val splashMode: StateFlow<String> = _splashMode
+    private val _splashImageUri = MutableStateFlow("")
+    val splashImageUri: StateFlow<String> = _splashImageUri
+    private val _splashVideoUri = MutableStateFlow("")
+    val splashVideoUri: StateFlow<String> = _splashVideoUri
+    private val _introSettingsLoaded = MutableStateFlow(false)
+    val introSettingsLoaded: StateFlow<Boolean> = _introSettingsLoaded
+
+    suspend fun loadIntroVideo() {
+        val prefs = context.dataStore.data.first()
+        _splashMode.value = prefs[KEY_SPLASH_MODE]
+            ?: if (SplashIntro.choiceOf(null, prefs[KEY_INTRO_VIDEO]) == SplashIntro.Choice.VIDEO) "video" else "static"
+        _splashImageUri.value = prefs[KEY_SPLASH_IMAGE_URI].orEmpty()
+        _splashVideoUri.value = prefs[KEY_SPLASH_VIDEO_URI].orEmpty()
+        _introSettingsLoaded.value = true
+    }
+
+    /** "video" | "static" — the legacy boolean mirror keeps an app downgrade behaving sanely. */
+    suspend fun setSplashMode(v: String) {
+        val mode = if (v == "static") "static" else "video"
+        context.dataStore.edit {
+            it[KEY_SPLASH_MODE] = mode
+            it[KEY_INTRO_VIDEO] = (mode == "video")
+        }
+        _splashMode.value = mode
+    }
+
+    /** The owner's custom pick for one slot (film=video / still=image); null clears it. */
+    suspend fun setSplashCustom(video: Boolean, uri: String?) {
+        val key = if (video) KEY_SPLASH_VIDEO_URI else KEY_SPLASH_IMAGE_URI
+        val old = context.dataStore.data.first()[key]
+        context.dataStore.edit { pref -> if (uri == null) pref.remove(key) else pref[key] = uri }
+        if (video) _splashVideoUri.value = uri.orEmpty() else _splashImageUri.value = uri.orEmpty()
+        // Release the superseded grant best-effort — polite, and it keeps the picker's revocable
+        // grants from piling up for media this watch stopped showing.
+        old?.takeIf { it != uri }?.let { o ->
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(
+                    android.net.Uri.parse(o), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
+    }
+
+    /**
+     * A stored pick only counts while its persistable grant still lives (the source app can be
+     * uninstalled, the file moved, the grant revoked). One read from [android.content.ContentResolver.persistedUriPermissions]
+     * — and a splash that silently falls back to built-in beats a launch that dies on a dead URI.
+     */
+    fun splashGrantLive(uri: String): Boolean = uri.isNotEmpty() && runCatching {
+        // The liveness test IS the real question — "can we open it right now" — which covers
+        // persistable content:// grants AND plain paths (the dev hook's shape, and a sideload
+        // affordance) without trusting File.canRead()'s idea of the /sdcard mount.
+        context.contentResolver.openInputStream(android.net.Uri.parse(uri))?.close()
+        true
+    }.onFailure { android.util.Log.w("HermesWear", "splash source dead: $it") }.getOrDefault(false)
 
     /**
      * THE ORB DIAL MAP (SPEC §12.1): eight lanes, index 0 = 12:00 going clockwise. Owner batch 3 —
@@ -276,10 +501,27 @@ class AppSettings(private val context: Context) {
     // or the selection changes — every existing consumer (ChatSession, Watchkit, pusher, UI)
     // keeps reading the legacy keys and needs zero changes.
 
-    suspend fun gateways(): List<Gateway> = GatewayModel.decode(context.dataStore.data.first()[KEY_GATEWAYS].orEmpty())
+    /**
+     * The registry. A non-blank `gateways_json` that fails to parse must NEVER read as empty:
+     * every mutator (upsert/delete/fold) rewrites the WHOLE key from what it read, so a transient
+     * decode blip returning empty would silently prune every sibling gateway (owner 2026-10-29:
+     * "the other gateway totally disappeared when I clicked this one"). The last good decode is
+     * the tiebreaker; genuine first-run (blank raw) still reads empty so migration can run.
+     */
+    @Volatile private var gatewaysCache: List<Gateway> = emptyList()
 
-    suspend fun saveGateways(list: List<Gateway>) =
-        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(list) }.let { }
+    suspend fun gateways(): List<Gateway> {
+        val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
+        val list = GatewayModel.decode(raw)
+        if (list.isNotEmpty()) { gatewaysCache = list; return list }
+        if (raw.isNotBlank() && gatewaysCache.isNotEmpty()) return gatewaysCache
+        return list
+    }
+
+    suspend fun saveGateways(list: List<Gateway>) {
+        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(list) }
+        gatewaysCache = list
+    }
 
     suspend fun selectedGatewayId(): String = context.dataStore.data.first().let {
         (it[KEY_GW_SELECTED].orEmpty()).ifEmpty { GatewayModel.decode(it[KEY_GATEWAYS].orEmpty()).firstOrNull()?.id ?: "" }
@@ -296,11 +538,17 @@ class AppSettings(private val context: Context) {
     /**
      * First-run/upgrade hook: seed or migrate the registry from legacy keys ONCE. Legacy keys
      * stay untouched (still the live mirror); returns the selected gateway.
+     *
+     * Migration fires ONLY on a BLANK registry. A non-blank-but-undecodable blob means the
+     * registry EXISTS and is hurt — writing a fresh single-gateway list over it is exactly how
+     * the owner lost the multi-path gateway; hold the last good decode (or nothing) instead.
      */
     suspend fun ensureGateways(): Gateway? {
         val prefs = context.dataStore.data.first()
-        val existing = GatewayModel.decode(prefs[KEY_GATEWAYS].orEmpty())
+        val raw = prefs[KEY_GATEWAYS].orEmpty()
+        val existing = GatewayModel.decode(raw)
         if (existing.isNotEmpty()) return existing.firstOrNull { it.id == (prefs[KEY_GW_SELECTED].orEmpty()) } ?: existing.first()
+        if (raw.isNotBlank()) return gatewaysCache.firstOrNull()
         val (list, selected) = GatewayModel.migrate(
             prefs[KEY_BASE_URL] ?: "", prefs[KEY_TOKEN] ?: "", prefs[KEY_WATCHKIT_URL] ?: "",
         )
@@ -308,6 +556,7 @@ class AppSettings(private val context: Context) {
             it[KEY_GATEWAYS] = GatewayModel.encode(list)
             it[KEY_GW_SELECTED] = selected
         }
+        gatewaysCache = list
         return list.firstOrNull { it.id == selected }
     }
 
@@ -318,6 +567,7 @@ class AppSettings(private val context: Context) {
             it[KEY_GATEWAYS] = GatewayModel.encode(list)
             if (select) it[KEY_GW_SELECTED] = gw.id
         }
+        gatewaysCache = list
         return list
     }
 
@@ -330,7 +580,18 @@ class AppSettings(private val context: Context) {
             it[KEY_GATEWAYS] = GatewayModel.encode(next)
             it[KEY_GW_SELECTED] = selected
         }
+        gatewaysCache = next
         return next.firstOrNull { it.id == selected }
+    }
+
+    /** Fold a watchkit-URL edit into the selected gateway's wk list (SPEC §11, foldBaseUrl twin). */
+    suspend fun foldWatchkitIntoSelected(url: String) {
+        val list = gateways()
+        if (list.isEmpty()) return
+        val folded = GatewayModel.foldWatchkit(list, selectedGatewayId(), url)
+        if (folded === list) return
+        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+        gatewaysCache = folded
     }
 
     /**

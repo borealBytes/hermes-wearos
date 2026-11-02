@@ -218,6 +218,22 @@ object GatewayModel {
         return list.toMutableList().also { it[idx] = g.copy(apiEndpoints = listOf(ep) + g.apiEndpoints) }
     }
 
+    /**
+     * Fold a watchkit-URL edit into the selected gateway — the symmetric twin of [foldBaseUrl]
+     * (owner bug 2026-10-29: `set_watchkit_base`/Settings wrote only the mirror, so a gateway's
+     * wk endpoint list could never gain a fallback while its API list could). Same rules: known
+     * endpoint keeps its position, unknown one prepends; every OTHER gateway is untouched.
+     */
+    fun foldWatchkit(list: List<Gateway>, selectedId: String, newWatchkitUrl: String): List<Gateway> {
+        val wk = normalizeEndpoint(newWatchkitUrl)
+        if (wk.isEmpty()) return list
+        val idx = list.indexOfFirst { it.id == selectedId }
+        if (idx < 0) return list
+        val g = list[idx]
+        if (g.watchkitEndpoints.contains(wk)) return list
+        return list.toMutableList().also { it[idx] = g.copy(watchkitEndpoints = listOf(wk) + g.watchkitEndpoints) }
+    }
+
     /** Fold a token edit onto the selected gateway (the mirror key carries it to consumers). */
     fun foldToken(list: List<Gateway>, selectedId: String, token: String): List<Gateway> {
         val idx = list.indexOfFirst { it.id == selectedId }

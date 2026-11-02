@@ -1,5 +1,8 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,8 +81,16 @@ fun SessionsScreen(
         addAll(GatewaySessions.profilesIn(sessions))
         if (archived.isNotEmpty()) add(GatewaySessions.FILTER_ARCHIVED)
     }
+    val edgeSessionState = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
+    val edgeScope = rememberCoroutineScope()
+    val edgeSessionScroll: (Float) -> Unit = { total -> edgeScope.launch { edgeSessionState.edgeScrollWalk(total) } }
     ScalingLazyColumn(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth()
+            // BATCH-4 #7: edge-circle scrolling on every list surface. BATCH-6 #28 owner:
+            // "sessions faster with bezel scroll" — a dense full-width list wants two screens
+            // per circle, not the chat's one-screen reading gear.
+            .edgeCircleScroll(speed = 2f) { total -> edgeSessionScroll(total) },
+        state = edgeSessionState,
         contentPadding = roundListPadding(bottomExtraDp = 16f),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {

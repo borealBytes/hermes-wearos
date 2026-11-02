@@ -21,12 +21,11 @@ import dev.hermes.wearos.domain.RoundScreen
 
 /** Is this a round viewport? (Wear emulator + Ultra are; square preview devices aren't.) */
 @Composable
-fun isRoundScreen(): Boolean {
-    val cfg = LocalConfiguration.current
-    // Configuration.SCREENLAYOUT_ROUND_MASK / SCREENLAYOUT_ROUND (0x03 / 0x02) — spelled as the
-    // documented ints here because only the *_MASK constant resolves in these SDK stubs.
-    return (cfg.screenLayout and 0x03) == 0x02
-}
+fun isRoundScreen(): Boolean = LocalConfiguration.current.isScreenRound
+// (The old bit trick `(screenLayout and 0x03) == 0x02` was WRONG — round lives under mask 0x0C,
+// value 0x08 — and silently reported FALSE on the owner's SM-L705U, so every rim rule in the app
+// quietly ran in square mode. Proven 2026-10-30 by a q-lift log showing listTopPad = 0. The
+// platform's own `isScreenRound` cannot drift.)
 
 @Composable
 fun roundInsets(): RoundScreen.Insets = RoundScreen.insetsFor(isRoundScreen())
@@ -48,6 +47,37 @@ fun Modifier.roundSafe(): Modifier {
 }
 
 /**
+ * BATCH-4 #6: dp of clearance a scrolling column needs at the BOTTOM so its last row's
+ * bottom-LEFT corner reaches the meat of the circle (rim ∩ the content gutter, no orb).
+ * Square faces get just [bottomExtraDp] (the rim rule is a round-glass concern).
+ *
+ * Uses the VIEW's display metrics, not LocalConfiguration: inside Dialog windows the
+ * ComposeLocalConfiguration reports the dialog window's (sometimes degenerate) bounds, and
+ * these helpers run in dialogs too (agent/model/approval pickers) — the physical screen is
+ * what the rim rule needs.
+ */
+@Composable
+fun circleSafeBottomDp(contentLeftDp: Float, bottomExtraDp: Float = 8f): Float {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val dm = view.resources.displayMetrics
+    val density = dm.density
+    val pad = dev.hermes.wearos.domain.BottomLayout.circleSafeBottomPad(
+        viewportW = dm.widthPixels / density,
+        viewportH = dm.heightPixels / density,
+        round = isRoundScreen(),
+        contentLeftPx = contentLeftDp,
+        orbTopPx = dm.heightPixels / density,
+        marginPx = bottomExtraDp,
+    )
+    android.util.Log.d(
+        "HermesWear", "circleSafeBottomDp=${pad.toInt()}dp via ${dm.widthPixels}x${dm.heightPixels}" +
+            "@$density (cfg=${androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp}" +
+            "x${androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp})",
+    )
+    return pad
+}
+
+/**
  * ScalingLazyColumn contentPadding: items REST below the clock and ABOVE the chin (and the SLC's
  * own responsive scaling handles the edge falloff); horizontal gutter tops up the rows' internal
  * ~10 dp padding to the safe-circle target. [bottomExtraDp] reserves room for the orb bar on chat.
@@ -56,12 +86,24 @@ fun Modifier.roundSafe(): Modifier {
  * dwarfs the chin inset.
  */
 @Composable
-fun roundListPadding(bottomExtraDp: Float = 8f, topExtraDp: Float = 0f, bottomOverrideDp: Dp? = null): PaddingValues {
+fun roundListPadding(
+    bottomExtraDp: Float = 8f,
+    topExtraDp: Float = 0f,
+    bottomOverrideDp: Dp? = null,
+    topOverrideDp: Dp? = null,
+): PaddingValues {
     val i = roundInsets()
     val gutter = (i.horizontalDp - 10f).coerceAtLeast(0f)
+    // BATCH-4 #6 (owner: *"top/bottom buffer padding on EVERY list — any last row must scroll
+    // into the meat of the circle"*): the chin inset alone leaves the LAST row's bottom-left
+    // corner inside the bezel shave-zone on round glass. Fold in the same rim math the chat
+    // uses (BottomLayout.circleSafeBottomPad with orbTop = full height — these lists have no
+    // orb), in DP space so it is scale-invariant. [bottomOverrideDp] (chat's cluster pad)
+    // already IS that computation, so overrides pass through untouched.
+    val bottomSafe = maxOf(i.bottomDp + bottomExtraDp, circleSafeBottomDp(gutter, bottomExtraDp))
     return PaddingValues(
-        top = (i.topDp + topExtraDp).dp,
-        bottom = bottomOverrideDp ?: (i.bottomDp + bottomExtraDp).dp,
+        top = topOverrideDp ?: (i.topDp + topExtraDp).dp,
+        bottom = bottomOverrideDp ?: bottomSafe.dp,
         start = gutter.dp,
         end = gutter.dp,
     )

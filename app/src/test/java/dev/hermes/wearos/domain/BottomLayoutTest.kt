@@ -51,6 +51,59 @@ class BottomLayoutTest {
         assertEquals(286f, BottomLayout.transcriptBottomPad(960f, 960f), 0.01f)
     }
 
+    // ── BATCH-4 #1/#6 — the circle-safe bottom line ("8:20 spot") ──
+    @Test fun `round faces lift content for the rim before the orb crown ever binds`() {
+        // Owner screenshot forensics: digits at x≈8 px resting on the crown line were shaved.
+        // At the 8 dp gutter the rim rule (r = 0.98 · min/2) must out-rule the 143 px crown.
+        val pad = BottomLayout.circleSafeBottomPad(
+            viewportW = 480f, viewportH = 480f, round = true, contentLeftPx = 12f, orbTopPx = 337f,
+        )
+        assertTrue("rim must beat the crown (143), got $pad", pad > 143f)
+        assertEquals(182.25f, pad, 0.5f) // rim ∩ x=12 on the 480 face → rest bottom ≈ 297.75
+    }
+
+    @Test fun `square faces keep the exact pre-batch crown rule (no rim fiction)`() {
+        assertEquals(
+            BottomLayout.transcriptBottomPad(480f, 480f),
+            BottomLayout.circleSafeBottomPad(
+                viewportW = 480f, viewportH = 480f, round = false,
+                contentLeftPx = 12f, orbTopPx = BottomLayout.geometry(480f, 480f).talk.topY(),
+            ),
+            0.01f,
+        )
+    }
+
+    @Test fun `the rim only binds where the text is wide — centered lines fall back to the crown`() {
+        // Text starting near the center column clears the rim at ANY legal depth: the pad is the
+        // orb rule again, so the helper never over-lifts narrow content on a round face.
+        val pad = BottomLayout.circleSafeBottomPad(
+            viewportW = 480f, viewportH = 480f, round = true, contentLeftPx = 120f, orbTopPx = 337f,
+        )
+        assertEquals(143f, pad, 0.5f)
+    }
+
+    @Test fun `lists without an orb clear the rim at the same line`() {
+        // Item 6: a plain list passes orbTop = height → the rim alone decides.
+        val pad = BottomLayout.circleSafeBottomPad(
+            viewportW = 480f, viewportH = 480f, round = true, contentLeftPx = 12f,
+            orbTopPx = 480f, marginPx = 12f,
+        )
+        assertEquals(194.25f, pad, 0.5f) // rim 297.75 + 12 px margin, measured from the bottom
+    }
+
+    @Test fun `the safe line scales with the face and survives degenerate sizes`() {
+        val big = BottomLayout.circleSafeBottomPad(
+            viewportW = 960f, viewportH = 960f, round = true, contentLeftPx = 24f, orbTopPx = 674f,
+        )
+        assertEquals(364.5f, big, 1f) // exact 2× of the 480-face answer
+        assertEquals(0f, BottomLayout.circleSafeBottomPad(0f, 0f, true, 12f), 0.01f)
+        // x beyond the rim span (absurd gutter): the safe line collapses to the center height.
+        val edge = BottomLayout.circleSafeBottomPad(
+            viewportW = 480f, viewportH = 480f, round = true, contentLeftPx = 0f, orbTopPx = 480f,
+        )
+        assertEquals(240f, edge, 0.5f)
+    }
+
     @Test fun `geometry scales uniformly on bigger square faces`() {
         val g = BottomLayout.geometry(960f, 960f)
         assertEquals(480f, g.talk.cx, 0.01f)

@@ -20,7 +20,7 @@ class DialSpinTest {
 
     /** Viewport-px vector pointing at a slot's wedge (same coords the ring draws in). */
     private fun aim(slot: Int, distPx: Float = 100f): Pair<Float, Float> {
-        val rad = Math.toRadians((slot * 45).toDouble())
+        val rad = Math.toRadians((slot * OrbDial.SLOT_DEG).toDouble())
         return Pair((distPx * Math.sin(rad)).toFloat(), (-distPx * Math.cos(rad)).toFloat())
     }
 
@@ -57,23 +57,23 @@ class DialSpinTest {
         moveTo(s, 0f, -100f)
         moveTo(s, step, -100f)
         assertTrue(s.spinning)
-        assertEquals(1, s.activeSlot) // 12:00 -> 1:30 with a rightward push
+        assertEquals(1, s.activeSlot) // 12:00 -> 1:20 with a rightward push
         // …and the ring rotated THAT icon under the finger:
         val finger = OrbDial.angleOf(step, -100f)
-        assertEquals(OrbDial.normDeg180(finger - 45f), s.phaseDeg, 0.001f)
+        assertEquals(OrbDial.normDeg180(finger - OrbDial.SLOT_DEG), s.phaseDeg, 0.001f)
     }
 
     @Test fun `three detents left walk back wrapping past twelve`() {
         val s = spin()
         moveTo(s, 0f, -100f)
         for (i in 1..3) moveTo(s, -step * i, -100f)
-        assertEquals(5, s.activeSlot) // 0 - 3 wraps to slot 5 (7:30 — the arc spin EXISTS for)
+        assertEquals(6, s.activeSlot) // 0 - 3 wraps to slot 6 (8:00 — the arc spin EXISTS for)
     }
 
     @Test fun `a full turn comes home`() {
         val s = spin()
         moveTo(s, 0f, -100f)
-        for (i in 1..8) moveTo(s, step * i, -100f)
+        for (i in 1..OrbDial.SLOT_COUNT) moveTo(s, step * i, -100f)
         assertEquals(0, s.activeSlot)
         assertTrue(s.spinning)
     }
@@ -99,7 +99,7 @@ class DialSpinTest {
 
     @Test fun `spin only arms from the top arc - a side drag keeps pure aim semantics`() {
         val s = spin()
-        val (x, y) = aim(2) // 3:00
+        val (x, y) = aim(2) // 2:40
         moveTo(s, x, y)
         moveTo(s, x + step * 2, y) // big lateral travel while aiming sideways
         assertFalse(s.spinning)

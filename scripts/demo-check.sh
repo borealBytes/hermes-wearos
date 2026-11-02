@@ -21,7 +21,8 @@ for n, feat, shots, st in rows:
     for s in shots:
         if not os.path.exists(os.path.join("docs/screens", s)):
             missing.append((n, feat, s))
-    if st != "shot ✓":
+    if st != "shot ✓" and not st.startswith("rides") and st != "n/a":
+        # "n/a" = row retired/merged; "rides …" = proven through another row's shot (§2 notes)
         pending.append((n, feat, st))
 print(f"ledger rows: {len(rows)}  |  shots missing from docs/screens: {len(missing)}  |  rows not 'shot ✓': {len(pending)}")
 for n, feat, s in missing:

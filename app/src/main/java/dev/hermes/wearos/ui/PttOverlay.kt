@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,17 +47,51 @@ fun PttOverlay(
     handsFree: Boolean,
     onKeyboard: () -> Unit,
     history: List<String> = emptyList(),
+    // BATCH-4 #13 (owner: *"very top small … voice input provider listed, and … if it's
+    // streaming the text back … or not"*): pre-composed by MainActivity from
+    // domain/SttProviders.overlayName + streamsLabel — e.g. "🛰 Gateway · whisper ·
+    // text streaming ✗ · final when you stop". Honest by construction (pure + tested).
+    statusLine: String = "",
     modifier: Modifier = Modifier,
 ) {
     val pulse = rememberInfiniteTransition(label = "micpulse")
     val t by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Restart), label = "t")
     val lines = SttFeed.lines(partial, history)
     val insets = roundInsets()
+    // The PROOF-OF-LIFE dot: rides voice/SttLevel published by whichever engine is listening,
+    // so even a buffered gateway engine (no text until stop) visibly proves the mic is reading.
+    val level by dev.hermes.wearos.voice.SttLevel.level.collectAsState()
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
+        if (statusLine.isNotEmpty()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = insets.topDp.dp, start = 12.dp, end = 12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(4.dp + 7.dp * level)
+                        .background(
+                            MaterialTheme.colors.primary.copy(alpha = 0.45f + 0.55f * level),
+                            CircleShape,
+                        ),
+                )
+                Text(
+                    statusLine,
+                    style = MaterialTheme.typography.caption3,
+                    color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),

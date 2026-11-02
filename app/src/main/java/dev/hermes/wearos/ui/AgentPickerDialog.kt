@@ -1,8 +1,13 @@
 package dev.hermes.wearos.ui
 
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -42,15 +47,36 @@ fun AgentPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
+        val edgeScope = rememberCoroutineScope()
+        // BATCH-5 #18: the gesture rides a viewport-sized wrapper, NOT the scrolled Column —
+        // the column node is content-tall, so the ring ellipse was computed against the wrong
+        // box and edge circles died below the top rim (see SettingsScreen for the full why).
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // BATCH-6 #29: button lists circle at 2f (see SettingsScreen).
+                .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch {
+                    // APPLY TELEMETRY (#28): the stroke lands here; if it does nothing visible,
+                    // the used/max numbers say whether the scroll range was zero (content fits)
+                    // or the ScrollState refused the injection — no guessing from screenshots.
+                    val used = edgeDlgScroll.scrollBy(total)
+                    android.util.Log.d(
+                        "HermesWear",
+                        "agents edge apply: want=${total.toInt()} used=${used.toInt()} max=${edgeDlgScroll.maxValue} at=${edgeDlgScroll.value}",
+                    )
+                } },
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                // Explicit circle clearance: window insets aren't delivered inside Dialog windows,
-                // so the safe-circle paddings are spelled out (title out of the clock zone,
-                // content above the chin, edges off the round clip).
-                .padding(top = 30.dp, bottom = 18.dp)
-                .verticalScroll(rememberScrollState()),
+                // Owner correction (batch-4 #6): the old 30/18 band sat OUTSIDE the scroll and
+                // shrank the viewport — content visibly cut off at top and bottom. Whole face
+                // scrolls; the buffer is blank CONTENT lines at the ends (top so the title clears
+                // the clock at rest, bottom = the circle-safe rim line).
+                .verticalScroll(edgeDlgScroll)
+                .padding(top = 34.dp, bottom = circleSafeBottomDp(12f, 10f).dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -105,5 +131,6 @@ fun AgentPickerDialog(
                 ),
             ) { Text("close", style = MaterialTheme.typography.button) }
         }
+        } // Box (batch-5 #18 edge-scroll host)
     }
 }

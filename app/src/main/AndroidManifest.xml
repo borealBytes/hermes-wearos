@@ -4,7 +4,12 @@
     <uses-feature android:name="android.hardware.type.watch" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Route discovery (SPEC §11.6): read the default network + its capabilities so the
+         gateway route can be re-picked the moment the link moves, not one failed ask later. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Location tool (owner ask B): fail-soft one-shot fix; NOT required features so the APK
          still installs on images without GPS. Runtime grant via scripts/watch-health.sh grant. -->
@@ -26,6 +31,20 @@
     <uses-permission android:name="android.permission.health.HEALTH_RECEIVE_HEALTH_SUMMARY" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
+
+        <!-- BATCH-4 #8: the speech-input picker names the vendor behind the SYSTEM recognizer;
+         Android 11+ package visibility hides it from resolveService without this. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.SpeechRecognition" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:name=".WearApp"
@@ -50,7 +69,7 @@
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.HermesWear">
+            android:theme="@style/Theme.HermesWear.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -67,10 +86,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- RUN KEEPER (owner 2026-10-29 night): the cached-process FREEZE on Samsung Wear eats
+             wakelocks AND the network; only a foreground service reliably survives the wrist-
+             away window. Started/stopped with each run (notify/RunKeeperService.kt). -->
+        <service
+            android:name=".notify.RunKeeperService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- M5: "Ask Hermes" tile (SPEC §5 U3): full-screen tap launches talk mode. -->
         <service
-            android:name=".tile.AskHermesTileService"
-            android:exported="true"
+            android:name=".tile.AskHermesTileService"            android:exported="true"
             android:label="@string/tile_label"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>

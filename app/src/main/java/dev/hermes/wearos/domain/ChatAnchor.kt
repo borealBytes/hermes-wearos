@@ -10,6 +10,14 @@ package dev.hermes.wearos.domain
  */
 object ChatAnchor {
 
+
+    // #14 FOCUS HOLD / batch-5 #21 (owner: *"the question should start at that 10 o'clock
+    // spot… the answer gets the runway"*) lives in ChatScreen as the HOLD SCRIM — a drawn
+    // panel (question at the tick px, status at the crown px), not a row layout, so no row
+    // constants here. History: three scroll-engine shapes were tried and measured off by
+    // 60–180 px on the SM-L705U (wear centers short content; layoutInfo offsets are fiction
+    // there) before the seat moved to pixels.
+
     fun bottomIndex(
         messageCount: Int,
         hasApproval: Boolean = false,
@@ -17,7 +25,7 @@ object ChatAnchor {
         hasStatus: Boolean = false,
         showEmptyHint: Boolean = false,
     ): Int {
-        var rows = 1 // ChatHeader is item 0
+        var rows = 2 // anchor spacer is item 0, ChatHeader/Caption is item 1 (bottom-anchor, 2026-10-29)
         if (showEmptyHint) rows++
         rows += messageCount.coerceAtLeast(0)
         if (hasApproval) rows++
@@ -29,14 +37,4 @@ object ChatAnchor {
     /** The idle-empty "Ask Hermes" hint condition — kept in one place so the count can't drift. */
     fun showEmptyHint(messageCount: Int, live: String, hasApproval: Boolean): Boolean =
         messageCount == 0 && live.isEmpty() && !hasApproval
-
-    /**
-     * Row index of the LAST user message — pinned while a run is in flight (owner batch 7:
-     * *"when we're waiting for responses, scroll the viewport up a little bit so you can actually
-     * see what the question was and the information come back"*). Row layout puts message i at
-     * row i+1 (header is row 0; the empty hint only coexists with zero messages). Null when the
-     * thread has no user turn to anchor on.
-     */
-    fun questionRow(lastUserMessageIndex: Int): Int? =
-        if (lastUserMessageIndex < 0) null else lastUserMessageIndex + 1
 }

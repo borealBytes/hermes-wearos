@@ -28,6 +28,11 @@
  *   POST /img             → same, JSON body {path[,width]}
  *   POST /render/mermaid  → image/png  {code, width, format?}  (mmdc, .cache/ renders)
  *   POST /stt/whisper     → {text}     multipart "audio" wav/webm ≤10MB     (faster-whisper CPU)
+ *   WS   /stt/stream      ← BINARY 16 kHz mono PCM16 mic frames from the watch, TEXT {"end":true}
+ *        (bearer)          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
+ *        Engine default from config.json `stt_stream_engine`: "whisper" (buffered — final only)
+ *        | "parakeet" (transcribe.cpp GGUF — partials WHILE talking). The watch may override per
+ *        session via ?engine=<id>; GET /health reports stt:{engine,ready,missing,engines[]}.
  *
  * Zero framework: node:http + node:crypto only. Everything folder-local under
  * server/watchkit/ (.cache for renders+npx+puppeteer, .models for whisper weights).
@@ -39,14 +44,19 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { attachSttStream, sttEngineStatus } from './stt_stream_ws.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.1.0';
 const WK_DIR = path.dirname(fileURLToPath(import.meta.url));
+// Version comes from repo-root VERSION (single source of truth — scripts/version.sh).
+const VERSION = (() => {
+  try { return fs.readFileSync(path.join(WK_DIR, '..', '..', 'VERSION'), 'utf8').trim(); }
+  catch { return '0.0.0'; }
+})();
 
 // ── config ─────────────────────────────────────────────────────────────────
 const CONFIG_PATH = process.env.WATCHKIT_CONFIG || path.join(WK_DIR, 'config.json');
@@ -719,9 +729,14 @@ async function handleRender(req, res, ip) {
 }
 
 // ── /img ─────────────────────────────────────────────────────────────────────
-// Allowlisted image scaler (F6): the gateway emits `![desc](/abs/path.png)` lines and the
-// watch fetches them here. img_roots + extension whitelist are the security boundary — the
-// bearer token alone must not turn this daemon into an arbitrary-file reader.
+// Image scaler (F6): the gateway emits `![desc](/abs/path.png)` lines and the watch fetches
+// them here. Boundaries: the extension whitelist (only image types, never .env/.py/…), the
+// 15 MB cap, and realpath re-checks (a symlink under a root may not escape it). Roots:
+// the daemon user's HOME is ALWAYS allowed (batch-6 #26: the comfy agent writes under
+// /run/media/…/comfy/outputs, outside the legacy four-path allowlist — desktop showed the
+// photo, the wrist 403'd it). This daemon already hands out every session BODY via
+// /sessions and /search, so image-typed files under the owner's home are strictly less
+// sensitive than what the same bearer already reads; extra mounts go in img_roots.
 const IMG_MAX_INPUT_BYTES = 15 * 1024 * 1024;
 const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // Full-res passthrough (owner batch 2: "images should be in full res to the watch; scaling should
@@ -729,8 +744,8 @@ const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // the legacy scaler (animation/mode conversion genuinely needs Pillow).
 const IMG_FULL_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const IMG_SCALER = path.join(WK_DIR, 'img_scale.py');
-const IMG_ROOTS = (Array.isArray(cfg.img_roots) && cfg.img_roots.length ? cfg.img_roots
-  : [path.join(os.homedir(), '.hermes'), path.join(os.homedir(), 'dev'), '/tmp', '/var/tmp'])
+const IMG_ROOTS = [os.homedir(), '/tmp', '/var/tmp',
+  ...(Array.isArray(cfg.img_roots) ? cfg.img_roots : [])]
   .map(r => { try { return fs.realpathSync(path.resolve(String(r))); } catch { return null; } })
   .filter(Boolean);
 const underRoots = (p) => IMG_ROOTS.some(root => p === root || p.startsWith(root + path.sep));
@@ -917,6 +932,115 @@ async function handleSessions(req, res, ip, params) {
   }
 }
 
+// ── /approvals_waiting (batch-6 #25: desktop-session life reaches the wrist) ───
+// Owner 2026-10-30: "I'm not getting notifications or approvals from sessions started on the
+// desktop — only stuff I start on the watch. I want desktop-session notifications — even ones
+// never opened on the watch — so when I step away from the computer I still get them; the ONLY
+// silence allowed is the session that is actually the top thing on my watch's chat screen."
+// A desktop run has no watch-side stream, so nothing ever pushed it. Design review found the
+// honest truth source in the profile's state.db (the gateway keeps it live, read-only for us —
+// same posture as /sessions and /search):
+//   • WAITING approvals — the approval park heartbeats `sessions.last_activity_description =
+//     "waiting for user approval"` every ~10 s (agent activity tracker; approval_gateway_wait
+//     activity_heartbeat), so a session with that beacon AND a fresh last_activity_at is parked
+//     RIGHT NOW. What it wants approved: the session's last assistant message's tool_calls
+//     (persisted before execution — that IS the parked call). No request_id on disk, and desk
+//     parks answer only on their own ws lane, so the wrist notification opens the session
+//     rather than approving inline (watch-started runs keep their inline Approve/Deny).
+//   • PULSES — visible session rows (same visibility rules as /sessions) with message_count +
+//     last_role: the watch diffs counts between polls and buzzes once when an assistant answer
+//     FINISHED on the desktop since the last look.
+// Per-profile errors blank only their own profile. The watch (domain/AwayWatch) dedups and
+// applies the viewing suppression client-side.
+//   GET /approvals_waiting → {"object":"list",
+//     "waiting":[{"profile","chat_id","title","tool","arguments","parked_at"}],
+//     "pulses":[{"profile","id","title","message_count","last_role","last_active"}]}
+const PARK_FRESH_SEC = 15 * 60;       // the park heartbeats every ~10 s; stale beacon = gone
+const PULSE_FRESH_SEC = 30 * 60;      // a session idle for hours cannot have just finished
+const PULSE_LIMIT = 12;               // per profile: nothing older matters inside 30 min
+
+function parseToolCallNames(toolCallsJson) {
+  try {
+    const tcs = JSON.parse(toolCallsJson);
+    if (!Array.isArray(tcs)) return [];
+    return tcs.map((tc) => ({
+      tool: String(tc?.function?.name ?? tc?.name ?? ''),
+      arguments: String(tc?.function?.arguments ?? tc?.arguments ?? ''),
+    })).filter((t) => t.tool);
+  } catch { return []; }
+}
+
+async function handleApprovalsWaiting(req, res, ip) {
+  const t0 = Date.now();
+  const waiting = [];
+  const pulses = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(PROFILES_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && SESSIONS_PROFILE_RE.test(e.name)).map((e) => e.name);
+  } catch { /* no profiles dir: honest empty */ }
+  // The default profile's store is the HOME state.db (desktop sessions live there), not
+  // profiles/default/state.db — same resolution /sessions uses.
+  if (!names.includes('default')) names.unshift('default'); // home profile: no directory, but it owns the desktop sessions
+  const stores = names.map((n) => ({ name: n, file: sessionDbPath(n) })).filter((s) => s.file && fs.existsSync(s.file));
+  for (const { name, file } of stores) {
+    let db;
+    try {
+      const { DatabaseSync } = await import('node:sqlite'); // lazy — same 503 posture as /sessions
+      db = new DatabaseSync(file, { readOnly: true });
+      const nowSec = Math.floor(Date.now() / 1000);
+      const parked = db.prepare(`
+        SELECT id, title, last_activity_at FROM sessions
+        WHERE last_activity_description LIKE 'waiting for user approval%'
+          AND COALESCE(last_activity_at, started_at) > ?
+        ORDER BY last_activity_at DESC LIMIT 8
+      `).all(nowSec - PARK_FRESH_SEC);
+      for (const r of parked) {
+        let tool = '', args = '';
+        try {
+          const m = db.prepare(
+            "SELECT tool_calls FROM messages WHERE session_id = ? AND tool_calls IS NOT NULL AND tool_calls != '' ORDER BY id DESC LIMIT 1"
+          ).get(r.id);
+          const calls = m ? parseToolCallNames(m.tool_calls) : [];
+          tool = calls.map((c) => c.tool).join(', ');
+          args = (calls[0]?.arguments || '').slice(0, 240);
+        } catch { /* payload is garnish: the beacon itself is the news */ }
+        waiting.push({
+          profile: name, chat_id: String(r.id), title: String(r.title || ''),
+          tool, arguments: args, parked_at: Number(r.last_activity_at) || 0,
+        });
+      }
+      const since = nowSec - PULSE_FRESH_SEC;
+      for (const r of db.prepare(`
+        SELECT s.id AS id, s.title AS title, s.message_count AS mc,
+               (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS msg_ts,
+               (SELECT m.role FROM messages m WHERE m.session_id = s.id
+                 ORDER BY m.timestamp DESC, m.id DESC LIMIT 1) AS last_role
+        FROM sessions s
+        WHERE s.hidden = 0 AND s.archived = 0
+          AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+          AND COALESCE(s.last_activity_at, s.started_at) > ?
+        ORDER BY COALESCE(s.last_activity_at, s.started_at) DESC
+        LIMIT ?
+      `).all(since, PULSE_LIMIT)) {
+        const lastActive = Math.max(Number(r.msg_ts) || 0, Number(r.last_activity_at) || 0);
+        if (lastActive < since) continue;
+        pulses.push({
+          profile: name, id: String(r.id), title: String(r.title || ''),
+          message_count: Number(r.mc) || 0, last_role: String(r.last_role || ''),
+          last_active: lastActive,
+        });
+      }
+    } catch { /* one locked/corrupt store blanks its own profile, never the batch */ }
+    finally { try { db?.close(); } catch { /* already gone */ } }
+  }
+  waiting.sort((a, b) => b.parked_at - a.parked_at);
+  pulses.sort((a, b) => b.last_active - a.last_active);
+  const body = JSON.stringify({ object: 'list', waiting, pulses });
+  return done(res, send(res, 200, body), t0, ip, 'approvals_waiting', 200, undefined,
+    waiting.length + pulses.length);
+}
+
 // ── /session_messages (history backfill on adoption) ────────────────────────
 // Owner bug: adopting a `default`-profile session from the watch's Sessions screen set the
 // session id but opened EMPTY — the transcript lives only in the profile's state.db. Same
@@ -989,7 +1113,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url === '/health') {
       logLine({ ev: 'req', ip, ep: 'health', status: 200, ms: 0 });
-      return send(res, 200, JSON.stringify({ status: 'ok', version: VERSION, uptime_s: Math.round((Date.now() - START_MS) / 1000) }));
+      // BATCH-4 #9: the watch's Settings shows WHICH engine would answer a streamed ask.
+      return send(res, 200, JSON.stringify({
+        status: 'ok', version: VERSION, uptime_s: Math.round((Date.now() - START_MS) / 1000),
+        stt: sttEngineStatus(cfg, VENV_PY, WK_DIR),
+      }));
     }
     const auth = req.headers.authorization || '';
     if (!auth.startsWith('Bearer ') || !timingSafeEqual(auth.slice(7), TOKEN)) {
@@ -1048,6 +1176,7 @@ const server = http.createServer(async (req, res) => {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleCatalog(req, res, ip, q);
     }
+    if (req.method === 'GET' && url === '/approvals_waiting') return handleApprovalsWaiting(req, res, ip);
     if (req.method === 'GET' && url === '/sessions') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleSessions(req, res, ip, q);
@@ -1171,6 +1300,11 @@ function runMcp() {
 if (MCP_MODE) {
   runMcp();
 } else {
+  // BATCH-4 #9: streamed mic sessions ride the same socket authority as every endpoint.
+  attachSttStream(server, {
+    cfg, venvPy: VENV_PY, wkDir: WK_DIR, TOKEN, CHILD_ENV, logLine,
+    timingSafe: (a, b) => timingSafeEqual(a, b),
+  });
   server.listen(PORT, HOST, () => {
     logLine({ ev: 'start', version: VERSION, host: HOST, port: PORT, pid: process.pid });
   });

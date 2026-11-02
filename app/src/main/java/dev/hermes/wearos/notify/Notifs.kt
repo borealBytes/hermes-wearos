@@ -71,6 +71,22 @@ object Notifs {
         notify(app, approvalId(info.runId), b.build())
     }
 
+    /**
+     * BATCH-6 #25: an approval parked on a DESKTOP session (watchkit activity-beacon inbox).
+     * The desk run's approval answers on the desktop's own lane — the wrist's honest action is
+     * OPEN (adopt & read the session); watch-started runs keep inline Approve/Deny. Same
+     * channel as a watch approval, so it arrives with the same attention buzz.
+     */
+    fun approvalRemote(app: Context, chatId: String, title: String, tool: String, arguments: String) {
+        val what = listOf(tool, arguments).filter { it.isNotBlank() }.joinToString(" ")
+        val text = ("waiting for approval · " + what.ifBlank { "a tool call" })
+            .replace('\n', ' ').take(SNIPPET)
+        val b = base(app, CHANNEL_APPROVAL, "\u26a0 " + titleFor(title.ifBlank { chatId }), text)
+            .setContentIntent(openChatIntent(app, chatId))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
+        notify(app, approvalId(chatId), b.build())
+    }
+
     fun cancelApproval(app: Context, runId: String) =
         NotificationManagerCompat.from(app).cancel(approvalId(runId))
 

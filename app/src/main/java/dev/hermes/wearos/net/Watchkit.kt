@@ -42,6 +42,53 @@ object Watchkit {
     }
 
     /**
+     * BATCH-4 #9: which STT engine watchkit's `/health` says will answer `/stt/stream`
+     * (null = offline/unreachable). Settings ▸ Voice in names it in the Gateway picker row;
+     * the endpoint is PUBLIC, so no bearer is spent on the probe.
+     */
+    private val _sttEngine = MutableStateFlow<String?>(null)
+    val sttEngine: StateFlow<String?> = _sttEngine.asStateFlow()
+
+    /**
+     * #16 ENGINE SELECTION (owner: *"clicking … should let you select … installed models …
+     * set up to expand in the future"*): the FULL inventory /health reports — every engine the
+     * watchkit box has, with its honest streaming + ready flags. Empty = never answered yet
+     * (the picker then shows only the single-engine name, the pre-#16 behavior).
+     */
+    private val _sttEngines = MutableStateFlow<List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo>>(emptyList())
+    val sttEngines: StateFlow<List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo>> = _sttEngines.asStateFlow()
+
+    suspend fun refreshSttEngine() = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url("${_config.value.baseUrl}/health").get().build()
+            val text = clientCall(req) { it.body?.string().orEmpty() }
+            val stt = HermesApi.parse(text)["stt"] as? kotlinx.serialization.json.JsonObject
+            fun flag(o: kotlinx.serialization.json.JsonObject, k: String) =
+                (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            _sttEngine.value = stt?.let { s -> flag(s, "engine")?.takeIf { flag(s, "ready") == "true" } }
+            _sttEngines.value = parseSttEngines(stt)
+        }.onFailure { _sttEngine.value = null; _sttEngines.value = emptyList() }
+    }
+
+    /** Pure-ish (kotlinx JSON only → JVM testable): /health `stt.engines[]` → rows. */
+    internal fun parseSttEngines(
+        stt: kotlinx.serialization.json.JsonObject?,
+    ): List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo> {
+        val arr = stt?.get("engines") as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        return arr.mapNotNull { row ->
+            val o = row as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            fun f(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val id = f("engine")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            dev.hermes.wearos.domain.SttProviders.SttEngineInfo(
+                id = id,
+                streaming = f("streaming") == "true",
+                ready = f("ready") == "true",
+                missing = f("missing").orEmpty(),
+            )
+        }
+    }
+
+    /**
      * Byte-aware image cache (owner batch 2: full-res to the watch): a few big photos must not
      * OOM a watch, so the budget is BYTES (~24 MB), not entry count. Weighs raw byte arrays by
      * size and bitmaps by their real allocation (allocationByteCount). Entries heavier than the
@@ -68,6 +115,25 @@ object Watchkit {
 
     private fun esc(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
         .replace("\n", "\\n").replace("\r", "").replace("\t", "\\t") + "\""
+
+    /**
+     * BATCH-6 #25 (owner: *"notifications or approvals from sessions started in the desktop …
+     * only stuff I start in the watch [get them] — even if not ever opened yet on the watch"*):
+     * the DESKTOP-PULSE inbox — approval parks (activity beacon) + recently-active sessions everywhere
+     * on the gateway box (watchkit reads the state stores directly). Raw JSON in, parsed by the
+     * pure domain/AwayWatch; null = watchkit unset/offline (the poller just tries again later).
+     */
+    suspend fun approvalsWaiting(): String? = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        try {
+            clientCall(
+                Request.Builder().url("${cfg.baseUrl}/approvals_waiting")
+                    .header("Authorization", "Bearer ${cfg.token}").build(),
+            ) { r -> if (r.isSuccessful) r.body?.string() else null }
+        } catch (e: Exception) {
+            null // offline / watchkit down / bearer refused: the next tick retries
+        }
+    }
 
     /** Raw render fetch (also used by the dev `render_test` hook). Throws ApiException/IOException. */
     suspend fun renderBytes(code: String, width: Int = 460): ByteArray = withContext(Dispatchers.IO) {

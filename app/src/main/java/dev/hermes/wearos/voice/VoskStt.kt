@@ -39,7 +39,7 @@ sealed class VoskEvent {
  * AudioRecord 16 kHz PCM16 mono, pull-API (`acceptWaveForm` + result polling — the Maven AAR has no
  * callback/stream API). One session at a time (mutex); model + recognizer cached across sessions.
  */
-class VoskStt(private val context: Context) {
+class VoskStt(private val context: Context) : SttSource {
 
     companion object {
         private const val TAG = "HermesWear"
@@ -73,7 +73,7 @@ class VoskStt(private val context: Context) {
      * and/or on stop (flush), Error for model-missing / busy / no-permission / mic failures.
      * [scope] is used to warm the model load concurrently.
      */
-    fun start(scope: CoroutineScope): Flow<VoskEvent> = flow {
+    override fun start(scope: CoroutineScope): Flow<VoskEvent> = flow {
         // sync.Mutex.tryLock() *throws* when another coroutine holds it: treat as busy.
         val locked = try { mutex.tryLock(); true } catch (e: IllegalMonitorStateException) { false }
         if (!locked) { emit(VoskEvent.Error("busy")); return@flow }
@@ -101,6 +101,7 @@ class VoskStt(private val context: Context) {
                 while (currentCoroutineContext().isActive && !stopping) {
                     val n = record.read(buf, 0, buf.size)
                     if (n <= 0) continue
+                    SttLevel.publish(dev.hermes.wearos.domain.MicLevel.fromShorts(buf, n)) // #13 meter
                     if (rec.acceptWaveForm(buf, n)) {
                         val text = field(rec.result, "text")
                         if (text.isNotBlank()) emit(VoskEvent.Final(text))
@@ -117,6 +118,7 @@ class VoskStt(private val context: Context) {
             } finally {
                 try { record.stop() } catch (e: Exception) { }
                 record.release()
+                SttLevel.reset()
                 Log.i(TAG, "stt stopped")
             }
         } finally {
@@ -127,7 +129,48 @@ class VoskStt(private val context: Context) {
         .flowOn(Dispatchers.IO)
 
     /** Release native session handles; model/recognizer are reused, released with the process. */
-    fun stop() { stopping = true }
+    override fun stop() { stopping = true }
+
+    /**
+     * BATCH-4 #9: the same recognizer pipeline fed from OUTSIDE — raw 16 kHz mono PCM16
+     * frames instead of the private AudioRecord. This is what makes GatewayStt's
+     * auto-fallback honest: the mic was already open for the WebSocket attempt, so the
+     * buffered frames replay HERE (nothing spoken is lost) and Vosk behaves exactly as if
+     * [start] had owned the capture. Mirrors [start]'s loop on purpose (endpoint finals +
+     * stop flush + reset); busy-safe on the same mutex; honors [stopped] per frame.
+     */
+    internal fun eventsFromFrames(frames: Flow<ByteArray>, stopped: () -> Boolean): Flow<VoskEvent> = flow {
+        val locked = try { mutex.tryLock(); true } catch (e: IllegalMonitorStateException) { false }
+        if (!locked) { emit(VoskEvent.Error("busy")); return@flow }
+        try {
+            if (!isModelPresent(context)) { emit(VoskEvent.Error("model-missing")); return@flow }
+            val rec = ensureRecognizer() ?: run { emit(VoskEvent.Error("model-load-failed")); return@flow }
+            Log.i(TAG, "stt listening (gateway-fallback feed, model=${modelDir(context).name})")
+            frames.collect { bytes ->
+                if (stopped()) return@collect
+                val n = bytes.size / 2
+                if (n <= 0) return@collect
+                val buf = ShortArray(n)
+                java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    .asShortBuffer().get(buf)
+                if (rec.acceptWaveForm(buf, n)) {
+                    val text = field(rec.result, "text")
+                    if (text.isNotBlank()) emit(VoskEvent.Final(text))
+                    rec.reset()
+                } else {
+                    val p = field(rec.partialResult, "partial")
+                    if (p.isNotBlank()) emit(VoskEvent.Partial(p))
+                }
+            }
+            val flushed = field(rec.finalResult, "text")
+            if (flushed.isNotBlank()) emit(VoskEvent.Final(flushed))
+            rec.reset()
+            Log.i(TAG, "stt stopped (gateway-fallback feed)")
+        } finally {
+            mutex.unlock()
+        }
+    }
+        .flowOn(Dispatchers.IO)
 
     private suspend fun ensureRecognizer(): Recognizer? = withContext(Dispatchers.IO) {
         val m = ensureModel() ?: return@withContext null

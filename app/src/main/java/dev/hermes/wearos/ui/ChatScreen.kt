@@ -1,5 +1,8 @@
 package dev.hermes.wearos.ui
 
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -9,15 +12,30 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -37,7 +55,9 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import dev.hermes.wearos.domain.ChatAnchor
+import kotlin.math.roundToInt
 import dev.hermes.wearos.domain.ApprovalInfo
+import dev.hermes.wearos.domain.ChatFollow
 import dev.hermes.wearos.domain.ChatMessage
 import dev.hermes.wearos.domain.ChatUiState
 import dev.hermes.wearos.ui.md.MdMessage
@@ -56,10 +76,31 @@ fun ChatScreen(
     // LAYOUT D: transcript bottom clearance = the bottom-cluster's top edge (px→dp by the caller)
     // so the LAST message can rest clear of the orb cluster; null keeps the chin-based default.
     contentPadBottomDp: Dp? = null,
+    // Batch-4 #3: full viewport width (px) so the 10-o'clock line is the real face's, not the
+    // SLC column's. 0 = fall back to the column's own height (square faces are identical).
+    viewportW: Float = 0f,
     // Hoisted from MainActivity's ChatBody so the scroll SURVIVES the PTT overlay (if/else pair
     // leaves composition while listening) — walkthrough: "after stt talk button done, it scrolls
     // to the top of convo instead of staying at bottom".
     listState: ScalingLazyListState = rememberScalingLazyListState(),
+    // TAIL-FOLLOW (owner 2026-10-29, policy in domain/ChatFollow): hoisted exactly like listState,
+    // because the PTT overlay leaves this composition while listening — an un-hoisted flag would
+    // reset to following the moment the owner's answer arrives, which is precisely when his
+    // scroll position matters most.
+    follow: MutableState<Boolean> = remember { mutableStateOf(true) },
+    // BATCH-5 #20: the voice is reading an answer RIGHT NOW (SpeakAloud.speaking). While it is,
+    // the karaoke anchor (MainActivity) owns the scroll and this effect STANDS DOWN entirely —
+    // hardware logs showed the two fighting every tick (tail-pin vs teleprompter: dy froze at
+    // its floor then diverged). Re-engaged the moment speech ends: `speaking` is an effect key.
+    speaking: Boolean = false,
+    // KARAOKE's "WE MOVED IT" STAMP (owner 2026-10-29 night): the follow-disengage edge detector
+    // below reads any RISE-then-fall of isScrollInProgress as the user's gesture — but wear-
+    // compose raises that flag for programmatic scrollToItem too (measured: an animated karaoke
+    // nudge AND an instant one each froze tail-follow on its first jump). The karaoke effect
+    // stamps this timestamp right before its own jump; edges settling within the grace window are
+    // ours, not the wrist's. User flings last well past 400 ms, so the guard never eats a real
+    // scroll-away except one landing inside that window — and landing at the end re-engages anyway.
+    programmaticScrollAt: MutableState<Long> = remember { mutableStateOf(0L) },
     // PULL-UP-AT-THE-END (owner: *"scroll to the bottom and keep dragging up → refresh that
     // session from the gateway"*). The auto-sync does the everyday work; this is the manual door.
     onPullUpAtBottom: () -> Unit = {},
@@ -67,13 +108,156 @@ fun ChatScreen(
     // PINCH FONT-SCALE: every type change re-runs the bottom anchor (text height changes shift
     // the tail) — same scroll machinery, toast-free.
     val typeScale = LocalFontScale.current
-    // BOTTOM ANCHOR (walkthrough): send (voice OR keyboard) grows messages; stream deltas grow
-    // `live`; STOP adds the marker row; approval appends a card; agent switch / chat open change
-    // activeChatId; overlay dismiss re-enters composition (effect re-runs). Every path → bottom.
+    // BOTTOM ANCHOR + WHO-OWNS-THE-VIEWPORT (owner 2026-10-29: *"keep the text that's coming out
+    // just above the orb, so you can see as much scroll back as possible… by default, unless
+    // you've scrolled"*). The policy is domain/ChatFollow; these are its two signals, wired:
+    //
+    //  • follow == true — the default, re-engaged by every NEW USER ASK and every chat switch —
+    //    pushes the list's END on every content change: newest row just above the orb bar, all
+    //    scroll-back resting ABOVE it where a swipe reaches it. The batch-7 mid-circle question
+    //    pin (`starting`/qRow) is GONE, and it was the disease, not a symptom to keep: pinning
+    //    the question at the list's Middle is exactly what shoved the previous rows off the top.
+    //  • a USER scroll settles ownership (observer below): rest off the end ⇒ the stream keeps
+    //    its hands off the transcript; rest at the end ⇒ the tail belongs to the app again.
+    //  • BOTTOM-ANCHOR (owner 2026-10-29: *"it starts streaming from the top of the thing
+    //    instead of just above the orb"*): when the WHOLE transcript fits the circle, wear's
+    //    list end parks the last item at the MIDDLE anchor — which shoves short content off
+    //    the TOP. So a top spacer (item 0) eats the exact slack instead and the list rests at
+    //    offset 0: the newest line sits JUST ABOVE THE ORB and the reply grows UPWARD (maximum
+    //    scroll-back while waiting, same intent as ChatFollow). Content that does not fit
+    //    collapses the spacer to 0 and the classic tail-pin owns the view. The measurement is
+    //    the layout's own truth — ONE clean frame with every row visible sums the heights —
+    //    so no font/markdown math can drift.
+    val anchorDensity = androidx.compose.ui.platform.LocalDensity.current
+    // Measured chrome for the question-lift geometry (batch-4 #3): the SLC's own top content
+    // padding, its item gap, AND where the list actually starts in the window — the Scaffold's
+    // clock band offsets it ~90 px, which the first version assumed away (the 10:00 tick then
+    // computed perfectly while the question rendered 70 px lower on the glass).
+    val listTopPadPx = 0f  // = the topOverrideDp below: the chat deliberately flows full-bleed
+    // (its true clearance comes from the bottom-cluster pad + the spacer math, and the whole
+    // transcript was tuned that way; the now-truthful round insets would push every row 64 px
+    // down and re-wrap the lines — the list-inset retune is batch item 6, per surface).
+    val listGapPx = with(anchorDensity) { 6.dp.toPx() }
+    var slcTopPx by remember { mutableStateOf(0f) }
+    var anchorPadPx by remember { mutableStateOf(0f) }
+    var slcH by remember { mutableStateOf(0) }
+    val bottomPadPx = with(anchorDensity) { (contentPadBottomDp ?: 82.dp).toPx() } +
+        // the transcript must REST clear of the orb crown, not flush against the circle — the
+        // round shoulders make a flush rest look like the text slides under the orb.
+        with(anchorDensity) { 10.dp.toPx() }
+    val lastChatKey = remember { mutableStateOf(state.activeChatId) }
+    val lastAskCount = remember { mutableStateOf(state.messages.size) }
+    // #14 (owner: *"anytime we get a brand new message in that we're waiting on it to complete,
+    // the text will stream from the bottom … the only time you turn that off is within the
+    // chat session turn if I start scrolling"*): a NEW RUN — busy false→true — re-engages the
+    // tail even when the last scroll left the view parked mid-transcript. The run's own
+    // thinking dots then stream from the 8:20 line like the first chat; scrolling after that
+    // stays manual for the rest of THIS run (next run takes the tail back again).
+    val lastBusy = remember { mutableStateOf(state.busy) }
+    // #14 FOCUS HOLD: the render decision the ticker relies on — while an answer is awaited
+    // the transcript collapses to caption + question + status (ChatAnchor hold
+    // constants), which is what makes every hold a top-rest, pixel-truthful layout. Ends
+    // with the first streamed delta, an approval, a finish, or the wearer grabbing the list
+    // (follow off) — scrolling never fights a held view.
+    // The status line BLANKS between engine/tool updates mid-run ("thinking…" → "" →
+    // "🔧 terminal…" measured 2026-10-30) — keying the hold on it FRAGMENTS the wait. The
+    // invariant that never wobbles is: engine busy + newest row is the wearer's question +
+    // nothing streamed yet. The status row therefore always RENDERS during a hold (blank
+    // text when there is nothing to say) — it is the gap's bottom anchor, not a condition.
+    val focusHold = state.busy && state.live.isEmpty() &&
+        state.approval == null && state.messages.lastOrNull()?.role == ChatMessage.Role.User &&
+        follow.value
     LaunchedEffect(
         state.activeChatId, state.messages.size, state.live.length,
-        state.busy, state.approval?.requestId, state.status, typeScale,
+        state.busy, state.approval?.requestId, state.status, typeScale, follow.value, slcH,
+        speaking,
     ) {
+        val switched = state.activeChatId != lastChatKey.value
+        if (switched) lastChatKey.value = state.activeChatId
+        val newAsk = state.messages.size > lastAskCount.value &&
+            state.messages.lastOrNull()?.role == ChatMessage.Role.User
+        lastAskCount.value = state.messages.size
+        val runStarted = state.busy && !lastBusy.value
+        lastBusy.value = state.busy
+        if (switched || newAsk || runStarted) follow.value = ChatFollow.reengaged()
+        // Fresh ask → fresh runway: the integrator re-measures from scratch for the new
+        // question's height (batch-5 #21); stale runway never rides into the next hold.
+
+        if (!follow.value) return@LaunchedEffect // manual mode: the stream holds its hands off
+        // BATCH-5 #20 TELETHER: while the voice reads, the karaoke anchor owns the scroll —
+        // tail-pinning here froze every spoken-line request against the orb clamp (the block
+        // "stayed exactly" while the voice walked away from it — owner's live complaint).
+        if (speaking) return@LaunchedEffect
+        // Wait (bounded) for a frame the list has FULLY composed — wear lays the tail lazily,
+        // and a chat opened mid-transition reports an empty/stale layoutInfo. Without a whole
+        // frame there is no truthful content height to pad against; the classic rocket is the
+        // fallback when composition stays lazy (true overflow shows the last item quickly).
+        var tries = 0
+        var info = listState.layoutInfo
+        var vis = info.visibleItemsInfo
+        while (tries < 8 && (vis.isEmpty() || vis.last().index < info.totalItemsCount - 1 || slcH <= 0)) {
+            withFrameNanos { }
+            info = listState.layoutInfo
+            vis = info.visibleItemsInfo
+            tries++
+        }
+        val first = vis.firstOrNull()
+        // The content height WITHOUT the spacer: valid only when one frame shows every row
+        // (zero-height spacer is omitted by wear — hence the first().index±1 bookkeeping).
+        val last = vis.lastOrNull()
+        val allShown = first != null && last != null &&
+            first.index <= 1 && last.index == info.totalItemsCount - 1 &&
+            last.index - first.index + 1 == vis.size &&
+            vis.size == info.totalItemsCount - (if (first.index == 0) 0 else 1)
+        val contentH = if (allShown && slcH > 0)
+            (vis.sumOf { it.size } - (if (first!!.index == 0) first.size else 0)).coerceAtLeast(0)
+        else -1
+        val idleEmpty = state.messages.isEmpty() && state.live.isEmpty()
+        val slack = if (contentH > 0f && !idleEmpty && state.approval == null)
+            (slcH - bottomPadPx - contentH) else 0f
+        anchorPadPx = if (slack > 1f) slack else 0f
+        // BATCH-4 #3 (owner: *"when you submit a request, it's okay for your question to start at
+        // that 10 o'clock spot… that should be the top corner"*): the beat right after SEND the
+        // question is the newest row and nothing answers it yet — retune the spacer so its TOP
+        // edge rests exactly on the 10-o'clock tick line (wide-open rim up there, nothing to
+        // clip), leaving the whole lower circle as the answer's runway. The first streamed delta
+        // flips this back to the orb-crown rule and the reply grows upward from the 8:20 corner,
+        // sliding the question back up past the tick exactly as it fills.
+        // THE OFFSET MUST BE TRUTHFUL, AND THE FIX MUST BE A FIXED POINT. The first version
+        // one-step-corrected from the row's measured offset — which OSCILLATES (a lifted frame
+        // measures above the tick and relaxes the pad back; caught on the SM-L705U as the
+        // question wobbling between two heights), and lazy wear frames report not-yet-laid rows
+        // at offset −1, where lifting adds a viewport of spacer and the chat falls off screen
+        // (black transcript mid-stream, also caught on-device). Direct geometry instead: the
+        // spacer that lands the question's TOP on the tick is exactly
+        // (tick − listTopPad − header − item gap) — all measured terms, none depends on the
+        // current spacer. Clamped to [0, slack]: never above the tick, never below the plain
+        // orb-crown rest. The state is "newest row is USER and nothing has streamed for it yet",
+        // not the newAsk transition — the transition is true only in the one lazy frame the
+        // guards must refuse.
+        val awaitingAnswer = state.messages.lastOrNull()?.role == ChatMessage.Role.User &&
+            state.live.isEmpty()
+        // Direct geometry undercounts the header chrome (measured: formula said 120, the row
+        // rendered at 258). MEASURE instead: while resting at the list top, the row's container
+        // offset is its distance below the viewport top (content padding + spacer + header all
+        // folded in), so shrinking the spacer by exactly (rowTop − tick) lands the question's
+        // TOP-LEFT on the 10:00 line. Stable at its result (next pass measures tenY, delta 0);
+        // re-decides as the header grows mid-composition.
+        val qRow = vis.firstOrNull { it.index == state.messages.size + 1 }
+        if (awaitingAnswer && !focusHold && slack > 1f && state.approval == null && qRow != null &&
+            qRow.offset >= 0 && slcH > 0 && !listState.canScrollBackward
+        ) {
+            val tenY = dev.hermes.wearos.domain.RoundScreen.tenOclockY(
+                if (viewportW > 0f) viewportW else slcH.toFloat(), slcH.toFloat(),
+            )
+            val qTopGlobal = slcTopPx + qRow.offset
+            val lift = (qTopGlobal - tenY).coerceAtLeast(0f)
+            if (lift > 1f) anchorPadPx = (anchorPadPx - lift).coerceIn(0f, slack)
+            android.util.Log.d(
+                "HermesWear", "q-lift pad=${anchorPadPx.toInt()} qTop=${qTopGlobal.toInt()} " +
+                    "tenY=${tenY.toInt()} slcTop=${slcTopPx.toInt()} slack=${slack.toInt()}",
+            )
+        }
         val idx = ChatAnchor.bottomIndex(
             messageCount = state.messages.size,
             hasApproval = state.approval != null,
@@ -81,26 +265,29 @@ fun ChatScreen(
             hasStatus = state.status.isNotEmpty(),
             showEmptyHint = ChatAnchor.showEmptyHint(state.messages.size, state.live, state.approval != null),
         )
-        // HOLD (owner batch 7): while a run streams and the whole exchange still fits (nothing
-        // left to scroll to), the viewport HOLDS at the question — the incoming first lines are
-        // visible instead of force-pinned under the orb. Only once the answer overflows the
-        // circle does the classic tail-follow kick in.
-        val qRow = ChatAnchor.questionRow(
-            state.messages.indexOfLast { it.role == dev.hermes.wearos.domain.ChatMessage.Role.User },
-        )
-        val starting = state.busy && state.live.isEmpty() && state.approval == null
-        val holding = state.busy && state.live.isNotEmpty() && !listState.canScrollForward
-        if (state.approval != null) {
-            // APPROVAL CENTERS (owner demo 2026-10-26): the card is the actionable row and the
-            // list may already sit at its end (lazy tail) — the tail push can't lift a card that
-            // was inserted ABOVE the viewport. scrollToItem(idx, 0) lands idx on the list's
-            // center anchor = dead-center in the circle, every time (measured on-device).
-            listState.scrollToItem(state.messages.size.coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
-        } else if (starting && qRow != null) {
-            // Pin the question at the list's Middle anchor — the answer grows downward from it.
-            listState.scrollToItem(qRow.coerceAtMost(listState.layoutInfo.totalItemsCount - 1), 0)
-        } else if (!holding && idx > 0) {
-            // THE anchor (owner walkthrough): latest row must be on screen at the list's end.
+        // #14 FOCUS HOLD rides the SHIPPED rules above: the collapsed list is short content,
+        // so slack>1 owns the view — pad fills to exactly the cluster top and the pass rests
+        // at the list top (the hardware-proven #1/#4 short-transcript branch). Question +
+        // thinking land bottom-aligned on the orb crown, empty runway above for the reply to
+        // grow into. No ticker: hardware 2026-10-30 proved mid-clamp layoutInfo offsets are
+        // not pixel truth (settled rows reported −124/83 while drawn at 272/378), so any
+        // offset-tracking pin converges in a fiction — while the slack rule never measures an
+        // offset at all (spacer = viewport − bottomPad − content, fixed by construction).
+        if (state.approval != null && !follow.value) {
+            // APPROVAL CENTERED — but only as a RESCUE (owner demo 2026-10-26, reshaped by
+            // batch-4 #5): when the user is scrolled away and an approval lands, the in-list
+            // card would sit unreachable below the fold, so pull it to the Middle anchor —
+            // "Middle" = dead-center in the circle, every time (measured on-device). When the
+            // chat is FOLLOWING, the card is a plain tail row: it rests on the circle-safe
+            // line and the ✅/❌ flanks flank the orb beneath it (the centering used to park
+            // the card ON TOP of those flanks — the reshaped rule keeps both readable).
+            listState.scrollToItem((state.messages.size + 1).coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
+        } else if (slack > 1f) {
+            // SHORT TRANSCRIPT: the spacer fills to exactly the cluster top — rest at the list
+            // top so the whole thing (spacer included) is on screen, newest just above the orb.
+            listState.scrollToItem(0, 0)
+        } else if (idx > 0) {
+            // THE tail-pin (owner walkthrough): latest row must be on screen at the list's end.
             // wear-compose 1.4.1 ScalingLazyColumn facts measured on-device: scrollToItem(last, 0)
             // lands short (lazy composition hasn't laid the tail out yet), and the true list end
             // = LAST item resting at the Middle anchor (auto-centering padding fills below it).
@@ -115,11 +302,91 @@ fun ChatScreen(
                 tries++
             }
             if (tries > 1) android.util.Log.d("HermesWear", "anchor idx=$idx tries=$tries (lazy tail)")
+            // THE TAIL PUSH, padding edition (batch-4 #1/#4, owner: *"the bottom left of the
+            // text gets cut off from the circle screen face"*): wear-compose clamps a row
+            // TALLER than the viewport at an end position it computes from its own lazy layout —
+            // scrollToItem into the row is clamped and simply does not move it (measured:
+            // push o=1600, bottom 1009 → unchanged). But wear's list END does HONOR
+            // contentPadding (settled long rows rest exactly at vpBottom − pad on this device).
+            // So the lever is the PADDING: while the tail hangs below the circle-safe line,
+            // grow the bottom pad by the hang; when it lifts back above, decay. The answer's
+            // last line then streams upward out of the 8:20 corner instead of the bezel edge.
+            val tailInfo = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == target }
+            val restLine = slcH - bottomPadPx
+            if (tailInfo != null && slcH > 0 && restLine > 0f &&
+                tailInfo.offset + tailInfo.size > restLine + 2f
+            ) {
+                // THE GROWING-ROW LAG (batch-4 #1/#4, measured on the SM-L705U): wear computes the
+                // clamped END from the row's PREVIOUS layout pass, so a row growing mid-stream
+                // rests its newest line BELOW the circle-safe line until the next relayout — the
+                // exact band the bezel shaves. A padding lever over-corrects (black transcript:
+                // caught mid-oscillation on this build), so settle it the honest way: let the
+                // row finish laying out, then re-assert the end — wear HONORS contentPadding at a
+                // settled clamp (long settled rows rest exactly on the safe line, measured).
+                // 3 × 70 ms covers the text-wrap passes without a visible pause; every streamed
+                // chunk re-runs this effect, so the tail walks up out of the 8:20 corner.
+                for (i in 1..6) {
+                    delay(if (i <= 3) 70 else 150)
+                    programmaticScrollAt.value = android.os.SystemClock.elapsedRealtime()
+                    listState.scrollToItem(target, 4096)
+                    withFrameNanos { }
+                    if (!listState.canScrollForward) break
+                }
+            }
         }
     }
+    // THE SECOND ChatFollow SIGNAL — who moved the list? Every scroll this screen itself makes is
+    // an instantaneous scrollToItem, and those never raise isScrollInProgress; only user drags and
+    // the flings they release do (wear-compose 1.4.1 exposes no interactionSource and no scroll
+    // listener on ScalingLazyListState — this edge is the public surface that can tell them apart,
+    // and it is the same surface that distinguishes a fling settling mid-list from one settling at
+    // the end). So RISE-then-fall ⇒ the user's gesture came to rest, and `ahead` says where.
+    // Documented limit: bezel/rotary travel without a touch shows no edge and keeps following —
+    // fine on the SM-L705U, which has no rotating bezel.
+    LaunchedEffect(listState) {
+        var scrolling = false
+        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
+            .collect { (now, ahead) ->
+                if (scrolling && !now) {
+                    val ours = android.os.SystemClock.elapsedRealtime() - programmaticScrollAt.value < 400L
+                    if (!ours) follow.value = ChatFollow.afterUserScroll(ahead)
+                }
+                scrolling = now
+            }
+    }
+    val edgeScope = rememberCoroutineScope()
+    // BATCH-4 #7: the edge gesture banks travel while the finger rides the rim and lands it as
+    // ONE animateScrollBy on release (why not mid-touch scrolls: see ui/EdgeScrollGesture).
+    val edgeDriving = remember { mutableStateOf(false) }
+    // BATCH-5 #21 THE HOLD SCRIM (owner retest of #3/#1: *"the question should start at that 10
+    // o'clock spot… the answer gets the runway… I don't think it quite worked"*). Three scroll
+    // engines chased that seat through wear's centering geometry (slack pad, runway row,
+    // measured-derivatives) and every one landed 60–180 px off: with the transcript collapsed
+    // there is nothing tall enough to push against, so the list centers its own short content
+    // and layoutInfo reports pixels the glass never shows. The seat is therefore drawn, not
+    // scrolled: during a hold an opaque panel covers the (hidden-anyway) transcript and paints
+    // the question EXACTLY on the 10-o'clock tick and the engine status EXACTLY on the 8:20
+    // crown — pixel arithmetic, zero scroll dependence — and the whole circle between them is
+    // the empty runway the reply grows into when the panel lifts on the first delta. The orb
+    // and clock ride ABOVE this layer (MainActivity's own overlay), so the running face —
+    // orb pulsing, amber status, blue question up top — is identical to the #14 look, seated.
+    Box(modifier = Modifier.fillMaxSize()) {
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxWidth().pointerInput(listState) {
+        modifier = Modifier.fillMaxWidth().onSizeChanged { slcH = it.height }
+            .onGloballyPositioned { slcTopPx = it.positionInRoot().y }
+            // BATCH-4 #7: circling the screen EDGE scrolls the transcript (domain/EdgeScroll).
+            .edgeCircleScroll(driving = edgeDriving) { total ->
+                edgeScope.launch {
+                    // Same re-engagement rule the drag path uses (domain/ChatFollow): travel
+                    // while forward is still available means the user left the tail.
+                    if (listState.canScrollForward) follow.value = false
+                    programmaticScrollAt.value = android.os.SystemClock.elapsedRealtime()
+                    listState.edgeScrollWalk(total)
+                }
+            }
+            .pointerInput(listState) {
             // OBSERVER-ONLY gesture watch (Initial pass, consumes nothing → the list scrolls and
             // the orb keeps its own lane). While the end is reached (no forward scroll left),
             // upward travel accumulates; past the threshold the gateway re-pull fires — once
@@ -146,9 +413,22 @@ fun ChatScreen(
         // Round discipline (ask #5): first item rests below the clock, last above the orb bar,
         // horizontal gutter tops rows' own padding up to the safe circle; SLC scaling does falloff.
         // LAYOUT D: the chat passes the measured cluster top edge as the bottom clearance.
-        contentPadding = roundListPadding(bottomExtraDp = 6f, bottomOverrideDp = contentPadBottomDp),
+        contentPadding = roundListPadding(
+            bottomExtraDp = 6f,
+            bottomOverrideDp = contentPadBottomDp,
+            topOverrideDp = 0.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // Item 0: the BOTTOM-ANCHOR spacer (see anchorPadPx) — height 0 whenever the tail-pin
+        // owns the view, so every later index is exactly one more than the pre-spacer era.
+        item {
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(with(anchorDensity) { anchorPadPx.toDp() }),
+            )
+        }
         item {
             ChatCaption(voiceEnabled, voiceStatus, chatLabel)
         }
@@ -165,6 +445,10 @@ fun ChatScreen(
                 }
             }
         }
+        // #14 FOCUS HOLD: history above the question hides while the answer is awaited —
+        // the runway belongs to the incoming reply, and the short list keeps the hold in the
+        // pixel-truthful top-rest regime (ChatAnchor hold constants + ticker). The same rows
+        // return, keyed and intact, the moment the first delta answers.
         items(state.messages, key = { it.id }) { msg -> MessageLine(msg, markdown, onEditPrompt) }
         if (state.approval != null) {
             item { ApprovalCard(state.approval, onApprove) }
@@ -194,6 +478,49 @@ fun ChatScreen(
             }
         }
     }
+    if (focusHold) {
+        val qText = state.messages.lastOrNull()?.text.orEmpty()
+        // The panel measures the FACE, and the SLC fills the face (slcTop ≈ 0 — measured), so
+        // screen px == panel px; the paddings below are the two proven anchors.
+        val tickPx = dev.hermes.wearos.domain.RoundScreen.tenOclockY(
+            if (viewportW > 0f) viewportW else slcH.toFloat(), slcH.toFloat(),
+        )
+        val crownPx = slcTopPx + slcH - bottomPadPx
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colors.background),
+        ) {
+            Spacer(Modifier.height(with(anchorDensity) { (tickPx - slcTopPx).coerceAtLeast(0f).toDp() }))
+            Text(
+                qText,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                style = MaterialTheme.typography.body2.scaled(),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colors.primary,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Fill to the crown: the status row's BOTTOM rests on the 8:20 line — where the
+            // settled answer's last line will rest, so the panel lifts and the reply simply
+            // continues the sentence the status was holding.
+            Spacer(Modifier.weight(1f))
+            Text(
+                state.status.ifBlank { " " },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
+                    .padding(bottom = with(anchorDensity) {
+                        (slcH - (crownPx - slcTopPx)).coerceAtLeast(0f).toDp()
+                    }),
+                style = MaterialTheme.typography.caption2.scaled(),
+                color = Color(0xFFF5C518),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    } // Box (batch-5 #21 hold-scrim host)
 }
 
 /**
@@ -293,17 +620,13 @@ private fun ApprovalCard(info: ApprovalInfo, onApprove: (String) -> Unit) {
     ) {
         Text("⚠ Approve?", style = MaterialTheme.typography.body1, color = Color(0xFFF5C518))
         Text(info.question, style = MaterialTheme.typography.caption1, fontSize = 13.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            val approveName = info.choices.firstOrNull { !it.contains("deny", true) && !it.equals("no", true) } ?: "approve"
-            val denyName = info.choices.firstOrNull { it.contains("deny", true) || it.equals("no", true) } ?: "deny"
-            Button(
-                onClick = { onApprove(approveName) },
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF2E7D32)),
-            ) { Text("OK") }
-            Button(
-                onClick = { onApprove(denyName) },
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF7F1D1D)),
-            ) { Text("No") }
-        }
+        // BATCH-4 #5: the ACTION moved to the orb flanks (✅ left / ❌ right, bottom-only — see
+        // MainActivity.ApprovalFlank). The card is pure context now; in-flow OK/No buttons here
+        // were exactly the "permanently hanging" pair the owner vetoed next to a fresh flank pair.
+        // onApprove stays for callers that drive it programmatically (notification taps).
     }
 }
+
+@Suppress("unused")
+private val approvalCardNoButtonJustification =
+    "card actions live on the orb flanks (batch-4 #5); onApprove param kept for API stability"

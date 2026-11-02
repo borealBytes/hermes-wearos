@@ -6,22 +6,32 @@ import android.util.Log
 import dev.hermes.wearos.data.AgentsRepo
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.data.ChatStore
+import dev.hermes.wearos.domain.AwayWatch
+import dev.hermes.wearos.domain.SweepCursor
 import dev.hermes.wearos.domain.ChatSession
 import dev.hermes.wearos.domain.ProfileLogic
 import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
 import dev.hermes.wearos.location.LocationTool
 import dev.hermes.wearos.notify.Attention
+import dev.hermes.wearos.notify.AwayWatchWorker
 import dev.hermes.wearos.notify.Notifs
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.EndpointResolver
+import dev.hermes.wearos.net.NetworkMonitor
 import dev.hermes.wearos.net.SnapshotPusher
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
+import dev.hermes.wearos.domain.SttProvider
+import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.voice.GatewayStt
+import dev.hermes.wearos.voice.SttSource
+import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.voice.VoskStt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 
@@ -49,6 +59,20 @@ class WearApp : Application() {
             private set
         lateinit var stt: VoskStt
             private set
+        /** Batch-4 #8: the SYSTEM recognizer behind the same SttSource seam (picker switch). */
+        lateinit var sttSystem: SystemStt
+            private set
+        /** Batch-4 #9: streamed-mic STT on the gateway engine, with the local auto-fallback. */
+        lateinit var sttGateway: GatewayStt
+            private set
+
+        /** Which engine the mic flow gets NOW (batch-4 #8/#9 picker; offline-safe default).
+         *  GATEWAY needs no availability gate — voice/GatewayStt falls back locally by design. */
+        fun sttNow(): SttSource = when (SttProviders.fromId(SttProviders.current)) {
+            SttProvider.SYSTEM -> if (SystemStt.isAvailable(app)) sttSystem else stt
+            SttProvider.GATEWAY -> sttGateway
+            SttProvider.LOCAL -> stt
+        }
         lateinit var agents: AgentsRepo
             private set
 
@@ -56,6 +80,10 @@ class WearApp : Application() {
         lateinit var endpoints: EndpointResolver
             private set
         fun hasEndpoints(): Boolean = ::endpoints.isInitialized
+
+        /** The default route's link truth + the change hook that re-picks [endpoints] (SPEC §11.6). */
+        lateinit var network: NetworkMonitor
+            private set
 
         /** Label of the selected gateway (agent-dialog header + Settings badge). */
         private val _gatewayLabel = MutableStateFlow("")
@@ -114,6 +142,42 @@ class WearApp : Application() {
          */
         val devModelPicker = MutableStateFlow(false)
 
+        /** Dev hook `-e commands 1`: open the SLASH/⌘ OVERLAY without the flaky synthetic dial
+         *  release to 6:00 (capture-rig family: dial_preview / model_picker). */
+        val devCommands = MutableStateFlow(false)
+
+        /** Dev hook `-e agents 1`: open the agent picker like the agents lane does (batch-4 #6
+         *  dialog-padding proof without hunting the chip under SLC centering). */
+        /**
+         * BATCH-6 #23: the live SPLASH HOLD (domain/SplashIntro) — non-null only while a
+         * show-shaped cold launch is holding the system splash; the intro gate publishes the
+         * verdict here, IntroVideo publishes `painted`, the keep-condition reads it. Null
+         * everywhere else, so every other launch pays one field read.
+         */
+        @Volatile var launchHold: dev.hermes.wearos.domain.SplashIntro.LaunchHold? = null
+        val devAgents = MutableStateFlow(false)
+
+        /** Dev hook `-e approvals`: opens the per-chat approvals sheet like the ✅ lane does. */
+        val devApprovals = MutableStateFlow(false)
+
+        /**
+         * Dev hook `-e dev_lane <id>`: fires ANY dial lane exactly like a drag-release would —
+         * adb cannot hold a Compose drag mid-stroke (that's why `dial_preview` pins the ring for
+         * screenshots), so capture runs that need a lane's DESTINATION (Settings, sessions…)
+         * drive this instead of faking the gesture. Debug harness only; the ring stays honest.
+         */
+        val devLane = MutableStateFlow<String?>(null)
+
+        /** Dev hook `-e orb_slot "3|approvals"`: remap one dial direction (lane picker driver). */
+        fun devOrbSlot(spec: String) = scope.launch {
+            val bits = spec.split('|').map { it.trim() }
+            val slot = bits.getOrNull(0)?.toIntOrNull()
+            val lane = bits.getOrNull(1)?.let { dev.hermes.wearos.domain.Lane.fromId(it) }
+            if (slot == null || lane == null) { Log.i(TAG, "orb_slot BAD spec '$spec'"); return@launch }
+            settings.setOrbSlot(slot, lane)
+            Log.i(TAG, "orb_slot $slot -> ${lane.id}")
+        }
+
         /** Dev hook `-e search <q>`: types a query into the Sessions search the way a thumb
          *  would (adb `input text` can't traverse the Wear IME), then one-shot clears itself. */
         val devSearchQuery = MutableStateFlow<String?>(null)
@@ -166,10 +230,33 @@ class WearApp : Application() {
          * screen must not buzz. tile/complication/receiver processes read it as false — correct,
          * nothing is visible there.
          */
-        @Volatile
-        var isForeground = false
-            private set
+        private val _isForeground = androidx.compose.runtime.mutableStateOf(false)
+        var isForeground: Boolean
+            get() = _isForeground.value
+            private set(value) { _isForeground.value = value }
+
+        /**
+         * What the wrist is actually looking at (owner 2026-10-29 notification rule): a run's
+         * event suppresses the system notification ONLY while ITS chat is the front chat screen.
+         * Another chat open, Sessions/Settings/Chats screens, the watch face, another app, or
+         * screen-off all route to standard Wear OS notifications (approve/open actions wired).
+         * Published by MainActivity; empty whenever nothing chat-shaped is on screen.
+         */
+        private val _viewingChatId = androidx.compose.runtime.mutableStateOf("")
+        var viewingChatId: String
+            get() = _viewingChatId.value
+            set(value) { _viewingChatId.value = value }
         private var resumedActivities = 0
+
+        /** PAUSE-CLEANED (owner 2026-10-29 night: *"wait thirty seconds, then send a haiku and
+         *  immediately went to the watchface while it was thinking. i did not get a notification"*
+         *  — the run settled while the wrist was away and the gate suppressed it): PAUSE, not
+         *  STOP, is the moment the chat stops being visible on a watch. A dropped wrist / screen
+         *  off pauses the activity but may not stop it for minutes (Samsung ambient), and HOME can
+         *  keep the task resumed under the launcher. So the instant anything pauses, the chat is
+         *  no longer watched; onActivityResumed puts it back (any surface re-publishes its own
+         *  value via MainActivity's effect the moment it's composed). */
+        private fun clearViewing() { viewingChatId = "" }
 
         fun init(app: Application) {
             if (!::settings.isInitialized) {
@@ -179,16 +266,24 @@ class WearApp : Application() {
                     override fun onActivityResumed(activity: android.app.Activity) {
                         resumedActivities++
                         isForeground = true
+                        // The 20 s loop owns the sweep again; the work chain stands down
+                        // mid-handoff — the shared cursor makes overlap harmless anyway.
+                        AwayWatchWorker.cancel(app)
                     }
 
                     override fun onActivityStopped(activity: android.app.Activity) {
                         resumedActivities = (resumedActivities - 1).coerceAtLeast(0)
                         isForeground = resumedActivities > 0
+                        clearViewing()
+                        // #32: the pocket case. When the last activity stops, a cached watch app
+                        // loses its coroutines to the OEM freezer — hand the desktop-watch sweep
+                        // to WorkManager, which the system wakes even for frozen apps.
+                        if (resumedActivities == 0) AwayWatchWorker.schedule(app)
                     }
 
                     override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) {}
                     override fun onActivityStarted(activity: android.app.Activity) {}
-                    override fun onActivityPaused(activity: android.app.Activity) {}
+                    override fun onActivityPaused(activity: android.app.Activity) { clearViewing() }
                     override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: Bundle) {}
                     override fun onActivityDestroyed(activity: android.app.Activity) {}
                 })
@@ -203,7 +298,12 @@ class WearApp : Application() {
                 speak = SpeakAloud(app, settings, scope + SupervisorJob())
                 speak.init()
                 scope.launch { speak.loadEnabled() }
+                // Voice-out config (owner 2026-10-29): engine voice + reply speed. Load AFTER
+                // init posts (callback lands first on this looper) — loadVoiceConfig re-applies
+                // anyway, so order only affects a few-ms window on cold start.
+                scope.launch { speak.loadVoiceConfig() }
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
+                scope.launch { settings.loadIntroVideo() } // Display ▸ launch video (SplashIntro gate)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
                 scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
                 scope.launch { settings.loadAgentKeys() } // per-agent gateway keys (SPEC §12.2)
@@ -220,6 +320,34 @@ class WearApp : Application() {
                     settings.syncMirror(api, wk, gw.token)
                     Watchkit.setConfig(wk.ifEmpty { AppSettings.DEFAULT_WATCHKIT_URL }, settings.watchkitToken())
                 }
+                // ROUTE FOLLOWED THE LINK (SPEC §11.6): without this, the app discovered a network
+                // change by failing one ask — a winner learned on home Wi-Fi stayed "fresh" for
+                // minutes while the watch was already somewhere that address means nothing.
+                // The monitor owns the ConnectivityManager callback (application scope, never an
+                // Activity: the change we care about happens in the pocket, screen off).
+                network = NetworkMonitor(app, onChange = { reason ->
+                    val api = endpoints.onNetworkChanged(reason)
+                    Log.i(TAG, "route after network change: ${api.ifEmpty { "none — nothing answered" }}")
+                    // Refresh what visibly lies when a route goes stale: the agent list and the
+                    // gateway's session list (both were the reason a stale endpoint felt like a bug).
+                    runCatching { agents.refresh() }
+                    runCatching { session.refreshGatewaySessions() }
+                    runCatching { refreshGatewayMirror() }
+                })
+                // DESKTOP WATCH (batch-6 #25, owner: "notifications or approvals from sessions
+                // started in the desktop … the ONLY time I don't get one is the session that is
+                // actively the top thing on my watch"). Desk runs have no watch-side stream, so
+                // the wrist POLLS watchkit's inbox (approval parks via the gateway's activity
+                // beacon + session pulses from the state stores) and domain/AwayWatch.diff turns
+                // sweeps into buzzes. Silence set: the chat top-of-screen on the chat page (the
+                // owner's ONE allowed silence) and chats whose runs the watch itself drives —
+                // those already notify approvals/settles through the watch-run paths.
+                scope.launch {
+                    while (true) {
+                        delay(AwayWatch.POLL_MS) // first tick also lets the endpoint config land
+                        awaySweep()
+                    }
+                }
                 // Queued AFTER Watchkit.setConfig so the first /agents fetch carries the real token.
                 scope.launch {
                     val gw = settings.ensureGateways() // one-time seed/migrate (never loses old keys)
@@ -230,14 +358,47 @@ class WearApp : Application() {
                     agents.refresh()
                 }
                 stt = VoskStt(app)
+                sttSystem = SystemStt(app)
+                sttGateway = GatewayStt(app, stt)
+                scope.launch { settings.loadSttProvider(); settings.loadSttGatewayEngine() } // seed the #8 picker mirror + #16 engine pick
                 session.resume() // loads registry (migrates legacy keys), restores active chat + in-flight run
+                network.start() // LAST: its hook reaches into every other Graph member
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).
                 scope.launch { store.chats.collect { chats -> Attention.publish(app, chats.any { it.pendingAttention }) } }
             }
         }
 
-        /** Chat opened/foregrounded: clear its flag + notifications (M5 U1/U4 "cleared on open"). */
-        fun clearAttention(chatId: String) {
+        /**
+         * ONE away-watch sweep: fetch watchkit's inbox and let the SHARED cursor (#32) decide
+         * what buzzes. Called by the in-app 20 s loop AND by AwayWatchWorker when the process is
+         * cached (Samsung freezes/stops cached apps — a bare coroutine dies the moment
+         * onActivityStopped strands it, wrist-verified 2026-11-01: polls stopped within a minute
+         * of HOME once nothing kept the process warm). Same cursor both ways ⇒ zero dupes.
+         */
+        suspend fun awaySweep() {
+            if (!::store.isInitialized) return
+            val body = Watchkit.approvalsWaiting() ?: return
+            // #31 follow-up: keys MUST be gateway session ids (AwayWatch.watchSilence)
+            // — local shortIds never matched watchkit's session-keyed pulses, so the
+            // viewing chat buzzed while it was live on the glass.
+            val mine = AwayWatch.watchSilence(store.chats.value, isForeground, viewingChatId)
+            for (a in awayCursor.sweep(AwayWatch.parse(body), mine)) {
+                when (a.kind) {
+                    AwayWatch.Kind.Approval -> {
+                        Log.i(TAG, "away-watch: approval parked ${a.profile}/${a.chatId} ${a.tool}")
+                        Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments)
+                    }
+                    AwayWatch.Kind.Finished -> {
+                        Log.i(TAG, "away-watch: answer finished ${a.profile}/${a.chatId} msgs=${a.messageCount}")
+                        Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false)
+                    }
+                }
+            }
+        }
+
+        private val awayCursor = SweepCursor()
+
+        /** Chat opened/foregrounded: clear its flag + notifications (M5 U1/U4 "cleared on open"). */        fun clearAttention(chatId: String) {
             if (chatId.isEmpty() || !::store.isInitialized) return
             store.get(chatId)?.let { meta ->
                 if (meta.pendingAttention) {
@@ -344,6 +505,25 @@ class WearApp : Application() {
             Log.i(TAG, "gw_select ok=$ok id=$id label='$label' err=$err")
         }
 
+        /** Dev-only (adb `-e del_gw <id>`): delete a gateway, then land the selection where the
+         *  registry points next and re-probe it — the deterministic cleanup for multi-gateway demo
+         *  shots (§11) (and the only way to clear a gateway the watch cannot route to without
+         *  wrestling the IME). */
+        fun devGwDelete(id: String) = scope.launch {
+            val remaining = settings.deleteGateway(id)
+            if (remaining != null) {
+                endpoints.rebind(remaining)
+                endpoints.ensure(force = true)
+                settings.syncMirror(endpoints.currentApi(), endpoints.currentWatchkit(), remaining.token)
+                settings.loadProfile()
+                _gatewayLabel.value = remaining.label
+                session.switchAgent(settings.savedAgent()) { ok, base, err ->
+                    Log.i(TAG, "gateway after delete id=${remaining.id} ok=$ok base=$base err=$err")
+                }
+            }
+            Log.i(TAG, "del_gw id=$id -> selected ${remaining?.id ?: "(none)"}")
+        }
+
         /** Dev-only (adb `-e add_gw "label|api|watchkit"`): upsert a gateway carrying the current
          *  token + per-agent keys so a second endpoint is immediately usable (demo shots, §11). */
         fun devAddGateway(spec: String) = scope.launch {
@@ -359,6 +539,8 @@ class WearApp : Application() {
                 agentKeys = base?.agentKeys.orEmpty(),
             )
             settings.saveGateway(gw, select = false)
+            refreshGatewayMirror() // the mirror's contract is "re-read after every mutation" — the dev
+            // upsert was the one writer skipping it (Settings ▸ Gateways kept showing the old list).
             Log.i(TAG, "add_gw ok '${gw.label}' api=${bits[1]}")
         }
 
@@ -371,7 +553,12 @@ class WearApp : Application() {
         }
 
         fun setWatchkitBase(url: String) {
-            scope.launch { settings.setMermaidBaseUrl(url) }
+            scope.launch {
+                settings.setMermaidBaseUrl(url)
+                // Mirror-only writes left the gateway record's wk list frozen (SPEC §11): a URL
+                // added via dev hook or Settings never became a failover candidate. Fold it in.
+                settings.foldWatchkitIntoSelected(url)
+            }
         }
 
         /** Dev-only (adb `-e set_watchkit`): store watchkit token + push config so renders retry. */

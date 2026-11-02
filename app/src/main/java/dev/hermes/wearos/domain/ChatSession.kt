@@ -83,6 +83,7 @@ class ChatSession(
     private var currentRunId = ""
     private var lastFinishedRun: String? = null
     private var lastApprovalNotified: String? = null // request_id already notified (dedups SSE vs poll)
+    private var lastAutoApproved: String? = null      // request_id the per-chat mode already answered
     private var gen = 0L
     private var stoppedRunId = ""   // run the user STOPPED (owner ask #3): late events/polls ignored
     private var deltaCount = 0L     // deltas seen for the live run — stop_mid_run logcat proof
@@ -192,15 +193,25 @@ class ChatSession(
     }
 
     /**
-     * Turn a raw failure into something a wrist can act on. The one that mattered (SPEC §12.2):
-     * a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box —
-     * `run submit 401: {"error":{…}}` told the owner nothing, so name the agent and say where to
-     * fix it. Everything else keeps its own message (no lying about real network failures).
+     * Turn a raw failure into something a wrist can act on. Two mistakes this exists for:
+     *  • a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box
+     *    (SPEC §12.2) — `run submit 401: {"error":{…}}` told the owner nothing, so name the agent
+     *    and say where to fix it;
+     *  • a routing failure used to print OkHttp's sentence, naming whichever endpoint happened to
+     *    be first in the list, so a watch off its LAN reported "Unable to resolve host
+     *    <tailnet name>" and the owner reasonably read it as "tailnet is broken" rather than "add
+     *    this Wi-Fi's LAN address" (SPEC §11.5). [RouteReport] owns that translation, and it gets
+     *    the failover machine's own probe record so the "tried N endpoints" count cannot drift.
+     *
+     * Everything else keeps its own message — no lying about real errors.
      */
     private fun explain(e: Throwable): String {
         val code = (e as? ApiException)?.code
         if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
-        return e.message ?: "network error"
+        val tried = runCatching {
+            if (WearApp.Graph.hasEndpoints()) WearApp.Graph.endpoints.status.value.apiResults else emptyMap()
+        }.getOrDefault(emptyMap())
+        return RouteReport.explain(e, tried)
     }
 
     /**
@@ -263,6 +274,7 @@ class ChatSession(
         currentRunId = ""
         lastFinishedRun = null
         lastApprovalNotified = null
+        lastAutoApproved = null
         gen++
         // Opening a chat acknowledges it: cancel its notifications + attention flag (M5).
         Notifs.cancelChat(app, meta.id, meta.lastRunId)
@@ -537,7 +549,22 @@ class ChatSession(
     private fun onApprovalArrived(info: ApprovalInfo) {
         Log.i(TAG, "approval arrived run=${info.runId} req=${info.requestId} active=$activeId choices=${info.choices}")
         _state.value = _state.value.copy(approval = info)
-        if (WearApp.Graph.isForeground) return
+        // PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode, SPEC §12.8): this chat's
+        // persisted pick answers for itself — Off always, Smart only while the human is away.
+        // Dedup by request id: the status poll re-reports a pending approval every 3 s.
+        val mode = ApprovalMode.fromId(store.get(activeId)?.approvalMode)
+        if (mode != ApprovalMode.Inherit && mode.autoApprove(viewingThisChat(activeId))) {
+            val key = "${info.requestId ?: info.runId}"
+            if (key != lastAutoApproved && !info.choices.isNullOrEmpty()) {
+                lastAutoApproved = key
+                Log.i(TAG, "approval auto-answered run=${info.runId} mode=${mode.id} chat=$activeId")
+                respondApproval(info.choices.first())
+            }
+            return
+        }
+        // Owner rule 2026-10-29: approvals notify from EVERY surface except the very chat the
+        // approval belongs to (its inline Approve/Deny card is already on screen there).
+        if (viewingThisChat(activeId)) return
         val key = info.requestId ?: info.runId
         if (lastApprovalNotified == key) return
         lastApprovalNotified = key
@@ -546,10 +573,23 @@ class ChatSession(
         Log.i(TAG, "approval notif run=${info.runId} chat=$activeId")
     }
 
+    /** The approvals sheet: read/write the ACTIVE chat's per-chat mode (owner ask 2026-10-29). */
+    fun activeChatApprovalMode(): ApprovalMode =
+        ApprovalMode.fromId(store.get(activeId)?.approvalMode)
+
+    fun setChatApprovalMode(mode: ApprovalMode) {
+        if (activeId.isEmpty()) return
+        store.update(activeId) { it.copy(approvalMode = mode.id) }
+        Log.i(TAG, "approval mode set chat=$activeId mode='${mode.id.ifEmpty { "inherit" }}'")
+    }
+
     fun respondApproval(choice: String) {
         val info = _state.value.approval ?: return
         _state.value = _state.value.copy(approval = null, status = "running…")
         lastApprovalNotified = null
+        // lastAutoApproved deliberately NOT cleared here: the status poll re-reports a pending
+        // approval every 3 s until the gateway drains it — resetting on answer would auto-answer
+        // the same request again. It resets with the next chat open (see openChat path above).
         Notifs.cancelApproval(app, info.runId)
         scope.launch {
             try { api().respondApproval(info.runId, choice, info.requestId) }
@@ -595,6 +635,15 @@ class ChatSession(
     /** UI/dev helpers: first server choice = affirmative, last = denial (cards use these). */
     fun approve() = _state.value.approval?.let { respondApproval(it.choices.first()) }
     fun deny() = _state.value.approval?.let { respondApproval(it.choices.last()) }
+
+    /** DEV-only (DevAskReceiver `-e approval_demo`): park a fake approval on the open chat so
+     *  the orb-flanking ✅/❌ (batch-4 #5) and the bottom-only rule are provable on hardware
+     *  without driving gateway state into manual-approval mode. Answering fail-softs like the
+     *  notify_demo cards: the local card clears, the POST to the unknown run no-ops. */
+    fun devInjectApproval(info: ApprovalInfo) {
+        Log.i(TAG, "dev approval injected run=${info.runId} choices=${info.choices}")
+        _state.value = _state.value.copy(approval = info)
+    }
 
     /**
      * STOP (owner ask #3): the moment the user taps the orb while a run streams, we detach from the
@@ -794,7 +843,10 @@ class ChatSession(
                 Log.w(TAG, "switchAgent: rejected profile name '$agent'")
                 onDone(false, old, "bad agent name"); return@launch
             }
-            settings.setBaseUrl(newBase) // updates the AppSettings profile mirror too
+            settings.setBaseUrl(newBase, foldRegistry = false) // mirror rewrite only — the
+            // /p/ segment swap is NOT a user endpoint edit; folding it (a) re-polluted the
+            // gateway list with the failover winner's host on every agent tap and (b) could
+            // never add anything the registry didn't already own (SPEC §11 fold, wrist 11-01).
             eventSource?.cancel(); askJob?.cancel()
             if (_state.value.busy || _state.value.live.isNotEmpty() || _state.value.approval != null)
                 _state.value = _state.value.copy(busy = false, live = "", status = "", approval = null)
@@ -1218,12 +1270,23 @@ class ChatSession(
         store.saveTranscript(chatId, messageLog)
         // First answer settled: pull the gateway's session title into the list label (§3 titles).
         if (!error && messageLog.count { it.role == ChatMessage.Role.Hermes } == 1) enrichLabel(chatId)
-        // M5: settled while backgrounded → watch notification + attention flag (U1).
-        if (chatId.isNotEmpty() && !WearApp.Graph.isForeground) {
+        // M5 + owner rule 2026-10-29: a settle goes to Wear OS notifications unless THIS chat is
+        // the front screen (see Graph.viewingChatId) — another chat open, another surface, or
+        // screen-off all notify; only the chat you're literally watching renders inline instead.
+        if (chatId.isNotEmpty() && !viewingThisChat(chatId)) {
             store.update(chatId) { it.copy(pendingAttention = true) }
             Notifs.settle(app, chatId, store.get(chatId)?.label ?: "", text, error)
+        } else if (chatId.isNotEmpty()) {
+            Log.i(TAG, "settle suppressed — viewing chat=$chatId")
         }
     }
+
+    /** Notification suppress gate — true only while [chatId]'s transcript is on screen. */
+    /** BATCH-6 #31: THE brain is domain/AttentionPolicy — the notification half and the voice
+     *  half read the SAME function, so "buzzed while watching" and "spoke in my pocket" can
+     *  never drift apart again (the owner's reversion complaint in one fix). */
+    private fun viewingThisChat(chatId: String) =
+        AttentionPolicy.shouldSpeak(WearApp.Graph.isForeground, WearApp.Graph.viewingChatId, chatId)
 
     /**
      * Gateway label sync (verified probe): `GET {base}/api/sessions` → 200

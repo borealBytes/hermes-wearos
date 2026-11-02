@@ -26,9 +26,13 @@ import kotlinx.coroutines.launch
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
  *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
  *  flaky synthetic dial release; waits on the gateway catalog round-trip itself).
+ *  -e dev_lane <id> (fire ANY dial lane through the real router — the capture driver for lane
+ *  destinations like ⚙ settings; generalizes model_picker, adb can't hold a Compose drag).
  *  -e notify_demo plain|approval|both (post the REAL notification cards on command — the deterministic
  *  door for the demo's "off the wrist" act, see docs/DEMO.md).
- *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>.
+ *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>, -e add_gw "label|api|wk",
+ *  -e del_gw <id> (the cleanup half of add_gw — deletes and re-lands the selection on the
+ *  surviving gateway, so a demo gateway can never be left stranded on the watch).
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
  *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags),
@@ -70,8 +74,30 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }
+        // -e orb_slot "3|approvals" → remap ONE dial direction (drives the dial UI + shots;
+        // SPEC §12.1), -e approvals → open the per-chat approvals sheet like the lane does.
+        intent?.getStringExtra("orb_slot")?.let { spec -> WearApp.Graph.devOrbSlot(spec); return }
+        if (intent?.hasExtra("approvals") == true) { WearApp.Graph.devApprovals.value = true; return }
+        // DEV LANE (`-e dev_lane settings`): fire any dial lane through the real router — the
+        // capture driver for lane DESTINATIONS (adb can't hold a Compose drag; see WearApp.devLane).
+        intent?.getStringExtra("dev_lane")?.let { WearApp.Graph.devLane.value = it; return }
+        // -e agents 1 → open the agent picker dialog (batch-4 #6 dialog-padding proof).
+        if (intent?.hasExtra("agents") == true) { WearApp.Graph.devAgents.value = true; return }
+        // -e approval_demo 1 → park a PENDING approval on the open chat (batch-4 #5 hardware
+        // proof: the ✅/❌ flanks, the bottom-only rule, mid-scroll arrival). -e approve resolves.
+        if (intent?.hasExtra("approval_demo") == true) {
+            android.util.Log.i("HermesWear", "dev: approval_demo inject (session live)")
+            WearApp.Graph.session.devInjectApproval(
+                dev.hermes.wearos.domain.ApprovalInfo(
+                    "dev-approval", "dev-req-1",
+                    "Run `rm -rf /tmp/scratch`?", listOf("approve", "deny"),
+                ),
+            )
+            return
+        }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
+        intent?.getStringExtra("del_gw")?.let { WearApp.Graph.devGwDelete(it); return }
         // -e add_gw "label|https?://api|https?://watchkit" → upsert a gateway reusing the current
         // token + agent-key map (deterministic multi-gateway demo shots, no GBoard wrestling).
         intent?.getStringExtra("add_gw")?.let { spec ->
@@ -94,6 +120,40 @@ class DevAskReceiver : BroadcastReceiver() {
             // with that partial; "off"/"false"/"reset" clears it.
             WearApp.Graph.devPtt.value = intent.getStringExtra("ptt_demo")
                 ?.takeIf { it.isNotBlank() && !it.equals("off", true) && !it.equals("false", true) }
+            return
+        }
+        intent?.getStringExtra("splash")?.let { mode ->
+            // -e splash video|static → the Display chooser, without touching the wrist UI.
+            val v = if (mode.trim().lowercase() == "static") "static" else "video"
+            CoroutineScope(Dispatchers.Main).launch { WearApp.Graph.settings.setSplashMode(v) }
+            return
+        }
+        intent?.getStringExtra("splash_uri")?.let { raw ->
+            // -e splash_uri content://… → take the persistable grant and store into the slot its
+            // MIME type says (video→film, else still) — the exact path Settings' picker runs.
+            val uri = android.net.Uri.parse(raw)
+            val cr = context?.contentResolver
+            // file:// needs no ceremony (app-owned external dir); am broadcast cannot hand out a
+            // PERSISTABLE grant, so content:// works here only via app-assumed access.
+            val granted = uri.scheme == "file" || runCatching {
+                cr?.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.onFailure { android.util.Log.w("HermesWear", "splash_uri grant refused", it) }.isSuccess
+            // Classify: resolver MIME first (content://), extension as the file:// fallback.
+            val ext = raw.substringAfterLast('.', "").lowercase()
+            val isVideo = cr?.getType(uri).orEmpty().startsWith("video") ||
+                ext in setOf("mp4", "3gp", "mkv", "webm", "mov", "avi")
+            if (granted) {
+                CoroutineScope(Dispatchers.Main).launch {
+                    WearApp.Graph.settings.setSplashCustom(isVideo, uri.toString())
+                }
+            }
+            return
+        }
+        if (intent?.hasExtra("clear_splash") == true) {
+            CoroutineScope(Dispatchers.Main).launch {
+                WearApp.Graph.settings.setSplashCustom(true, null)
+                WearApp.Graph.settings.setSplashCustom(false, null)
+            }
             return
         }
         intent?.getStringExtra("fontscale")?.let {
@@ -200,6 +260,7 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
         // MODEL PICKER PIN (`-e model_picker`): opens the 🧠 picker like a lane release would.
         if (intent?.hasExtra("model_picker") == true) { WearApp.Graph.devModelPicker.value = true; return }
+        if (intent?.hasExtra("commands") == true) { WearApp.Graph.devCommands.value = true; return }
         // NOTIFY DEMO (`-e notify_demo plain|approval|both`): posts the REAL notification shapes on
         // command — the settle card and the Approve/Deny approval card (runId "demo-run", so a
         // tapped Approve lands in ApprovalNotificationReceiver and fail-softs) — the deterministic
@@ -252,6 +313,16 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         intent?.getStringExtra("speak")?.let { WearApp.Graph.speak.speakFinal(it); return }
+        // -e approval_mode <off|smart|manual|inherit> → the ACTIVE chat's per-chat approval mode
+        // (SPEC §12.8); capture-rig escape hatch for the once-approval treadmill.
+        intent?.getStringExtra("approval_mode")?.let {
+            WearApp.Graph.session.setChatApprovalMode(dev.hermes.wearos.domain.ApprovalMode.fromId(it))
+            return
+        }
+        // BATCH-5 #19 proof hook: set the CURRENT AGENT's reply volume (0 = mute) without a wrist.
+        intent?.getStringExtra("set_vol")?.toFloatOrNull()?.let {
+            WearApp.Graph.speak.setReplyVolume(it); return
+        }
         intent?.getStringExtra("play_url")?.let { MediaPlayerHolder.play(context!!, it); return }
         val text = intent?.getStringExtra("text") ?: return
         WearApp.Graph.session.ask(text)

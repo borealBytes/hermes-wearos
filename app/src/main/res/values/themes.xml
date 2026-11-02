@@ -8,4 +8,14 @@
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_hermes_orb</item>
         <item name="android:windowSplashScreenBackground">#07070C</item>
     </style>
+
+    <!-- BATCH-6 #23: the core-splashscreen Starting theme. API 31+ uses the platform splash
+         (the windowSplashScreen* items above read through), API 30 falls back to the library's
+         window-background path — both hand the running app this theme after the show (or the
+         140 ms fade) completes. -->
+    <style name="Theme.HermesWear.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_hermes_orb</item>
+        <item name="windowSplashScreenBackground">#07070C</item>
+        <item name="postSplashScreenTheme">@style/Theme.HermesWear</item>
+    </style>
 </resources>

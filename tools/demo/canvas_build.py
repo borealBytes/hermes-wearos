@@ -41,6 +41,16 @@ dv.ellipse((-W // 2, -H // 2, W * 3 // 2, H * 3 // 2), fill=255)
 vig = vig.filter(ImageFilter.GaussianBlur(220)).point(lambda p: 255 - min(90, (255 - p) // 2))
 dark = Image.new("RGB", (W, H), (0, 0, 0))
 base = Image.composite(base, dark, vig).convert("RGBA")
+# ---- version bug (owner rule): every film frame carries the release version + the test
+# agent it was captured on; bg.png is under every beat, so one stamp persists whole film+GIF.
+VER_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "VERSION")
+with open(VER_FILE) as _fh:
+    DEMO_VERSION = _fh.read().strip()
+bug = ImageDraw.Draw(base)
+bug_fnt = font("RulesCmp-Medium.ttf", 28)
+bug_txt = f"v{DEMO_VERSION} · wear-demo"
+bug_xy = (W - tracked_w(bug, bug_txt, bug_fnt, track=4) - 56, H - 64)
+bug.text(bug_xy, bug_txt, font=bug_fnt, fill=(232, 232, 242, 130))
 base.save(f"{OUT}/bg.png")
 
 # ---- 2) circle hole mask for the watch clip (640 box at (220,400)) ----
@@ -78,21 +88,25 @@ dc.ellipse((CX - 18, CY - 18, CX + D + 18, CY + D + 18), outline=COBALT + (70,),
 # ---- 4) per-beat caption pills ----
 BEATS = [
     "HERMES WEAR",
-    "ORB DIAL - EIGHT LANES AROUND THE GLANCE",
-    "PUSH TO TALK - ON-WATCH SPEECH-TO-TEXT",
+    "LAUNCH INTO A FILM - THE SPLASH INTRO",
+    "ORB DIAL - DRAG EIGHT WAYS",
+    "PUSH TO TALK - SPEECH-TO-TEXT ON THE WRIST",
     "STREAMED ANSWERS + LIVE TOOL CALLS",
-    "TABLES - MERMAID - IMAGES, INLINE",
     "STOP ANY RUN MID-FLIGHT",
+    "TABLES - MERMAID - IMAGES - INLINE",
     "TAP A CARD - ZOOM AND PAN",
     "SWAP MODELS PER CHAT",
-    "GATED COMMANDS APPROVE ON THE WATCH",
+    "GATED COMMANDS APPROVE ON THE WRIST",
+    "APPROVED - THE RUN RESUMES",
     "SEARCH EVERY SESSION FROM THE WRIST",
     "ARCHIVE AND UNARCHIVE - NOTHING LOST",
-    "APPROVALS REACH YOU OFF THE WRIST",
-    "DEEP-LINK STRAIGHT BACK INTO THE CHAT",
-    "FONT SCALE - YOUR EYES, YOUR SIZE",
-    "ONE GLANCE FROM THE LAUNCHER",
-    "YOUR GATEWAY, ON YOUR WRIST",
+    "DESKTOP RUNS BUZZ THE WRIST",
+    "SPOKEN ON GLASS - NOTIFIED OFF IT",
+    "VOICE OUT + KARAOKE FOLLOW",
+    "FONT SCALE - YOUR EYES YOUR SIZE",
+    "EDGE-CIRCLE SCROLLING - EVERY LIST",
+    "YOUR GATEWAYS - SAVE - SELECT - FAIL OVER",
+    "HERMES WEAR",
 ]
 fpill = font("RulesCnd-Light.ttf", 44)
 fsmall = font("RulesCmp-Medium.ttf", 30)
@@ -109,10 +123,13 @@ for i, cap in enumerate(BEATS):
         ws = tracked_w(probe, sub, fsmall)
         tracked(dd, ((W - ws) / 2, 1290 if i == 0 else 1290), sub, fsmall, (150, 158, 190), track=4)
     else:
-        w = tracked_w(probe, cap, fpill) + 72
+        # Exact centering: measure with the SAME tracking the text is drawn with (gif_build's
+        # pill() carries the shared rule; mixing widths is how captions ship off-center).
+        tw = tracked_w(probe, cap, fpill, track=6)
+        w = tw + 72
         x0 = (W - w) / 2
         y0, hh = 1150, 112
         dd.rounded_rectangle((x0, y0, x0 + w, y0 + hh), radius=34, fill=INKBG, outline=COBALT + (200,), width=3)
-        tracked(dd, (x0 + 36 - 6, y0 + (hh - 46) / 2 - 4), cap, fpill, PAPER)
+        tracked(dd, (x0 + (w - tw) / 2, y0 + (hh - 46) / 2 - 4), cap, fpill, PAPER, track=6)
     ov.save(f"{OUT}/ov_{i:02d}.png")
 print("canvas files done:", len(BEATS))

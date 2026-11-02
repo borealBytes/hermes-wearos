@@ -56,6 +56,9 @@ fun OrbDialOverlay(
     /** SPIN mode ring rotation (degrees, animated by the caller): the icons travel so the lit
      *  slot arrives under the finger — 0f rests the dial exactly at its clock positions. */
     phaseDeg: Float = 0f,
+    /** VOLUME mode (the mute-lane double slider, owner 2026-10-29): non-null swaps the orb-face
+     *  caption for the live level — "🔊 65%" — so the second half of the gesture reads itself. */
+    volumeBadge: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -101,10 +104,13 @@ fun OrbDialOverlay(
         }
         // The active lane's WORD, on the orb face: always on screen, readable at a glance, and it
         // turns "what did I just point at?" into a yes/no while the finger is still down.
+        // In VOLUME mode the level (volumeBadge) outranks the lane word — the double slider's
+        // readout IS the number (owner asked for a volume slider; the wrist needs to see it move).
         val activeLane = if (activeSlot >= 0) OrbDial.slotFor(slots, activeSlot) else null
-        if (activeLane != null && activeLane != Lane.None) {
+        val caption = volumeBadge ?: activeLane?.takeIf { it != Lane.None }?.label
+        if (caption != null) {
             Text(
-                activeLane.label,
+                caption,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .graphicsLayer { alpha = appear },

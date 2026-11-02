@@ -216,6 +216,37 @@ class GatewayModelTest {
         assertFalse(GatewayModel.decode(GatewayModel.encode(listOf(GatewayModel.seed("t")))).isEmpty())
     }
 
+    // ── foldWatchkit + registry pruning guards (owner bug 2026-10-29) ───────
+
+    @Test
+    fun `foldWatchkit mirrors foldBaseUrl and leaves sibling gateways untouched`() {
+        val a = Gateway("a", "A", listOf("http://a:8642"), listOf("http://a:8651"), "t")
+        val b = Gateway("b", "B", listOf("http://b:8642"), listOf("http://b:8651"), "t")
+        val list = listOf(a, b)
+        // Unknown wk prepends onto the SELECTED gateway only…
+        val folded = GatewayModel.foldWatchkit(list, "a", "http://tail.a.ts.net:8651")
+        assertEquals(listOf("http://tail.a.ts.net:8651", "http://a:8651"), folded[0].watchkitEndpoints)
+        assertEquals(b, folded[1])
+        // …a known one keeps its position (failover re-sets watchkit_url constantly), …
+        assertEquals(list, GatewayModel.foldWatchkit(list, "a", "http://a:8651/"))
+        // …and junk/ghost-selection folds never rewrite anything.
+        assertEquals(list, GatewayModel.foldWatchkit(list, "ghost", "http://x:8651"))
+        assertEquals(list, GatewayModel.foldWatchkit(list, "a", "  "))
+    }
+
+    @Test
+    fun `upsert onto a blip-read list is the only safe prune, and folds keep their siblings`() {
+        // The wipe shape the owner hit: registry held two gateways, one save wrote back a list of
+        // ONE. Upsert/remove are whole-list operations by design — the safety lives in AppSettings
+        // (gateways() returns the last good decode when a non-blank blob fails to parse), so the
+        // model must simply never invent or drop entries on its own.
+        val list = listOf(Gateway("a", "A", listOf("http://a:8642"), listOf(), "t"), Gateway("b", "B", listOf("http://b:8642"), listOf(), "t"))
+        assertEquals(listOf("a", "b"), GatewayModel.upsert(list, list[0].copy(label = "A2")).map { it.id })
+        assertEquals(listOf("a", "b"), GatewayModel.foldToken(list, "a", "NEW").map { it.id })
+        assertEquals(listOf("a", "b"), GatewayModel.foldBaseUrl(list, "a", "http://c:8642").map { it.id })
+        assertEquals(listOf("a"), GatewayModel.foldBaseUrl(list, "a", "http://a:8642").let { GatewayModel.remove(it, "b") }.map { it.id })
+    }
+
     // ── per-agent keys (SPEC §12.2: the multi-agent 401 fix) ────────────────
 
     private fun gw(token: String, keys: Map<String, String> = emptyMap()) =

@@ -23,6 +23,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -43,11 +46,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -61,6 +66,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.wear.compose.material.MaterialTheme
@@ -69,6 +75,7 @@ import androidx.wear.compose.material.SwipeToDismissBox
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import dev.hermes.wearos.ui.AgentPickerDialog
+import dev.hermes.wearos.ui.ApprovalModeDialog
 import dev.hermes.wearos.ui.ModelPickerDialog
 import dev.hermes.wearos.ui.ChatScreen
 import dev.hermes.wearos.ui.ChatsScreen
@@ -84,7 +91,9 @@ import dev.hermes.wearos.ui.VoiceHost
 import dev.hermes.wearos.ui.md.ZoomableMediaViewer
 import dev.hermes.wearos.domain.BackRing
 import dev.hermes.wearos.domain.BottomLayout
+import dev.hermes.wearos.domain.ChatMessage
 import dev.hermes.wearos.domain.DialSpin
+import dev.hermes.wearos.domain.DialVolume
 import dev.hermes.wearos.domain.FontScale
 import dev.hermes.wearos.domain.SlashCommands
 import dev.hermes.wearos.domain.Lane
@@ -93,11 +102,18 @@ import dev.hermes.wearos.domain.RenderCase
 import dev.hermes.wearos.domain.ProfileLogic
 import dev.hermes.wearos.domain.PromptEdit
 import dev.hermes.wearos.domain.Vad
+import dev.hermes.wearos.domain.SttProvider
+import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.domain.CommandCatalog
 import dev.hermes.wearos.domain.CommandEntry
 import dev.hermes.wearos.domain.CommandKind
 import dev.hermes.wearos.domain.CommandUsage
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import dev.hermes.wearos.domain.SplashIntro
 import dev.hermes.wearos.ui.CommandsOverlay
+import dev.hermes.wearos.ui.IntroVideo
+import dev.hermes.wearos.ui.edgeScrollWalk
 import dev.hermes.wearos.ui.CommandOverlayState
 import dev.hermes.wearos.ui.OrbDialOverlay
 import dev.hermes.wearos.net.GatewaySessions
@@ -107,7 +123,9 @@ import dev.hermes.wearos.voice.VoskEvent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /** Watch-local navigation (SPEC §3/§4): chat ⇄ chats-list ⇄ settings ⇄ gateway-sessions. No nav library. */
@@ -128,12 +146,38 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // BATCH-6 #23 (owner cold-start review: *"the icon from orb like zoomed to full screen —
+        // don't expect this — straight to video per launch selection"*): the zoom was the OS —
+        // Android 12+ exits the system splash by SCALING THE ICON OUTWARD the instant the app
+        // first draws, and the #17 curtain (that same orb, full-screen) then sat visible for the
+        // decoder's whole 4.7 s wake. So the SYSTEM SPLASH becomes the curtain: the library's
+        // keep-condition holds the small launcher icon up until the chosen media has painted its
+        // FIRST FRAME, and the exit animation is replaced with a 140 ms alpha fade — icon fades,
+        // film is already there underneath. Static/custom-image: same hold until the still is
+        // placed. Skips (warm/deep link/not-launcher) and a slow disk or sick decoder (capped)
+        // release into the same plain fade. installSplashScreen BEFORE super.onCreate.
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         parseDeepLink(intent)
+        // Hold ONLY show-shaped launches (same question the gate asks, answered early with what
+        // onCreate already knows; the gate's own verdict arrives with the settings read).
+        if (intent?.isLauncherLaunch() == true && deepLink.value == null) {
+            val hold = SplashIntro.LaunchHold(android.os.SystemClock.elapsedRealtime())
+            WearApp.Graph.launchHold = hold
+            splash.setKeepOnScreenCondition { hold.holds(android.os.SystemClock.elapsedRealtime()) }
+        }
+        // THE FADE that replaces the icon zoom-out (the whole point of #23 — the default exit
+        // animation IS the zoom the owner vetoed).
+        splash.setOnExitAnimationListener { splashView ->
+            splashView.view.animate()
+                .alpha(0f).setDuration(140L)
+                .withEndAction { splashView.remove() }
+                .start()
+        }
         setContent {
             MaterialTheme {
                 val session = WearApp.Graph.session
@@ -145,6 +189,12 @@ class MainActivity : ComponentActivity() {
                 val activeChatId by session.activeChat.collectAsState()
                 val ttsState by speak.state.collectAsState()
                 val voiceOut by speak.enabled.collectAsState()
+                // The orb's STOP face while the answer is being READ ALOUD (owner 2026-10-29).
+                val speakingNow by speak.speaking.collectAsState()
+                // Where the spoken sentence sits in the live stream — karaoke follow (SPEC §12.11).
+                val speakingOffsetNow by speak.speakingOffset.collectAsState()
+                // Mute-lane double slider anchor + picker mirror (owner 2026-10-29).
+                val replyVol by settings.ttsVolumeFor.collectAsState()
                 val markdownOn by settings.markdownEnabled.collectAsState()
                 val profile by settings.profile.collectAsState()
                 val agentList by agents.agents.collectAsState()
@@ -161,6 +211,7 @@ class MainActivity : ComponentActivity() {
                 var draft by remember { mutableStateOf("") }
                 var showAgents by remember { mutableStateOf(false) }
                 var showModels by remember { mutableStateOf(false) }
+                var approvalsOpen by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
                 // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
                 // the user on an empty list they can see is empty).
@@ -205,13 +256,15 @@ class MainActivity : ComponentActivity() {
                 val voiceCancel = remember { mutableStateOf(false) }
 
                 fun endListening() {
-                    WearApp.Graph.stt.stop()
+                    // Both engines get the stop: the pick cannot change mid-session, but an
+                    // idle sibling stop is free (flag set / null-recognizer no-op).
+                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop(); WearApp.Graph.sttGateway.stop()
                     voiceSink.value = null
                 }
 
                 fun cancelListening() {
                     voiceCancel.value = true
-                    WearApp.Graph.stt.stop()
+                    WearApp.Graph.stt.stop(); WearApp.Graph.sttSystem.stop(); WearApp.Graph.sttGateway.stop()
                     voiceSink.value = null
                 }
 
@@ -225,7 +278,7 @@ class MainActivity : ComponentActivity() {
                         vad.value = Vad.start(System.currentTimeMillis())
                         listening.value = true
                         sttJob.value = uiScope.launch {
-                            WearApp.Graph.stt.start(lifecycleScope).collect { ev ->
+                            WearApp.Graph.sttNow().start(lifecycleScope).collect { ev ->
                                 when (ev) {
                                     is VoskEvent.Partial -> {
                                         val sink = voiceSink.value
@@ -309,6 +362,16 @@ class MainActivity : ComponentActivity() {
                 val catalogJson by settings.slashCatalogJson.collectAsState()
                 var commandsOpen by remember { mutableStateOf(false) }
                 var slashPrefill by remember { mutableStateOf<String?>(null) }
+                // Dev hook `-e commands 1`: open the SLASH OVERLAY without a dial drag to 6:00 —
+                // same capture-rig reason as dial_preview/model_picker (a synthetic release is
+                // flaky to script; the overlay is a shipped surface we screenshot for the demo).
+                val devCommands by WearApp.Graph.devCommands.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(devCommands) {
+                    if (devCommands) {
+                        commandsOpen = true
+                        WearApp.Graph.devCommands.value = false
+                    }
+                }
                 val commandEntries = remember(catalogJson) {
                     CommandCatalog.merge(SlashCommands.BUILTIN, CommandCatalog.parse(catalogJson).entries)
                 }
@@ -386,6 +449,27 @@ class MainActivity : ComponentActivity() {
                     if (screen == Screen.Sessions) session.refreshGatewaySessions()
                 }
 
+                // Notification routing (owner 2026-10-29): publish what the wrist is looking at.
+                // Only the front Chat screen showing THAT chat suppresses its system
+                // notifications; every other surface posts "" so events always go Wear OS native.
+                val activeChat by session.activeChat.collectAsState()
+                LaunchedEffect(screen, activeChat) {
+                    WearApp.Graph.viewingChatId = if (screen == Screen.Chat) activeChat else ""
+                }
+                // PAUSE clears the published view (WearApp gate); coming BACK must re-publish it
+                // or wrist-up-over-the-same-chat would notify when it shouldn't.
+                val screenNow = rememberUpdatedState(screen)
+                val activeChatNow = rememberUpdatedState(activeChat)
+                val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+                        if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME) WearApp.Graph.viewingChatId =
+                            if (screenNow.value == Screen.Chat) activeChatNow.value else ""
+                    }
+                    lifecycleOwner.lifecycle.addObserver(obs)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+                }
+
                 val voiceStatus = when {
                     sttStatus.value.isNotEmpty() -> sttStatus.value
                     ttsState == SpeakAloud.State.MissingEngine -> "tts: no engine on device"
@@ -452,7 +536,7 @@ class MainActivity : ComponentActivity() {
                     runCommand(entry)
                 }
 
-                // THE DIAL ROUTER (SPEC §12.1): eight directions, every one remappable in
+                // THE DIAL ROUTER (SPEC §12.1): nine directions, every one remappable in
                 // Settings ▸ Interface, all of them lands here. Lanes the branch-2 voice work owns
                 // say so plainly instead of silently doing nothing.
                 fun handleLane(lane: Lane) {
@@ -477,6 +561,12 @@ class MainActivity : ComponentActivity() {
                         Lane.Commands -> openCommands(null)
                         Lane.Chats -> screen = Screen.Chats
                         Lane.Sessions -> screen = Screen.Sessions
+                        // ✅ per-chat approvals (owner 2026-10-29): lands on the chat, sheet opens —
+                        // same contract as the model lane (the pick belongs to the chat).
+                        Lane.Approvals -> {
+                            screen = Screen.Chat
+                            approvalsOpen = true
+                        }
                         Lane.Agents -> {
                             showAgents = true
                             uiScope.launch { agents.refresh() }
@@ -486,7 +576,60 @@ class MainActivity : ComponentActivity() {
                 }
 
 
-                HermesScaffold {
+                // LAUNCH FILM (gate + rationale in domain/SplashIntro): decided EXACTLY ONCE per
+                // process, and only after the owner's Display switch has actually been read — a
+                // launch-time race against DataStore must not be what makes a 14 s film play. The
+                // wait is bounded (SplashIntro.SETTING_BUDGET_MS), so a slow disk falls back to the
+                // shipped default (ON) instead of holding the launch. The chat composes under the
+                // film either way: the intro decorates a warming app, it never gates it.
+                var introGate by remember { mutableStateOf<SplashIntro.Gate?>(null) }
+                // Which media the chosen mode shows (null = built-in art). Resolved with the
+                // gate, ONCE: a mid-launch Settings change must not swap the media under a film
+                // that already started.
+                var introSource by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(Unit) {
+                    withTimeoutOrNull(SplashIntro.SETTING_BUDGET_MS) {
+                        settings.introSettingsLoaded.first { it }
+                    }
+                    val mode = SplashIntro.choiceOf(settings.splashMode.value)
+                    // A stored custom pick counts only while its persistable grant lives; a dead
+                    // URI falls back to built-in silently rather than failing the launch.
+                    val customRaw =
+                        if (mode == SplashIntro.Choice.VIDEO) settings.splashVideoUri.value
+                        else settings.splashImageUri.value
+                    introSource = customRaw.takeIf { settings.splashGrantLive(it) }
+                    val fromLauncher = intent?.isLauncherLaunch() == true
+                    Log.i(
+                        TAG, "intro gate: mode=${settings.splashMode.value} custom=$customRaw " +
+                            "source=${introSource ?: "built-in"} launcher=$fromLauncher " +
+                            "deepLink=${deepLink.value != null}",
+                    )
+                    introGate = SplashIntro.decide(
+                        firstCompositionOfProcess = !IntroClaimed.getAndSet(true),
+                        choice = mode,
+                        deepLink = deepLink.value != null, // notification/tile tap (§M5)
+                        fromLauncher = fromLauncher,
+                    ).also {
+                        WearApp.Graph.launchHold?.gate = it
+                        if (it != SplashIntro.Gate.PlayVideo && it != SplashIntro.Gate.PlayStatic) {
+                            Log.i(TAG, "intro skipped: $it")
+                        }
+                    }
+                }
+
+                // NULL until the gate answers — HermesScaffold waits for the answer before it
+                // claims either splash, so a DataStore race can never pick the launch story.
+                HermesScaffold(
+                    intro = introGate?.let {
+                        it == SplashIntro.Gate.PlayVideo || it == SplashIntro.Gate.PlayStatic
+                    },
+                    introKind = if (introGate == SplashIntro.Gate.PlayStatic) {
+                        SplashIntro.Choice.STATIC
+                    } else {
+                        SplashIntro.Choice.VIDEO
+                    },
+                    introSource = introSource,
+                ) {
                     VoiceHost(session, speak)
                     when (screen) {
                         Screen.Chat -> ChatBody(
@@ -505,6 +648,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             listening = listening.value || devPtt != null,
+                            speaking = speakingNow,
+                            speakingOffset = speakingOffsetNow,
                             pttPartial = partial.value.ifBlank { devPtt ?: "" },
                             pttHistory = if (devPtt != null) emptyList() else sttHistory.toList(),
                             handsFree = handsFree.value,
@@ -567,8 +712,16 @@ class MainActivity : ComponentActivity() {
                                             Vad.speakingNow(vad.value, System.currentTimeMillis())
                                         ) cancelListening() else endListening()
                                     }
-                                    // Tap while a reply streams = STOP (ask #3).
-                                    state.busy -> session.stopActiveRun()
+                                    // Tap while a reply streams = STOP the run (ask #3) — and flush
+                                    // the voice queue with it, or a cancelled answer would keep
+                                    // talking (owner 2026-10-29 state machine).
+                                    state.busy -> {
+                                        speak.stop()
+                                        session.stopActiveRun()
+                                    }
+                                    // Tap while it reads aloud = MUTE only — the answer already
+                                    // landed; stop speech and view it (orb returns to the mic).
+                                    speakingNow -> speak.stop()
                                     // Compose box open: send (or close when empty).
                                     composing && draft.isNotBlank() -> {
                                         speak.stop()
@@ -596,6 +749,11 @@ class MainActivity : ComponentActivity() {
                             onFontScaleReset = { uiScope.launch { settings.setFontScale(FontScale.DEFAULT) } },
                             slots = dialSlots,
                             onDial = { lane -> handleLane(lane) },
+                            replyVolume = replyVol,
+                            onReplyVolume = { v ->
+                                speak.setReplyVolume(v)   // persists via AppSettings mirror
+                                if (voiceOut) speak.preview()
+                            },
                             commands = DialCommands(
                                 open = commandsOpen,
                                 state = overlayState,
@@ -671,6 +829,33 @@ class MainActivity : ComponentActivity() {
                 val devViewerScale by WearApp.Graph.devViewerScale.collectAsState()
                 // `-e model_picker`: open the 🧠 model picker exactly like a lane release would.
                 val devModelPicker by WearApp.Graph.devModelPicker.collectAsState()
+                val devApprovals by WearApp.Graph.devApprovals.collectAsState()
+                val devAgents by WearApp.Graph.devAgents.collectAsState()
+                LaunchedEffect(devAgents) {
+                    if (devAgents) {
+                        WearApp.Graph.devAgents.value = false
+                        screen = Screen.Chat
+                        showAgents = true; uiScope.launch { agents.refresh() }
+                    }
+                }
+                LaunchedEffect(devApprovals) {
+                    if (devApprovals) {
+                        WearApp.Graph.devApprovals.value = false
+                        screen = Screen.Chat
+                        approvalsOpen = true
+                    }
+                }
+                // `-e dev_lane <id>`: fire any lane through the SAME router a drag-release uses —
+                // the capture driver for every lane destination (Settings first: adb can't hold
+                // the dial drag, and screenshots of lane destinations outrank gesture cosplay).
+                val devLane by WearApp.Graph.devLane.collectAsState()
+                LaunchedEffect(devLane) {
+                    val id = devLane ?: return@LaunchedEffect
+                    WearApp.Graph.devLane.value = null
+                    val lane = dev.hermes.wearos.domain.Lane.fromId(id)
+                    if (lane == null) android.util.Log.i("HermesWear", "dev: dev_lane unknown '$id'")
+                    else handleLane(lane)
+                }
                 LaunchedEffect(devModelPicker) {
                     if (devModelPicker) {
                         WearApp.Graph.devModelPicker.value = false
@@ -686,7 +871,7 @@ class MainActivity : ComponentActivity() {
                 // winner; with nothing open it disables and Sessions/Settings keep their
                 // → Chat handler, and Chat keeps the plain system default (leaving is the exit).
                 val overlayOpen = editor != null || promptSheet != null || manageSheet != null ||
-                    confirmDelete != null || showAgents || showModels || commandsOpen || devViewerScale != null
+                    confirmDelete != null || showAgents || showModels || approvalsOpen || commandsOpen || devViewerScale != null
                 androidx.activity.compose.BackHandler(enabled = overlayOpen) {
                     when {
                         editor != null -> editor = null
@@ -695,6 +880,7 @@ class MainActivity : ComponentActivity() {
                         manageSheet != null -> manageSheet = null
                         // Model picker closes onto the chat (same contract as Agents).
                         showModels -> { showModels = false; screen = Screen.Chat }
+                        approvalsOpen -> { approvalsOpen = false; screen = Screen.Chat }
                         // Agents closes ONTO CHAT (back ring, batch 6): from the ring it is the
                         // Agents→Chat leg; from a dial open it simply goes home to the chat.
                         showAgents -> { showAgents = false; screen = Screen.Chat }
@@ -780,6 +966,26 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDismiss = { showModels = false; screen = Screen.Chat },
+                    )
+                }
+                if (approvalsOpen) {
+                    val uiState by session.state.collectAsState()
+                    ApprovalModeDialog(
+                        current = session.activeChatApprovalMode(),
+                        chatLabel = uiState.activeChatLabel,
+                        agent = profile,
+                        onPick = { m ->
+                            session.setChatApprovalMode(m)
+                            approvalsOpen = false
+                            WearApp.Graph.runOnUi {
+                                Toast.makeText(
+                                    context,
+                                    "✅ approvals: ${m.label} — this chat",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDismiss = { approvalsOpen = false; screen = Screen.Chat },
                     )
                 }
                 promptSheet?.let { msg ->
@@ -917,6 +1123,10 @@ private fun ChatBody(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     listening: Boolean,
+    /** TTS queue live → the STOP face + hold-pops-dial state machine (owner 2026-10-29). */
+    speaking: Boolean = false,
+    /** Char offset into `state.live` of the sentence being READ ALOUD (karaoke follow, null = silent). */
+    speakingOffset: Int? = null,
     pttPartial: String,
     pttHistory: List<String>,
     handsFree: Boolean,
@@ -941,6 +1151,9 @@ private fun ChatBody(
     /** THE ORB DIAL (SPEC §12.1): the eight lanes as the owner mapped them (Settings ▸ Interface). */
     slots: List<Lane>,
     onDial: (Lane) -> Unit,
+    /** Mute-lane double slider (owner 2026-10-29): current reply volume + commit on release. */
+    replyVolume: Float,
+    onReplyVolume: (Float) -> Unit,
     /** The 6:00 slash overlay, when open (SPEC §12.3). */
     commands: DialCommands,
 ) {
@@ -959,23 +1172,141 @@ private fun ChatBody(
     // listening. A per-call remember would reset the scroll to the top when the overlay dismisses
     // — the walkthrough's "after stt talk button done, it scrolls to the top of the convo".
     val chatListState = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
+    // TAIL-FOLLOW flag (owner 2026-10-29, domain/ChatFollow): survives the PTT overlay exactly
+    // like chatListState — reading scroll-back, pressing the orb, and cancelling must NOT snap
+    // the view to the bottom; a new ask re-engages on its own.
+    val chatFollow = remember { mutableStateOf(true) }
+    // Karaoke's "we moved it" stamp (guard rationale in ChatScreen's parameter docs).
+    val chatScrollStamp = remember { mutableStateOf(0L) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     val vpW = viewport.width.toFloat()
     val vpH = viewport.height.toFloat()
     val cluster = remember(viewport) { BottomLayout.geometry(vpW, vpH) }
-    val clusterPadPx = remember(viewport) { BottomLayout.transcriptBottomPad(vpW, vpH) }
+    // CIRCLE-SAFE BOTTOM (batch-4 #1): the larger of the orb-crown rule and the BEZEL-RIM rule —
+    // the newest line's bottom-LEFT corner must sit inside the physical circle, or the round face
+    // shaves it (owner: *"the bottom left of the text gets cut off from the circle screen face"*).
+    // Text left edge = the SLC gutter (~8 dp, measured from the owner's 45-lines screenshot);
+    // square faces fall through to the old crown rule unchanged.
+    val roundShape = dev.hermes.wearos.ui.isRoundScreen()
+    val clusterPadPx = remember(viewport, roundShape) {
+        BottomLayout.circleSafeBottomPad(
+            viewportW = vpW, viewportH = vpH, round = roundShape,
+            contentLeftPx = with(density) { 8.dp.toPx() },
+            orbTopPx = cluster.talk.topY(),
+        )
+    }
     val hasViewport = viewport.width > 0 && viewport.height > 0
     // Transcript/overlay clearance = the cluster's top edge; pre-measure first frame keeps the
     // old 74–78 dp bar clearance.
     val barPadDp = if (hasViewport) with(density) { clusterPadPx.toDp() } else 78.dp
+    // KARAOKE FOLLOW (owner 2026-10-29: *"while it's speaking the line that is being spoken is
+    // in the middle of the screen. That way you can follow along"*): while the answer is being
+    // READ ALOUD and tail-follow is engaged, the spoken line rides the 10-o'clock tick height
+    // (batch-4 #2; was ~⅓ down — the rim shaves text that low on round faces). The
+    // char→pixel ratio SELF-CALIBRATES from the live item's measured height (no font math, no
+    // assumption about markdown sizes); scrolling away disengages exactly like the tail-pin
+    // (same chatFollow escape hatch — no yanking); a line already comfortably on screen is
+    // never nudged; and the tap-to-mute orb simply stops the feed, freeing the scroll.
+    // SETTLED FOLLOW (owner 2026-10-29 night: *"when you're counting and stuff for the audio
+    // test I am not seeing the line that you're saying be at the center"*): the voice lags the
+    // stream, so most reading happens AFTER the answer settles — and the live item then vanishes
+    // into the transcript, which the first version read as "nothing to follow". It now follows
+    // the settled last-Hermes row too (same char offsets — the settled text IS the live text),
+    // and the ticker in SpeakAloud walks the cursor THROUGH un-punctuated replies (number lists
+    // ride the TTS queue as one utterance; onStart alone would pin line 1 for a minute).
+    LaunchedEffect(speakingOffset, state.messages.size, state.live.length) {
+        val off = speakingOffset ?: return@LaunchedEffect
+        if (!speaking || !chatFollow.value || vpH <= 0f) return@LaunchedEffect
+        if (off < 0) return@LaunchedEffect
+        val liveLen = state.live.length
+        val settling = liveLen <= 0
+        val lastMsg = state.messages.lastOrNull()
+        if (settling && (lastMsg == null || lastMsg.role != ChatMessage.Role.Hermes)) return@LaunchedEffect
+        val textLen = if (settling) lastMsg!!.text.length else liveLen
+        if (textLen <= 0) return@LaunchedEffect
+        val tailIdx = 2 + state.messages.size + (if (state.approval != null) 1 else 0)
+        // Last row of the transcript sits at 2+size-1 regardless of a trailing approval card.
+        val wantIdx = if (settling) 1 + state.messages.size else tailIdx
+        val item = chatListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == wantIdx }
+        if (item == null) {
+            // BATCH-5 #20: the spoken row is OFF-SCREEN (the voice started while the view still
+            // rode elsewhere) — and while speaking, the tail-pin effect stands down, so "bail
+            // and wait" dead-locks the view exactly where it was (hardware: the whole read ran
+            // with the screen parked on an old answer). Bring THE ROW to the top once; the
+            // next cursor tick finds it and the relative walk takes over.
+            chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
+            chatListState.scrollToItem(wantIdx, 0)
+            return@LaunchedEffect
+        }
+        val yOfSpoken = off.toFloat() / textLen * item.size
+        // BATCH-5 #20 — TELETHER (owner live review 2026-10-30: *"it's not scrolling with the
+        // talking… it stays exactly and scrolls line by line. It's kind of like a block of
+        // text that's speaking is visible… the meat of it is in the center, not quite what I
+        // would like"*): the old no-nudge band ran from ~13 % to ~60 % of the face — half the
+        // screen — so the block sat frozen while the voice walked through it, then lurched one
+        // line at a time. Now the spoken line rides [RoundScreen.tenOclockY] CONTINUOUSLY:
+        // every cursor tick re-anchors, so the answer scrolls up WITH the voice like a
+        // teleprompter. A 12 px dead zone kills jitter; the anchor itself is batch-2 #2's
+        // 10-o'clock line (rim wide open up there → the left gutter never clips on round).
+        val anchorY = dev.hermes.wearos.domain.RoundScreen.tenOclockY(vpW, vpH)
+        val deltaPx = item.offset + yOfSpoken - anchorY
+        if (kotlin.math.abs(deltaPx) < 12f) return@LaunchedEffect
+        // INSTANT, not animateScrollToItem: the follow-disengage detector reads a RISE of
+        // isScrollInProgress as the user grabbing the list, and wear-compose raises it for
+        // ANIMATED scrolls too — an animated karaoke nudge disengaged tail-follow on its first
+        // jump and froze the view (owner: "I am not seeing the line that you're saying be at the
+        // center"). Even instant jumps raise it on this wear-compose, so we also STAMP the jump:
+        // edges settling within the guard window are ours (ChatScreen skips them). The 180 ms
+        // ticker + the ~12–60 % no-nudge band keep the jumps rare and small.
+        chatScrollStamp.value = android.os.SystemClock.elapsedRealtime()
+        // RELATIVE, not absolute (batch-5 #20, hardware): the spoken line is delta px from
+        // the tick — walk THAT distance in the state's own offset space (the on-device-proven
+        // edge-scroll walker: positive = forward, honest clamps). The old absolute
+        // scrollToItem(wantIdx, yOfSpoken - anchorY) mixed coordinate spaces: it rewound the
+        // view toward the TOP whenever the line sat above the anchor (shots showed OLD answers
+        // reappear under the voice), and pinned it at offset 0 whenever below — the frozen
+        // block the owner reviewed live.
+        chatListState.edgeScrollWalk(deltaPx)
+    }
+    // #16: the overlay's engine label reads from watchkit's /health inventory — cold starts
+    // (and the beat after a watchkit restart) have never probed, and "engine ?" would then
+    // shadow a perfectly good answer. Refresh WHEN THE MIC OPENS: the LAN probe answers in
+    // ~100 ms, faster than the wearer finishes a sentence, and collectAsState re-labels the
+    // line the moment it lands (the mic itself never waits on this).
+    LaunchedEffect(listening) {
+        if (listening) dev.hermes.wearos.net.Watchkit.refreshSttEngine()
+    }
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewport = it }) {
         if (listening) {
+            // #13 provider + streaming honesty line for the overlay top (pure labels,
+            // domain/SttProviders). #16: the engine shown is the EFFECTIVE one — the wearer's
+            // Settings ▸ Voice in pick when /health says it is installed-ready, else the
+            // watchkit default; the streaming flag comes from the same inventory, so a future
+            // engine needs no watch update to be labeled honestly.
+            val sttProvNow = SttProviders.fromId(SttProviders.current)
+            val gwEngineNow by dev.hermes.wearos.net.Watchkit.sttEngine.collectAsState()
+            val gwEnginesNow by dev.hermes.wearos.net.Watchkit.sttEngines.collectAsState()
+            val effEngineNow = SttProviders.effectiveEngine(
+                SttProviders.gatewayEnginePick, gwEngineNow, gwEnginesNow,
+            )
+            val ctxNow = androidx.compose.ui.platform.LocalContext.current
+            val sysPkgNow = remember { SystemStt.recognizerPackage(ctxNow) }
+            val sttEmoji = when (sttProvNow) {
+                SttProvider.LOCAL -> "🎙️"
+                SttProvider.SYSTEM -> "📡"
+                SttProvider.GATEWAY -> "🛰"
+            }
             PttOverlay(
                 partial = pttPartial,
                 handsFree = handsFree,
                 onKeyboard = onKeyboard,
                 history = pttHistory,
+                statusLine = sttEmoji + " " + SttProviders.overlayName(sttProvNow, sysPkgNow, effEngineNow) +
+                    " · " + SttProviders.streamsLabel(
+                        if (sttProvNow == SttProvider.GATEWAY) SttProviders.engineStreams(effEngineNow, gwEnginesNow)
+                        else SttProviders.streamsText(sttProvNow, effEngineNow),
+                    ),
                 modifier = Modifier.padding(bottom = barPadDp),
             )
         } else {
@@ -1061,7 +1392,11 @@ private fun ChatBody(
                     markdown = markdown,
                     onEditPrompt = onEditPrompt,
                     listState = chatListState,
+                    follow = chatFollow,
+                    speaking = speaking,
+                    programmaticScrollAt = chatScrollStamp,
                     contentPadBottomDp = if (hasViewport) barPadDp else null,
+                    viewportW = vpW,
                     onPullUpAtBottom = onPullUpAtBottom,
                 )
             }
@@ -1074,6 +1409,7 @@ private fun ChatBody(
                 viewportW = vpW,
                 viewportH = vpH,
                 listening = listening,
+                speaking = speaking,
                 running = state.busy,
                 voiceOut = voiceOut,
                 slots = slots,
@@ -1081,6 +1417,11 @@ private fun ChatBody(
                 onTap = onOrbTap,
                 onHoldStart = onHoldStart,
                 onHoldEnd = onHoldEnd,
+                replyVolume = replyVolume,
+                onReplyVolume = onReplyVolume,
+                approval = state.approval,
+                chatAtBottom = chatFollow.value,
+                onApproveChoice = onApprove,
             )
         }
         // Full-screen prompt editor (asks #5/#6) LAST in the Box = topmost: covers chat + orb bar,
@@ -1155,6 +1496,8 @@ private fun OrbCluster(
     viewportW: Float,
     viewportH: Float,
     listening: Boolean,
+    /** TTS queue live → the STOP face + hold-pops-dial state machine (owner 2026-10-29). */
+    speaking: Boolean = false,
     running: Boolean,
     voiceOut: Boolean,
     slots: List<Lane>,
@@ -1162,12 +1505,28 @@ private fun OrbCluster(
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
+    /** THE MUTE-LANE DOUBLE SLIDER (owner 2026-10-29): current reply volume seeds the dwell mode,
+     *  the release commits the new level (domain/DialVolume owns the math). */
+    replyVolume: Float,
+    onReplyVolume: (Float) -> Unit,
+    /** BATCH-4 #5 (owner: *"OK should be to the LEFT of the orb, NO to the RIGHT — but only when
+     *  I'm looking at the bottom of the chat, not permanently hanging there"*): a live approval
+     *  while the transcript rests at its tail paints ✅/❌ on the old agent/sessions spots. */
+    approval: dev.hermes.wearos.domain.ApprovalInfo? = null,
+    chatAtBottom: Boolean = false,
+    onApproveChoice: (String) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val scale = OrbDial.scaleFor(minOf(viewportW, viewportH))
     var armed by remember { mutableStateOf(false) }
     var activeSlot by remember { mutableStateOf(-1) }
+    // VOLUME MODE (the double slider's second half): dwelled on the mute lane, lateral travel
+    // now scales TTS reply volume instead of walking lanes; the release commits, no mute toggle.
+    var volumeMode by remember { mutableStateOf(false) }
+    var volumeLevel by remember { mutableStateOf(1f) }
+    var volumeDial by remember { mutableStateOf<DialVolume?>(null) }
+    var spinEngaged by remember { mutableStateOf(false) }
     // SPIN MODE state (domain/DialSpin): the ring's rotation phase, animated so detents read as
     // icons physically travelling around the disc (owner: "those little icons turn around you").
     val spin = remember(scale) { DialSpin(scale) }
@@ -1192,6 +1551,19 @@ private fun OrbCluster(
         androidx.compose.animation.core.tween(110),
         label = "orbRise",
     )
+    // MUTE DWELL → VOLUME MODE (owner: "pause on mute for maybe two seconds, then … swipe back
+    // and forth to change the volume"). Restarted by every aim change, so the timer only ever
+    // completes with the finger still parked on MUTE and no spin engaged.
+    androidx.compose.runtime.LaunchedEffect(armed, activeSlot, spinEngaged, volumeMode) {
+        if (!armed || volumeMode || spinEngaged) return@LaunchedEffect
+        if (activeSlot < 0 || OrbDial.slotFor(slots, activeSlot) != Lane.Mute) return@LaunchedEffect
+        kotlinx.coroutines.delay(DialVolume.DWELL_MS)
+        volumeDial = DialVolume(scale, replyVolume)
+        volumeLevel = replyVolume
+        volumeMode = true
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+        Log.i("HermesWear", "dial volume mode armed (mute dwell, start=$replyVolume)")
+    }
     // RING FIRST so the disc paints over its own center (the caption inside the overlay is the
     // one label that survives every direction, including the crowded lower arc).
     OrbDialOverlay(
@@ -1203,9 +1575,11 @@ private fun OrbCluster(
         visible = armed || dialPreview,
         phaseDeg = spinPhaseAnim,
         voiceOut = voiceOut,
+        volumeBadge = if (volumeMode) "🔊 ${DialVolume.pct(volumeLevel)}%" else null,
     )
     TalkOrb(
         listening = listening,
+        speaking = speaking,
         running = running,
         diameter = with(density) { (cluster.talk.r * 2f).toDp() },
         modifier = Modifier.offset {
@@ -1220,8 +1594,22 @@ private fun OrbCluster(
         dialScale = scale,
         onDialArm = {
             armed = true; activeSlot = -1; risen = false; spinPhase = 0f; spin.reset()
+            volumeMode = false; volumeDial = null; spinEngaged = false
         },
         onDialMove = { dx, dy ->
+            // VOLUME MODE owns the stream once armed: lateral travel sets reply volume and the
+            // spin never sees a move (the lit lane stays mute; the ring holds still).
+            if (volumeMode) {
+                val d = volumeDial
+                if (d != null) {
+                    d.move(dx)
+                    if (d.changed) {
+                        volumeLevel = d.level
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    }
+                }
+                return@TalkOrb
+            }
             // AIM is the default (highlight follows the live angle — free re-aim, owner batch 5);
             // a lateral sweep from the top arc engages SPIN (domain/DialSpin): detents walk the
             // lit slot and the ring physically rotates it under the finger.
@@ -1229,22 +1617,77 @@ private fun OrbCluster(
             if (spin.changed) {
                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
             }
+            spinEngaged = spin.spinning
             activeSlot = spin.activeSlot
             spinPhase = spin.phaseDeg
             risen = if (spin.spinning) false else OrbDial.needsRise(dx, dy, scale)
         },
         onDialEnd = { _, _ ->
             armed = false; activeSlot = -1; risen = false; spinPhase = 0f
-            val slot = spin.commit() // spun gesture: the LIT slot commits, wherever the finger rose
-            if (slot != null) {
-                val lane = OrbDial.slotFor(slots, slot)
-                if (lane != Lane.None) {
-                    Log.d("HermesWear", "dial lane=${lane.id} slot=$slot spin=${spin.spinning}")
-                    onDial(lane)
+            if (volumeMode) {
+                // The double slider commits its level — the mute toggle is consumed by the dwell.
+                volumeMode = false
+                val v = volumeLevel
+                volumeDial = null
+                Log.i("HermesWear", "dial volume committed v=$v")
+                onReplyVolume(v)
+            } else {
+                val slot = spin.commit() // spun gesture: the LIT slot commits, wherever the finger rose
+                if (slot != null) {
+                    val lane = OrbDial.slotFor(slots, slot)
+                    if (lane != Lane.None) {
+                        Log.d("HermesWear", "dial lane=${lane.id} slot=$slot spin=${spin.spinning}")
+                        onDial(lane)
+                    }
                 }
             }
+            spinEngaged = false
         },
     )
+    // THE APPROVAL FLANKS (batch-4 #5, owner: *"✅ OK to the LEFT of the orb, ❌ NO to the RIGHT,
+    // but only when I'm at the bottom of the chat"*): shown ONLY while a live approval waits AND
+    // the transcript rests at its tail (chatFollow) — they never dangle by the orb while the user
+    // reads history, so there is no permanent mis-click bait. This also fixes the reported bug
+    // (buttons invisible when the approval lands mid-scroll): scrolling to the bottom re-engages
+    // follow and the flanks appear instantly; the in-list card still carries the question text.
+    val appr = approval
+    if (appr != null && chatAtBottom) {
+        ApprovalFlank(cluster.agent, Color(0xFF1B5E20), "✅") {
+            onApproveChoice(dev.hermes.wearos.domain.ApprovalChoices.approveName(appr.choices))
+        }
+        ApprovalFlank(cluster.sessions, Color(0xFF7F1D1D), "❌") {
+            onApproveChoice(dev.hermes.wearos.domain.ApprovalChoices.denyName(appr.choices))
+        }
+    }
+}
+
+/** One round ✅/❌ action riding a BottomLayout spot's CENTER at 1.45× the spot radius — big
+ *  enough for a thumb at the rim, centered so the geometry stays BottomLayout-owned. */
+@Composable
+private fun ApprovalFlank(
+    spot: BottomLayout.Spot,
+    bg: Color,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val r = spot.r * 1.45f
+    Box(
+        modifier = Modifier
+            .size(with(LocalDensity.current) { (r * 2f).toDp() })
+            .offset {
+                IntOffset((spot.cx - r).roundToInt(), (spot.cy - r).roundToInt())
+            }
+            .clip(CircleShape)
+            .background(bg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.title3,
+            fontSize = 26.sp,
+        )
+    }
 }
 
 /** Offset a child so it EXACTLY covers a BottomLayout circle (top-left = center − r, in px). */
@@ -1320,6 +1763,23 @@ internal fun devMediaTestCard(): ImageBitmap {
 
 // Splash-spirit machinery (see HermesScaffold): process-wide one-shot, clock off the main thread.
 private val SpiritClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+// THE FILM'S ONE-SHOT (domain/SplashIntro answers WHY; this answers HOW ONCE): claimed on the
+// first composition of the PROCESS, so a warm start out of Recents never replays 14 s of film.
+private val IntroClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+/**
+ * Only "show me the app" launches get the film (domain/SplashIntro.launcherShaped has the FULL
+ * story, incl. the One UI Watch fingerprint: MAIN with NO category). The harness keeps itself
+ * splash-free the same way it always did — `am start -n` is a bare component start (no action) —
+ * plus an explicit `--ez dev_no_intro 1` whenever a caller wants silence regardless of shape
+ * (docs/DEMO.md, scripts/verify-chat.sh).
+ */
+private fun Intent.isLauncherLaunch(): Boolean = SplashIntro.launcherShaped(
+    action = action,
+    hasLauncherCategory = hasCategory(Intent.CATEGORY_LAUNCHER),
+    devNoIntro = getBooleanExtra("dev_no_intro", false),
+)
 internal val spiritVisible = androidx.compose.runtime.mutableStateOf(false)
 private fun spiritBoom() {
     if (!SpiritClaimed.getAndSet(true)) {
@@ -1332,7 +1792,12 @@ private fun spiritBoom() {
 }
 
 @Composable
-private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
+private fun HermesScaffold(
+    intro: Boolean? = null,
+    introKind: SplashIntro.Choice = SplashIntro.Choice.VIDEO,
+    introSource: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     // PINCH FONT-SCALE: the persisted transcript type multiplier is PUBLISHED here, once, over
     // every screen (MdText + message styles consume via LocalFontScale). Cards never read it.
     val fontScale by WearApp.Graph.settings.fontScale.collectAsState()
@@ -1346,7 +1811,20 @@ private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
         // portrait hung on screen for seconds. The system splash (windowSplashScreenAnimatedIcon)
         // already shows her face-circle while the process starts — this overlay owns the
         // full-bleed flash and the hand-off to the chat, and nothing after that.
-        remember { spiritBoom() }
+        //
+        // THE FILM (ui/IntroVideo) REPLACES this flash when it plays — same trigger, first draw of
+        // a fresh process — so the two never stack. Switch off, cut by a tap, or skipped by the
+        // gate, and the launch is exactly the one that shipped before it.
+        //
+        // `intro` stays NULL until the gate answers, which is a beat AFTER first composition (it
+        // waits, bounded, for the owner's Display switch — SplashIntro.SETTING_BUDGET_MS). So the
+        // curtain goes up on the FIRST FRAME regardless of the answer, and the answer only ever
+        // takes it down. Two measured reasons: waiting to be told yes before painting anything
+        // leaked a frame of chat between the system splash and the film (SM-L705U), and an
+        // `introShown` seeded from `intro` latched that null and never woke up at all (emulator —
+        // the film was decided, claimed, and then quietly never painted).
+        var curtainUp by remember { mutableStateOf(true) }
+        LaunchedEffect(intro) { if (intro == false) spiritBoom() } // off/dev launch: the pre-film flash
         val spiritA by animateFloatAsState(
             if (spiritVisible.value) 1f else 0f,
             androidx.compose.animation.core.tween(220), label = "spirit",
@@ -1368,6 +1846,22 @@ private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
                     contentDescription = null,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().alpha(spiritA),
+                )
+            }
+            // THE FILM, topmost: it covers the transcript it is warming up behind, and any touch on
+            // it is a skip (the overlay consumes that touch). Until the gate answers this is the
+            // POSTER only — her face, the same image the system splash just showed — so the launch
+            // reads face→face→film instead of face→a frame of chat→film. `intro == false` (owner
+            // switch off, warm start, am start, notification tap) takes the exit fade, and because
+            // spiritBoom fires on that same beat with the same artwork, it reads as one dissolve.
+            AnimatedVisibility(
+                visible = intro != false && curtainUp,
+                enter = fadeIn(androidx.compose.animation.core.tween(120)),
+                exit = fadeOut(androidx.compose.animation.core.tween(SplashIntro.FADE_MS)),
+            ) {
+                IntroVideo(
+                    onDone = { curtainUp = false }, playing = intro,
+                    kind = introKind, sourceUri = introSource,
                 )
             }
         }
