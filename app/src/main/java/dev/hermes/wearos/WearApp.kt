@@ -604,27 +604,45 @@ class WearApp : Application() {
         /** Dev-only (adb `-e set_tailnet_key <key>`): store + (re)start the keeper (SPEC §11.4). */
         fun devSetTailnetKey(key: String) = scope.launch {
             settings.setTailnetKey(key)
-            androidx.core.content.ContextCompat.startForegroundService(
-                app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
-            )
+            tailnetStart()
             Log.i(TAG, "set_tailnet_key stored (${key.length} chars) — keeper started")
         }
 
-        /** Dev-only (adb `-e tailnet_on on|off`): the escape hatch — off = plain sockets (dev). */
-        fun devTailnetOn(v: String) = scope.launch {
-            val on = !v.trim().matches(Regex("(?i)(off|false|0|no)"))
+        // ── TAILNET keeper API (SPEC §11.4) — shared by Settings ▸ Tailnet and the dev hooks ──
+
+        /** The tunnel truth as the UI reads it (engine status, parsed). */
+        val tailnetStatus: kotlinx.coroutines.flow.StateFlow<dev.hermes.wearos.domain.TailnetStatus>
+            get() = TailnetEngine.status
+
+        /** (Re)start the keeper per stored prefs (idempotent; START_STICKY covers death). */
+        fun tailnetStart() = androidx.core.content.ContextCompat.startForegroundService(
+            app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
+        )
+
+        /** Enable/disable the tunnel (off = the dev escape hatch back to plain sockets). */
+        fun tailnetSetEnabled(on: Boolean) = scope.launch {
             settings.setTailnetEnabled(on)
-            val i = Intent(app, dev.hermes.wearos.notify.TailnetService::class.java)
-            if (on) androidx.core.content.ContextCompat.startForegroundService(app, i)
-            else { i.action = dev.hermes.wearos.notify.TailnetService.ACTION_STOP; app.startService(i) }
-            Log.i(TAG, "tailnet_on=$on")
+            if (on) tailnetStart()
+            else {
+                val i = Intent(app, dev.hermes.wearos.notify.TailnetService::class.java)
+                i.action = dev.hermes.wearos.notify.TailnetService.ACTION_STOP
+                app.startService(i)
+            }
+            Log.i(TAG, "tailnet enabled=$on")
         }
 
-        /** Dev-only (adb `-e tailnet_reenroll`): wipe node identity + re-enroll with stored key. */
-        fun devTailnetReenroll() = scope.launch {
+        /** Store + re-enroll: wipes node identity, enrolls fresh with the stored key. */
+        fun tailnetReenroll() = scope.launch {
             TailnetEngine.reEnroll(app, settings.tailnetHostname(), settings.tailnetKey())
-            Log.i(TAG, "tailnet_reenroll kicked (old node stays in admin until pruned)")
+            Log.i(TAG, "tailnet reenroll kicked (old node stays in admin until pruned)")
         }
+
+        /** Dev-only (adb `-e tailnet_on on|off`): the escape hatch — off = plain sockets (dev). */
+        fun devTailnetOn(v: String) =
+            tailnetSetEnabled(!v.trim().matches(Regex("(?i)(off|false|0|no)")))
+
+        /** Dev-only (adb `-e tailnet_reenroll`). */
+        fun devTailnetReenroll() = tailnetReenroll()
 
         fun setWatchkitBase(url: String) {
             scope.launch {

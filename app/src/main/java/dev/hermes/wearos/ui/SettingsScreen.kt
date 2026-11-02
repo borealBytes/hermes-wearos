@@ -72,6 +72,8 @@ import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
 import dev.hermes.wearos.domain.NetworkWatch
 import dev.hermes.wearos.domain.RouteReport
+import dev.hermes.wearos.domain.TailnetLogic
+import dev.hermes.wearos.domain.TailnetPhase
 import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
 import dev.hermes.wearos.location.LocationTool
@@ -104,6 +106,15 @@ fun SettingsScreen(
     var baseUrl by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
+    // TAILNET page state (SPEC §11.4); the engine's live status rides the Graph mirror.
+    var tnEnabled by remember { mutableStateOf(true) }
+    var tnKey by remember { mutableStateOf("") }
+    var tnHost by remember { mutableStateOf("") }
+    var tnKeySaved by remember { mutableStateOf(false) }
+    var tnHostSaved by remember { mutableStateOf(false) }
+    var tnTesting by remember { mutableStateOf(false) }
+    var tnTestResult by remember { mutableStateOf("") }
+    var tnReenrollArmed by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("…") }
     var testing by remember { mutableStateOf(false) }
     var wkResult by remember { mutableStateOf("") }
@@ -188,7 +199,14 @@ fun SettingsScreen(
         baseUrl = settings.baseUrl()
         token = settings.token()
         settings.loadBodyTools()
+        tnEnabled = settings.tailnetEnabled()
+        tnKey = settings.tailnetKey()
+        tnHost = settings.tailnetHostname()
     }
+
+    /** Host of the active gateway endpoint — the peer the tailnet phase is judged against. */
+    fun settingsGwHost(): String =
+        runCatching { android.net.Uri.parse(baseUrl).host.orEmpty() }.getOrDefault("")
 
     val settingsScroll = androidx.compose.foundation.rememberScrollState()
     val edgeScope = rememberCoroutineScope()
@@ -500,6 +518,125 @@ fun SettingsScreen(
         // ui/md/WatchMarkdown instead of raw text. Default ON; StateFlow so the chat re-renders live.
             Spacer(Modifier.height(2.dp))
             SettingNavRow("🔑", "Agent keys", "learned from the selected gateway") { page = SettingsPage.AgentKeys }
+            val tnSt by WearApp.Graph.tailnetStatus.collectAsState()
+            val tnPhase = TailnetLogic.phase(tnSt, tnEnabled, settingsGwHost())
+            SettingNavRow("🕸️", "Tailnet", TailnetLogic.describe(tnPhase, tnSt, settingsGwHost())) { page = SettingsPage.Tailnet }
+        }
+        if (page == SettingsPage.Tailnet) {
+        // ─── TAILNET (SPEC §11.4): the watch's own node is THE transport ─────────────────
+        // Phase truth comes from the engine (parsed in domain/TailnetState); this page owns
+        // only the enrollment inputs. IME rule holds: every EditLine saves on Done AND on
+        // the Save button — nothing here depends on Enter.
+        FieldLabel("Status")
+        val tnSt by WearApp.Graph.tailnetStatus.collectAsState()
+        val tnGw = settingsGwHost()
+        val tnPhase = TailnetLogic.phase(tnSt, tnEnabled, tnGw)
+        Text(
+            TailnetLogic.describe(tnPhase, tnSt, tnGw),
+            style = MaterialTheme.typography.caption1,
+            color = when (tnPhase) {
+                TailnetPhase.ACTIVE -> Color(0xFF81C784)
+                TailnetPhase.NEEDS_AUTH, TailnetPhase.DEGRADED, TailnetPhase.STOPPED -> Color(0xFFE57373)
+                else -> Color(0xFFB0BEC5)
+            },
+        )
+        if (tnPhase == TailnetPhase.ACTIVE && tnSt.self != null) {
+            Text(
+                "node ${tnSt.self?.dnsName} · via 127.0.0.1:${tnSt.socksPort}",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Use tailnet", style = MaterialTheme.typography.caption1)
+            Switch(
+                checked = tnEnabled,
+                onCheckedChange = { v -> tnEnabled = v; WearApp.Graph.tailnetSetEnabled(v) },
+            )
+        }
+        FieldLabel("Node name")
+        EditLine(
+            value = tnHost,
+            onChange = { tnHost = it; tnHostSaved = false },
+            placeholder = "hermes-wearos",
+            onDone = { scope.launch { settings.setTailnetHostname(tnHost); tnHostSaved = true } },
+        )
+        Text(
+            "Shows in the tailnet admin · applied at next enrollment",
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+        )
+        FieldLabel("Auth key")
+        EditLine(
+            value = tnKey,
+            onChange = { tnKey = it; tnKeySaved = false },
+            placeholder = "tskey-auth-… (admin ▸ Keys)",
+            password = true,
+            onDone = {
+                scope.launch {
+                    settings.setTailnetKey(tnKey); tnKeySaved = true
+                    WearApp.Graph.tailnetStart() // fresh key → land it (enroll if not in yet)
+                }
+            },
+        )
+        // Two rows, not three buttons on one: the ring's ~170dp content width fits two
+        // buttons comfortably and clips a third (caught on screenshot, 2026-11-02 — the
+        // Gateways page's Save+Test row is the precedent this copies).
+        Button(
+            onClick = {
+                scope.launch {
+                    settings.setTailnetKey(tnKey); tnKeySaved = true
+                    WearApp.Graph.tailnetStart()
+                }
+            },
+            modifier = Modifier.size(width = 72.dp, height = 32.dp),
+        ) { Text(if (tnKeySaved) "✓" else "Save", style = MaterialTheme.typography.button) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Two-tap confirm (the ring has no dialog real estate worth burning here): first
+            // tap arms, second enrolls fresh — and a fresh enrollment means a NEW node row in
+            // the admin console, so it must not be a fatality.
+            Button(
+                onClick = {
+                    if (tnReenrollArmed) { WearApp.Graph.tailnetReenroll(); tnReenrollArmed = false }
+                    else tnReenrollArmed = true
+                },
+                modifier = Modifier.size(width = 84.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) { Text(if (tnReenrollArmed) "Sure?" else "Re-enroll", style = MaterialTheme.typography.button) }
+            // THE honest test: a gateway health call that rides whatever the app rides right
+            // now — through the tunnel when it's up (same client, same ProxySelector).
+            Button(
+                onClick = {
+                    tnTesting = true; tnTestResult = "…"
+                    scope.launch {
+                        tnTestResult = try {
+                            val a = dev.hermes.wearos.net.HermesApi(settings.baseUrl(), settings.token())
+                            withContext(Dispatchers.IO) { a.health() }
+                        } catch (e: Exception) {
+                            "⚠️ " + RouteReport.explain(e)
+                        }
+                        tnTesting = false
+                    }
+                },
+                modifier = Modifier.size(width = 72.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) { Text(if (tnTesting) "…" else "Test", style = MaterialTheme.typography.button) }
+        }
+        if (tnTestResult.isNotEmpty() && !tnTesting) {
+            Text(
+                if (tnTestResult.startsWith("ok") || tnTestResult.startsWith("OK") || tnTestResult.startsWith("✅"))
+                    "✅ $tnTestResult" else tnTestResult,
+                style = MaterialTheme.typography.caption2,
+                color = if (tnTestResult.startsWith("⚠️")) Color(0xFFE57373) else Color(0xFF81C784),
+                fontSize = 11.sp,
+            )
+        }
+        Text(
+            "Every ask rides the tunnel — no LAN, no phone. Node state lives on this watch; " +
+                "a Re-enroll spends a key and leaves the old node for pruning in the admin.",
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+        )
         }
         if (page == SettingsPage.Display) {
         FieldLabel("Display")
@@ -1485,6 +1622,9 @@ enum class SettingsPage(val title: String) {
     // its parent. See up() below.
     Gateways("Gateways"),
     AgentKeys("Agent keys"),
+    // The watch's own tailnet node (SPEC §11.4): like agent keys, it belongs UNDER Gateways —
+    // the tunnel exists to reach them.
+    Tailnet("Tailnet"),
     Display("Display"),
     Watch("Watch"),
     Voice("Voice out"),
@@ -1495,8 +1635,9 @@ enum class SettingsPage(val title: String) {
     About("About"),
 }
 
-/** Back-target per page: Agent keys returns to Gateways, everything else to the hub. */
-private fun SettingsPage.up(): SettingsPage = if (this == SettingsPage.AgentKeys) SettingsPage.Gateways else SettingsPage.Root
+/** Back-target per page: Agent keys and Tailnet return to Gateways, everything else to the hub. */
+private fun SettingsPage.up(): SettingsPage =
+    if (this == SettingsPage.AgentKeys || this == SettingsPage.Tailnet) SettingsPage.Gateways else SettingsPage.Root
 
 @Composable
 private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClick: () -> Unit) {
