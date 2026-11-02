@@ -561,6 +561,16 @@ list. `switchAgent` now triggers `refreshGatewaySessions()` and that refresh rea
 agent's list through watchkit `/sessions?profile=<p>` (state.db, no profile key needed) in
 addition to the gateway route — so a fresh agent always shows its own recent sessions, key or no key.
 
+**AUTO-KEY NEW AGENTS (2026-11-02, watchkit `seedProfileKeys`).** The one-login roll-out above was
+a one-time sweep, so agents created AFTER it came up keyless — the gateway fails closed for them,
+and "Learn from watchkit" honestly answered *no key* (owner: "watchkit should look for new agents
+and get that key in there"). Now the recipe is automatic: every `/agent_keys` Learn force-seeds
+every keyless profile (appends `~/.hermes/.env`'s key to its `.env`, append-only, never clobbering
+an operator key, missing `.env` created 0600 — the `setup.sh --agent-keys` recipe), and a 60 s
+unref'd timer plus the watch's own 20 s away-poll keep sweeping so a brand-new agent is keyed
+within a minute of appearing, with no human step and no gateway restart (hot-read verified live:
+`chef-agent` + `delx-wellness` went — → ✓ and an ask streamed end to end). Key values never log.
+
 ### 12.3 Slash commands (F15) — `domain/SlashCommands.kt`
 
 **The constraint that shapes this feature** (read `gateway/platforms/api_server_runs.py` before
@@ -1211,7 +1221,65 @@ cadence after the loop went quiet; an unattended off-wrist settle buzzed; 4 minu
 screen-off darkness delivered 3 sweeps (old build: zero). Honest limit: under real Doze,
 CONNECTED-constrained work defers to maintenance windows — minutes of latency, not seconds.
 
+## 17. MEDIA EPIC — generated video/audio play in chat (owner 2026-11-02)
+
+Owner doctrine: *anything the desktop Hermes app shows, the wrist shows.* Generated A/V arriving
+in a session transcript (from comfy, from skills, from any lane) must appear as a card and PLAY
+on the watch, like images already do.
+
+**Parsing (`ui/md/WatchMarkdown.kt`).** Media targets are extension-routed across all three
+transport shapes the gateway produces: `![desc](target)`, `MEDIA:<target>` lines, and BARE
+whole-line paths/URLs. `.mp4/.mov/.mkv/.webm…` → `MdBlock.Media(video=true)`;
+`.mp3/.wav/.m4a/.ogg…` → `Media(video=false)`; image extensions keep the F6 `MdBlock.Image`
+lane untouched. Two safety rails: a media path *inside* a sentence stays prose (the card is for
+whole-line attachments only), and a half-arrived extension (`.mp` mid-stream) stays a paragraph
+until streaming completes — no flicker mid-token. Nine routing tests pin all of it.
+
+**The card + player (`ui/md/MdText.kt` MediaBlock, `ui/md/MediaPlay.kt`).** Video cards render a
+poster JPEG and open a fullscreen `Dialog` ExoPlayer on tap (play/pause, ±15/−5, scrubber,
+hardware back → straight back into the session). Audio cards play in place with a progress line.
+Remote http(s) targets play DIRECT (no bearer — a public URL needs no secret); gateway-host
+absolute paths stream through watchkit `/media` with the bearer header.
+
+**Server side (watchkit `/media`, SPEC §13 surface).** ffmpeg pre-shrink before the wrist ever
+sees bytes: H.264 faststart mp4 / AAC m4a, quality presets from the watch's `q=0..100` (q<34 →
+≤360p/350k, <67 → ≤480p/700k, else ≤540p/1.2M), `mono=0/1`, `ab=<kbps>`; `poster=1` returns a
+JPEG frame, `probe=1` metadata; HTTP Range responses so ExoPlayer seeks. Cache key =
+realpath|mtime|params under `.cache/media` — same file + same knobs is a <5 ms hit; a knob
+change is a fresh key and a re-transcode (verified live: sharp+stereo produced a new 4.66 MB
+derivative beside the balanced/mono 2.83 MB). Roots are the same `img_roots` policy as `/img`.
+
+**The proxy problem.** Every leg rides the embedded tailnet node (§11.4) through a loopback
+SOCKS shim — but media3 1.4.1 has no `DataSource.Factory.setProxy` (added upstream in 1.5) and
+its `DefaultHttpDataSource` rides libcore `HttpURLConnection`, which consults
+`java.net.ProxySelector.getDefault()`. So the player installs `TailnetRoute.SELECTOR` as the JVM
+default selector for its lifetime and restores the prior one on dispose — the player reaches the
+tailnet exactly like OkHttp does, and nothing else in the process ever sees the swap.
+
+**Settings ▸ Media (owner: "a quality slider… and let me pick stereo for my headphones").**
+`QualitySlider` (custom — wear-compose 1.4.1 ships no Slider; same drag physics as the proven
+RateSlider, commit-on-release), a Stereo audio switch (off = mono for the watch speaker), and a
+2×2 audio-bitrate chip grid (32/64/96/128k). All persist in `AppSettings`
+(`media_quality`/`media_stereo`/`media_audio_kbps`), mirror into `Watchkit.mediaPrefs`, and ride
+every `/media` URL the watch requests. `WearApp.loadMediaPrefs` rehydrates at boot.
+
+**Proof.** `-e render av` (RenderCases.Av — real gateway-box files); Watch Ultra screenshots show
+the poster card, the playing fullscreen player, and the session restored on back; the emulator
+UI pass shows the full Media settings page and the knob→server round trip end to end.
+
 ## Appendix A — Landed slices (build log, newest first)
+
+-- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
+  (2026-11-01/02, watch-proven on the Watch Ultra AND emulator).** EMBEDDED TAILNET (§11.4): a
+  real tsnet node inside the app (gomobile AAR + CONNECT-only SOCKS5 shim, `TailnetRoute.SELECTOR`
+  injected into OkHttp) — every REST/SSE/WebSocket call rides the tailnet, no LAN path, no
+  phone-tailnet; the root cause of every early tunnel timeout was a SOCKS parser bug (the domain
+  length IS the 5th CONNECT byte). NOTIF DEEP LINK: "Open session" switches to the owning agent
+  AND opens that exact session. SETTINGS rows got leading chevrons. AUTO-KEY NEW AGENTS (§12.2
+  addendum): watchkit force-seeds on Learn and sweeps every 60 s, so agents created after setup
+  are keyed within a minute, no human step. MEDIA EPIC (§17): media cards + fullscreen
+  ExoPlayer + watchkit `/media` pre-shrink + Settings ▸ Media (quality slider, stereo, bitrate);
+  pinch zoom-out floor lowered to 0.55 (owner reads small text fine).
 
 -- **Batch 6 — cold-start cuts, dB volume, the desktop watch (#23–#28, 2026-10-30/31,
   watch-proven).** The system splash holds the small launcher icon until the chosen intro media
