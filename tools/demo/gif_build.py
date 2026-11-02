@@ -118,14 +118,34 @@ def wordmark(canvas, sub):
     return ov
 
 def place_still(canvas, png):
-    """Composite a circle-masked docs/screens still into the watch circle (glass ring on top)."""
+    """Composite a circle-masked docs/screens still into the watch circle (glass ring on top).
+    `name#i` = half i of a pair composite (see pair_half)."""
     ov = canvas.copy()
-    still = Image.open(os.path.join(SCREENS, png)).convert("RGBA")
+    path = pair_half(png, int(png.rsplit("#", 1)[1])) if "#" in png else os.path.join(SCREENS, png)
+    still = Image.open(path).convert("RGBA")
     side = D - 6
     still = still.resize((side, side), Image.LANCZOS)
     ov.alpha_composite(still, (CX + 3, CY + 3))
     ov.alpha_composite(chrome)
     return ov
+
+
+HALVES = os.path.join(GIF_TMP, "halves")
+
+
+def pair_half(png, i):
+    """The committed `*-pair.png` artifacts are TWO circle shots side by side (README gallery
+    material). Inside the GIF they'd squeeze two watches into one circle — the owner's rule is
+    one screen per frame — so gif_build splits them and gives each half its own beat."""
+    os.makedirs(HALVES, exist_ok=True)
+    out = os.path.join(HALVES, f"{png.replace('/', '_')}_{i}.png")
+    if not os.path.exists(out):
+        im = Image.open(os.path.join(SCREENS, png.split("#", 1)[0])).convert("RGBA")
+        # pair canvases are 964x544: circles at x 6..475 and 489..958, y 6..475 (chips below
+        # belong to the README layout; the GIF's caption pill says what the chip said).
+        x0 = (6, 489)[i]
+        im.crop((x0, 6, x0 + 470, 476)).save(out)
+    return out
 
 # ---- the beat sheet: caption -> stills (docs/screens) ----
 BEAT_SHOTS = [
@@ -142,11 +162,13 @@ BEAT_SHOTS = [
     ("SEARCH EVERY SESSION FROM THE WRIST", ["21-session-search.png"]),
     ("ARCHIVE AND UNARCHIVE - NOTHING LOST", ["23-archived-chip.png", "24-unarchive.png"]),
     ("DESKTOP RUNS BUZZ THE WRIST", ["44-notify-desktop-approval.png", "45-notify-desktop-settled.png"]),
-    ("SPOKEN ON GLASS - NOTIFIED OFF IT", ["31-notify-plain.png", "46-attention-pair.png"]),
+    ("SPOKEN ON GLASS - LIVE CHAT, NO NOTIFY", ["46-attention-pair.png#0"]),
+    ("OFF THE WRIST - NOTIFIED, GLASS SILENT", ["46-attention-pair.png#1"]),
     ("VOICE OUT + KARAOKE FOLLOW", ["37-voice-output.png", "39-karaoke-follow.png"]),
     ("THREE WAYS IN - VOSK - VENDOR - GATEWAY", ["40-stt-source.png"]),
     ("FONT SCALE - YOUR EYES YOUR SIZE", ["14a-fontscale-min.png", "14b-fontscale-max.png"]),
-    ("EDGE-CIRCLE SCROLLING - EVERY LIST", ["41-edge-circle-pair.png"]),
+    ("EDGE-CIRCLE SCROLL - LIST AT THE TOP", ["41-edge-circle-pair.png#0"]),
+    ("ONE DRAG ON THE RIM - A FULL SCREEN MOVED", ["41-edge-circle-pair.png#1"]),
     ("YOUR GATEWAYS - SAVE - SELECT - FAIL OVER", ["42-gateways-multi.png", "47-about-screen.png"]),
 ]
 HOLD_STILL_MS = 1500
