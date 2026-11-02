@@ -1510,6 +1510,9 @@ if (MCP_MODE) {
   });
   server.listen(PORT, HOST, () => {
     logLine({ ev: 'start', version: VERSION, host: HOST, port: PORT, pid: process.pid });
+    // AUTO-KEY NEW AGENTS without waiting for any watch poll (owner 2026-11-02): own timer, same
+    // throttled sweep the away-poll drives. unref() so it never keeps the process alive on its own.
+    setInterval(() => { try { seedProfileKeys(false); } catch { /* next round */ } }, 60_000).unref();
   });
   for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { logLine({ ev: 'stop', sig: s }); server.close(() => process.exit(0)); });
 }
