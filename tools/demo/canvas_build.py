@@ -123,10 +123,13 @@ for i, cap in enumerate(BEATS):
         ws = tracked_w(probe, sub, fsmall)
         tracked(dd, ((W - ws) / 2, 1290 if i == 0 else 1290), sub, fsmall, (150, 158, 190), track=4)
     else:
-        w = tracked_w(probe, cap, fpill) + 72
+        # Exact centering: measure with the SAME tracking the text is drawn with (gif_build's
+        # pill() carries the shared rule; mixing widths is how captions ship off-center).
+        tw = tracked_w(probe, cap, fpill, track=6)
+        w = tw + 72
         x0 = (W - w) / 2
         y0, hh = 1150, 112
         dd.rounded_rectangle((x0, y0, x0 + w, y0 + hh), radius=34, fill=INKBG, outline=COBALT + (200,), width=3)
-        tracked(dd, (x0 + 36 - 6, y0 + (hh - 46) / 2 - 4), cap, fpill, PAPER)
+        tracked(dd, (x0 + (w - tw) / 2, y0 + (hh - 46) / 2 - 4), cap, fpill, PAPER, track=6)
     ov.save(f"{OUT}/ov_{i:02d}.png")
 print("canvas files done:", len(BEATS))
