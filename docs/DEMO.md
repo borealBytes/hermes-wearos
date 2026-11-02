@@ -137,7 +137,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | shot ✓ |
 | 41 | STT source: on-watch Vosk ⇄ OFF-DEVICE vendor (Google/Samsung) ⇄ Gateway whisper/parakeet engines | `40-stt-source.png` NEW | S40 · capture: Voice-in scrolled with the gateway row CLICKED OPEN: engine picker shows `★ gateway default · parakeet` (selected), `whisper · text streaming ✗ · final when you stop`, `parakeet · text streaming ✓` (watchkit v0.6.0 from this worktree; Voice in restored to Local Vosk after) | shot ✓ |
 | 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | shot ✓ |
-| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | shot ✓ |
+| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | shot ✓ — re-shot on the fixed build (title clears the clock pill); harbor-lab staged live via `-e add_gw` (which exposed + fixed the mirror bug: dev upsert now refreshes gatewayList), demo gateway deleted from the watch after capture |
 | 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | shot ✓ |
 | 45 | DESKTOP WATCH — approval park from a DESKTOP/API session buzzes the wrist with the parked command (beacon-derived); **Open adopts the session** and finishes it with ✅/❌ in chat (watch-started runs keep inline Approve/Deny) | `44-notify-desktop-approval.png` NEW | S44a | shot ✓ |
 | 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | shot ✓ |
@@ -279,6 +279,17 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
   caption pills (`canvas_build.py` fonts/patterns) + intro-motion frames cut
   from the shipped asset; ~1500 ms still holds, ~2500 ms hero/end, ~125 ms
   motion frames; burn the `v<VER> · wear-demo` bug.
+- **Caption typography (owner round 2, 2026-11-02):** every pill is centered
+  by measuring the text with the SAME tracking it draws with (measure-track-6
+  + draw-track-2 = off-center box, clipped text — the exact bug that shipped);
+  long captions SHRINK the font until the pill fits the canvas, never clip.
+  Wordmark frames ride the TOP band (measured via textbbox, sub below with a
+  gap) — and NO frame is without the watch circle: the open plays the intro
+  film inside the circle, the close holds its final frame there. Pixel-check
+  the emitted canvas PNGs (pill bbox centered ±4 px, ring never under text).
+- **Master mp4:** `DEMO_MASTER=1 python3 tools/demo/gif_build.py` renders the
+  same beats at 1080×1920@24 → `/tmp/opencode/vid/demo-vertical-v<VER>-raw.mp4`
+  (silent, h264, faststart) for the owner to score + upload. NEVER committed.
 
 ## 5. Design system (Nous Hermes-brand)
 
@@ -405,6 +416,26 @@ strings only) → restore from `refs/original` on any botched pass → single
 Branch keeps exactly ONE generation of every tracked media path.
 
 ## 10. Feature changelog (append when a feature lands)
+
+- **2026-11-02 (batch-8: GIF typography round, owner screenshot review)** — the owner read the
+  walkthrough GIF frame-by-frame and the canvas port lost its geometry: caption pills measured
+  width at track-6 while drawing at track-2 (box too wide, text drifting left, long captions
+  clipped off-canvas), and the wordmark frames collided (1080 y-positions ported blind) AND had
+  no watch face ("I don't want any screen where we don't have the watch face part on it"). SHIPPED:
+  gif_build pills now measure with the tracking they draw and shrink the font until they fit;
+  wordmark rides the top band, measured apart; the OPEN beat plays the intro film INSIDE the
+  watch circle under the title (per owner: "put that text at the very top… let it play at the
+  very beginning"), the CLOSE holds the film's final frame in the circle — no circle-less frames
+  exist anymore; 36-splash-picker got its own caption beat. `canvas_build` got the same exact-
+  centering formula so the family shares the rule. `DEMO_MASTER=1` renders the same beats at
+  1080×1920@24 → silent h264 master for the owner's YouTube pass (never committed). Re-shot
+  `42-gateways-multi` on the fixed build (its old frame still wore the clock-pill collision);
+  staging harbor-lab with `-e add_gw` exposed a REAL bug — the dev upsert never refreshed the
+  `gatewayList` mirror the Settings UI renders (contract says re-read after every mutation) —
+  fixed in WearApp. 42 re-gated PASS; every emitted canvas frame pixel-checked (pill centered
+  ±4 px, top text clear of the ring); privacy re-swept 0 leaks over 821 frames. Watch nudge
+  trap: at default scale 14 px swipes inside rows read as CLICKS (hit a gateway ✕ twice) —
+  nudge scrollbars from dead space, ≥40 px.
 
 - **2026-11-01 (batch-7: honesty round)** — owner's eye found what the gates missed. SHIPPED CHANGES:
   `/home/clay` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
