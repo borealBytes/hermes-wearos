@@ -18,6 +18,24 @@
   a separate Hermes agent *after* approving the picture.
 - **Truth before polish.** Every screenshot/GIF keyframe passes a vision review
   against its exact caption claim (§8) before it lands in `docs/screens/`.
+- **Owner identity is pixelated.** No username/home-path/coordinates in ANY
+  shipped pixel or text (owner, 2026-11-01). OCR-scan every PNG *and every GIF
+  frame* (fades included — tesseract goes blind on dissolves, finish the sweep
+  with the vision endpoint) before shipping; docs text writes paths as
+  `/run/media/<user>/…`. Reusable tool: `pixelate.py` (block-pixel + blur,
+  alpha-preserving — plain `cv2.imread` strips the circle mask's alpha).
+- **Screenshots show what WORKS.** A model-picked toast must name a model that
+  actually answers (claude-fable-5.1 400s on this gateway — never on screen);
+  verify the pick by making it answer (`luna-online` pattern) before capturing.
+  A browser shot loads a REAL page (this repo's GitHub, the Dokploy board),
+  never `example.com`. Notification shots show the notification EXPANDED.
+  Settings shots scroll until the interesting rows are IN FRAME (Voice-in must
+  show every audio path incl. the whisper engine/model rows).
+- **GIF pacing is readable, not flashy.** Stills hold ~1.5 s (hero/end ~2.5 s);
+  motion where motion is real — the splash intro is cut from the SHIPPED asset
+  (`app/src/main/assets/hermes-watch-intro.mp4`), circle-cropped with
+  transparent background, ~125 ms/frame — never a still pretending to move
+  (owner blesses this "cheating": same pixels, honest motion).
 - **One generation of media in history.** After each media round: purge +
   force-push (§9).
 - **Every artifact carries the version** (owner, 2026-11-01). The single source of truth is
@@ -87,11 +105,11 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 8 | Mermaid via watchkit render | `05-mermaid.png` | S05 | shot ✓ |
 | 9 | ⌘ commands/skills overlay (`/compact` + SKILLS rows visible) | `27-commands-overlay.png` | S27 | shot ✓ |
 | 10 | Model picker stage 1 (providers) | `25-model-picker.png` NEW | S25 | shot ✓ |
-| 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 | shot ✓ |
+| 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 | re-shoot ▢ — **must name a model that answers**: gpt-6-luna pick + `luna-online` proof reply banked (`/tmp/opencode/demo/square/model-26c.png` + `-26d-verify.png`); claude-fable-5.1 400s — never show a broken pick |
 | 12 | Edit & resend | `16-edit-resend.png` | S16 | shot ✓ |
 | 13 | Stop a running answer | `07-stop-running.png` | S08 | shot ✓ |
 | 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | shot ✓ |
-| 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 | shot ✓ |
+| 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 | re-shoot ▢ — load **this repo's GitHub page** (`github.com/borealBytes/hermes-wearos`), not example.com; tap the link via blue-pixel forensics (§4) |
 | 16 | Approval card **in-session** + Approve tap | `33-approval-card.png` NEW, `34-approval-approved.png` NEW | S33, S34 | shot ✓ |
 | 17 | Sessions list (wear-demo rows) | `08-sessions.png` | S17 | shot ✓ |
 | 18 | Session search `harbor` | `21-session-search.png` | S21 | shot ✓ |
@@ -99,7 +117,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 20 | Archive (🗃 chip) | `23-archived-chip.png` | S23 | shot ✓ |
 | 21 | Unarchive ♻️ | `24-unarchive.png` | S24 | shot ✓ |
 | 22 | Settle notification (orb largeIcon, spirit stencil in bar) | `31-notify-plain.png` NEW | S31 | shot ✓ |
-| 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) | shot ✓ |
+| 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) | re-shoot ▢ — must be **EXPANDED** (action chips visible; OneUI Wear caps at Open+Clear on this watch, DENY is proven by broadcast — README wording matches); post via `notify_demo approval`, tap card once, capture |
 | 24 | Open-session deep link from notification | `09-resumed.png` | S09 | shot ✓ |
 | 25 | Agent picker (wear-demo + names OK) | `17-agent-picker.png` | S18 | shot ✓ |
 | 26 | Gateways: ● winner, tailnet/LAN failover | `11-gateways.png` | S11 | shot ✓ |
@@ -112,12 +130,12 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | shot ✓ |
 | 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | shot ✓ |
 | 35 | 🔊 voice-out mute lane (0 dB floor = speaks NOTHING, live queue cut) | (shown in 01) | S01 (release) | shot ✓ |
-| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut) | `35-splash-film.png` NEW | S35a, S35b | shot ✓ |
+| 36 | Splash intro film: held launcher icon → reveal on a MOVING film frame (`revealIsMoving`, one cut); tap-anywhere skips into the app the moment it's ready | `35-splash-film.gif` (was `.png`) | S35a, S35b | re-shoot ▢ — a real GIF cut from the SHIPPED asset (`app/src/main/assets/hermes-watch-intro.mp4`, lid-open→rise window, circle-masked, transparent bg), not a still; README img + §3 caption swap to `.gif` |
 | 37 | Splash modes in Settings (none / orb / built-in film / custom media) | `36-splash-picker.png` NEW | S36 | shot ✓ |
 | 38 | Voice-out settings: engine picker, voice + fallback, speech rate, preview | `37-voice-output.png` NEW | S37 | shot ✓ |
 | 39 | Reply volume = **dB-taper double sliders** (mute-lane pair + settings mirror, −60 dB floor) | `38-volume-db.png` NEW | S38 | shot ✓ |
 | 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | shot ✓ |
-| 41 | STT source: on-watch Vosk ⇄ Gateway · parakeet streaming | `40-stt-source.png` NEW | S40 | shot ✓ |
+| 41 | STT source: on-watch Vosk ⇄ OFF-DEVICE vendor (Google/Samsung) ⇄ Gateway whisper/parakeet engines | `40-stt-source.png` NEW | S40 | re-shoot ▢ — SCROLL the Voice-in page until EVERY audio-path row is in frame (Vosk · OFF-DEVICE vendor · gateway engine rows incl. the whisper model choice) |
 | 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | shot ✓ |
 | 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 | shot ✓ |
 | 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | shot ✓ |
@@ -125,6 +143,8 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | shot ✓ |
 | 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | shot ✓ |
 | 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
+| 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` NEW | S47 | todo ▢ — Settings ▸ ℹ️ About row (`SettingsScreen.kt` `SettingsPage.About`) |
+| 50 | Dokploy on the wrist — the browser rides the gateway box's Dokploy board (scroll down to show the services, top of the page is not the shot) | `48-browser-dokploy.png` NEW | S48 | todo ▢ — ask the agent for the Dokploy URL as a markdown link, tap it (`http://<gateway>:3001` on LAN), scroll once, capture |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -226,6 +246,38 @@ adb shell settings put global enable_display_offload 0 # else screencap returns 
 offload) — offload is disabled above; still drive a small UI animation per take.
 Assemble traps: `-ss` AFTER all `-i`; drawtext text without `:` or `'`; escape
 commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
+
+**Batch-7 recipes (2026-11-01, the honesty round):**
+
+- **Model toast (row 11):** model picker → provider → pick ONE that answers
+  (this box: gpt-6-luna under the ChatGPT/Codex provider); toast lands on the
+  chat screen — capture THERE; then send `Reply with exactly: <token>` and
+  confirm the reply in logcat (`finish run=… error=false len=…`) BEFORE trusting
+  the shot. Restore model to gateway default afterwards.
+- **Browser rows (15 + 50):** ask wear-demo for exactly one markdown link
+  (repo GitHub / Dokploy board `http://<gateway>:3001`); uiautomator reports
+  bogus bounds inside Compose text — locate the link by BLUE-PIXEL FORENSICS
+  (find saturated-blue text pixels in the frame, tap their centroid), verify
+  the browser tile appears in the shade, capture the loaded page (scroll once
+  for Dokploy).
+- **Expanded approval (23):** `-e notify_demo approval` → swipe-down shade →
+  tap the card ONCE (OneUI expands in place: Open + Clear) → screencap. Deny
+  the demo run afterwards: `am broadcast -n dev.hermes.wearos/.notify.ApprovalNotificationReceiver -a dev.hermes.wearos.DENY`.
+- **Voice-in scroll (41):** Settings ▸ Voice in, then swipe the list up until
+  the GATEWAY engine rows (whisper model choice incl.) are visible; capture
+  with the local rows still partly in frame.
+- **About page (49):** Settings ▸ ℹ️ About; nothing to scroll — but re-read the
+  version line against root `VERSION` before shipping.
+- **Privacy pixelator:** OCR every artifact (tesseract tsv, word boxes);
+  pixelate hits (block ≥ height/3 + blur, ALPHA-PRESERVING via
+  `IMREAD_UNCHANGED` + write back the BGRA); for GIFs extract with
+  `-fps_mode passthrough`, mask hit frames AND the ±fade frames around each
+  hit (confirm fades with the vision endpoint — OCR lies there), remux via
+  palettegen/paletteuse, re-extract and re-OCR the final GIF = ZERO hits.
+- **Walkthrough GIF (no master needed):** compose from `docs/screens/` stills +
+  caption pills (`canvas_build.py` fonts/patterns) + intro-motion frames cut
+  from the shipped asset; ~1500 ms still holds, ~2500 ms hero/end, ~125 ms
+  motion frames; burn the `v<VER> · wear-demo` bug.
 
 ## 5. Design system (Nous Hermes-brand)
 
@@ -330,6 +382,9 @@ bottom-right bug (`v<VER> · wear-demo`) rides every frame of both.
    exact claim, fresh filename, T=0, single claim.
 3. **Privacy pass:** film + shots contain only wear-demo content (§0 rule 1);
    reviewer prompt includes the seeded-title whitelist; anything else = fail.
+   Plus the ID scan: OCR every shipped PNG and EVERY GIF frame (fades checked
+   by vision) for username/home-path/coordinates — zero hits or it doesn't ship;
+   docs text keeps `/run/media/<user>/…`.
 4. **Captions:** every README row `refreshed` in §3, text matches pixels.
 5. Tests green (`gradle :app:testDebugUnitTest`).
 
