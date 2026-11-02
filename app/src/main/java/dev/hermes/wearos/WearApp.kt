@@ -539,6 +539,8 @@ class WearApp : Application() {
                 agentKeys = base?.agentKeys.orEmpty(),
             )
             settings.saveGateway(gw, select = false)
+            refreshGatewayMirror() // the mirror's contract is "re-read after every mutation" — the dev
+            // upsert was the one writer skipping it (Settings ▸ Gateways kept showing the old list).
             Log.i(TAG, "add_gw ok '${gw.label}' api=${bits[1]}")
         }
 
