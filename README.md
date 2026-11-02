@@ -147,7 +147,7 @@ respect.
 
 | | |
 |---|---|
-| <img src="docs/screens/35-splash-film.png" width="180"/> | <img src="docs/screens/36-splash-picker.png" width="180"/> |
+| <img src="docs/screens/35-splash-film.gif" width="180" alt="The splash film itself, circle-masked and looping: the pocket-watch lid springs open, eclipse light pours out, and Hermes rises through it — the real intro movie, not a still"/> | <img src="docs/screens/36-splash-picker.png" width="180"/> |
 | **A cold start opens on a moving film frame** — the intro film plays and the app *reveals itself mid-motion inside the film* (`revealIsMoving`, one clean cut), so the splash is a doorway, not a wallpaper. Held from the launcher it rides the same film. **Tap anywhere while it plays and you're in** — the tap cuts the film and lands you in the app the moment it's ready, so the 14 s intro never stands between you and an ask. And the film is strictly for fun: the owner's first fully AI-generated video, made locally end to end (Qwen Image stills, MiniMax motion, stitched on the same box) — and it has audio. Fun. | **Splash modes are yours** — Settings ▸ Display: the built-in film, a static frame, your own picked media, or none at all. Markdown, launch splash, and the orb live on this one page. |
 | <img src="docs/screens/37-voice-output.png" width="180"/> | <img src="docs/screens/38-volume-db.png" width="180"/> |
 | **Voice out, fully on-device** — the engine picker, system voice with fallback, reply speed (this wrist reads at 1.81×), and a preview button, all on one Settings page. | **Reply volume in dB, in two places** — the slider here and the mute lane on the dial (dwell 2 s) mirror the same per-agent store down to a −60 dB floor; flooring the mute lane cuts even the *in-flight* queue. |
@@ -262,6 +262,32 @@ endpoint begins below:
 
 <img src="docs/screens/11-gateways.png" width="220" alt="Gateways manager: two saved gateway rows with live probe dots, the winner selected, an add row, and the Base URL editor label for the active entry beginning below"/>
 
+## What it weighs — and why it never grows
+
+Compiled today (debug build — the R8 hardening pass is on the roadmap): the APK is **≈60 MB**,
+and the watch's own numbers say what that is made of:
+
+| What | Size | Honest footnote |
+|---|---|---|
+| dex (your code, unshrunk) | ~46 MB | debug builds skip R8 entirely — this is the fat part, and the roadmap's release pass shrinks it hardest |
+| Vosk JNI (`libvosk.so`, 2 ABIs) | ~18 MB | the STT engine binary; x86_64 rides the emulator build for free |
+| splash intro film | 0.9 MB | yes, the fun part is under a megabyte |
+| resources + everything else | ~1 MB | |
+
+Optional pieces live OUTSIDE the APK: the Vosk acoustic model is **68 MB** pushed once into the
+app's files dir (`scripts/get-vosk-model.sh`; the Settings ▸ About page tells you whether it's
+there, and deleting it just falls back to vendor/gateway STT).
+
+**The part watches usually die of — cache creep — doesn't exist here.** The app writes no disk
+cache at all (the entire `cache/` dir after a full day of streaming, images, and voice: **25 KB**):
+mermaid and image cards render from streamed bytes held in memory, custom splash media is read
+*in place* through its persistable URI (never copied), and the body-snapshot cache is server-side
+on your watchkit with a freshness cap — expiring on the gateway, not on your wrist. Chat history
+lives where chat history belongs: in the gateway's session store, of which the watch keeps nothing
+but the session id it's riding. Six months from install, the app's footprint is the same
+kilobytes it shipped with. The only thing that can grow your watch's storage is the next app you
+install.
+
 ## Body tools (opt-in, owner-off by default)
 
 The watch can feed its own sensors to the agent — behind independent toggles, all default **off**.
@@ -296,8 +322,8 @@ Every knob is on-device, and there are no hidden ones:
 |---|---|
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
 | **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s — the key matrix under Gateways shows ✓ per agent), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, launch-splash modes, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
-| <img src="docs/screens/13-launcher-icon.png" width="180"/> | <img src="docs/screens/15-settings-tail.png" width="180"/> |
-| **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. | **Support without a support line** — the Settings tail puts the shipped version (`v0.6.0`), STT model presence, and push status on the watch itself; when something is off, you read it there. |
+| <img src="docs/screens/13-launcher-icon.png" width="180"/> | <img src="docs/screens/47-about-screen.png" width="180"/> |
+| **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. | **Support without a support line** — Settings ends in an About page that states its own truth: shipped version, STT model presence, license, and who made it; when something is off, you read it there, on the wrist, offline. |
 
 ## Install — let your agent do it
 
