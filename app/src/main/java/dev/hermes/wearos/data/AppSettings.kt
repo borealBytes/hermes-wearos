@@ -2,6 +2,7 @@ package dev.hermes.wearos.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -62,8 +63,11 @@ class AppSettings(private val context: Context) {
         private val KEY_SESSIONS_TS = longPreferencesKey("gw_sessions_ts")
         // OWNER BATCH 2 last-agent memory (default `wear`; see loadProfile()).
         private val KEY_CURRENT_AGENT = stringPreferencesKey("current_agent")
-        // PINCH FONT-SCALE (Layout D epic): persisted text/type multiplier 0.75×–1.6× (FontScale).
+        // PINCH FONT-SCALE (Layout D epic): persisted text/type multiplier 0.55×–1.6× (FontScale).
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
+        private val KEY_MEDIA_QUALITY = intPreferencesKey("media_quality")
+        private val KEY_MEDIA_STEREO = booleanPreferencesKey("media_stereo")
+        private val KEY_MEDIA_AUDIO_KBPS = intPreferencesKey("media_audio_kbps")
         // W1-W4 per-tool body switches (SPEC §5 "all OFF until switched" — owner-locked default).
         val BODY_TOOL_KEYS = listOf("watch_heart_rate", "watch_steps", "watch_sleep", "watch_spo2", "watch_location")
         private val KEY_BODY_HR = booleanPreferencesKey("body_watch_heart_rate")
@@ -493,7 +497,7 @@ class AppSettings(private val context: Context) {
 
     /**
      * PINCH FONT-SCALE (Layout D epic): transcript TEXT/MARKDOWN multiplier, snapped to the 0.05
-     * grid and clamped 0.75×–1.6× by [FontScale]. Pinch anywhere in the message area changes it;
+     * grid and clamped 0.55×–1.6× by [FontScale]. Pinch anywhere in the message area changes it;
      * double-tap empty transcript resets to 1.0; Settings ▸ Display shows it. StateFlow mirror so
      * the chat re-renders live (same pattern as markdown rendering above).
      */
@@ -511,6 +515,42 @@ class AppSettings(private val context: Context) {
 
     /** watchkit helper daemon (server/watchkit): mermaid render + STT fallback; token via Settings/dev hook. */
     suspend fun mermaidBaseUrl(): String = context.dataStore.data.first()[KEY_WATCHKIT_URL] ?: DEFAULT_WATCHKIT_URL
+
+    /**
+     * MEDIA SCALING (owner 2026-11-02, media epic): the three knobs the watchkit /media endpoint
+     * reshapes A/V with — [mediaQuality] 0..100 (bandwidth-vs-clarity slider; server maps to
+     * 360p/480p/540p presets), [mediaStereo] (mono default for the watch speaker; stereo for BT
+     * headphones), and [mediaAudioKbps] (32..128 AAC). StateFlow mirrors feed Watchkit.mediaUrl so
+     * every card/player URL carries the current shape and a settings change re-fetches. Defaults
+     * are the watch-shaped ones, not the source's.
+     */
+    private val _mediaQuality = MutableStateFlow(50)
+    val mediaQuality: StateFlow<Int> = _mediaQuality
+    private val _mediaStereo = MutableStateFlow(false)
+    val mediaStereo: StateFlow<Boolean> = _mediaStereo
+    private val _mediaAudioKbps = MutableStateFlow(64)
+    val mediaAudioKbps: StateFlow<Int> = _mediaAudioKbps
+    suspend fun loadMediaPrefs() {
+        val s = context.dataStore.data.first()
+        _mediaQuality.value = (s[KEY_MEDIA_QUALITY] ?: 50).coerceIn(0, 100)
+        _mediaStereo.value = s[KEY_MEDIA_STEREO] ?: false
+        _mediaAudioKbps.value = (s[KEY_MEDIA_AUDIO_KBPS] ?: 64).coerceIn(32, 192)
+    }
+    suspend fun setMediaQuality(v: Int) {
+        val q = v.coerceIn(0, 100)
+        context.dataStore.edit { it[KEY_MEDIA_QUALITY] = q }
+        _mediaQuality.value = q
+    }
+    suspend fun setMediaStereo(v: Boolean) {
+        context.dataStore.edit { it[KEY_MEDIA_STEREO] = v }
+        _mediaStereo.value = v
+    }
+    suspend fun setMediaAudioKbps(v: Int) {
+        val k = v.coerceIn(32, 192)
+        context.dataStore.edit { it[KEY_MEDIA_AUDIO_KBPS] = k }
+        _mediaAudioKbps.value = k
+    }
+
     suspend fun watchkitToken(): String = context.dataStore.data.first()[KEY_WATCHKIT_TOKEN] ?: ""
     suspend fun setMermaidBaseUrl(v: String) = context.dataStore.edit { it[KEY_WATCHKIT_URL] = v.trim().trimEnd('/') }.let { }
     suspend fun setWatchkitToken(v: String) = context.dataStore.edit { it[KEY_WATCHKIT_TOKEN] = v.trim() }.let { }

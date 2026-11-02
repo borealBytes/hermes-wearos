@@ -103,6 +103,8 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
 
         is MdBlock.Image -> ImageBlock(block.alt, block.target, blockKey, modifier)
 
+        is MdBlock.Media -> MediaBlock(block, blockKey, modifier)
+
         is MdBlock.Table -> if (block.gridable) {
             // True mini-grid for exactly-2 labelled columns: header + hairline + rows (F3 note).
             Column(modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -307,6 +309,66 @@ private fun MermaidBlockView(code: String, blockKey: Any, modifier: Modifier) {
             style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
         )
     }
+}
+
+/**
+ * MEDIA EPIC inline card (owner 2026-11-02: "small, inline, you could click play — video
+ * fullscreen on tap, hardware back returns to the session"). Videos show the watchkit
+ * poster frame (ffmpeg one-JPEG grab) when one can be made, else a 🎬 glyph card; audio is
+ * always the 🎵 glyph card. Tap opens [MediaPlayDialog] — a Dialog, so the transcript stays
+ * composed underneath and back lands exactly where the finger was. Poster fetch re-keys on
+ * watchkit config + media prefs like ImageBlock re-keys on config, so pushed tokens and
+ * Settings ▸ Media changes refresh cards live.
+ */
+@Composable
+private fun MediaBlock(block: MdBlock.Media, blockKey: Any, modifier: Modifier) {
+    val cfg by Watchkit.config.collectAsState()
+    val prefs by Watchkit.mediaPrefs.collectAsState()
+    val local = Watchkit.mediaNeedsAuth(block.target)
+    var poster by remember(block.target, cfg, prefs) { mutableStateOf<ImageBitmap?>(null) }
+    var play by remember(blockKey) { mutableStateOf(false) }
+    LaunchedEffect(block.target, cfg, prefs) {
+        poster = if (block.video && local) try { Watchkit.fetchPoster(block.target) } catch (e: Exception) { null } else null
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
+            .clickable(onClickLabel = if (block.video) "play video" else "play audio") { play = true }
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val bmp = poster
+        if (bmp != null) {
+            Box(contentAlignment = Alignment.Center) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = block.label.ifBlank { "video" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.widthIn(max = 220.dp).clip(RoundedCornerShape(8.dp)),
+                )
+                Text("▶", style = MaterialTheme.typography.title1, color = Color.White)
+            }
+        } else {
+            Text(if (block.video) "🎬" else "🎵", style = MaterialTheme.typography.title2)
+        }
+        Text(
+            block.label.ifBlank { if (block.video) "video" else "audio" },
+            style = MaterialTheme.typography.caption2.scaled(),
+            color = MaterialTheme.colors.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            if (block.video) "tap to play · fullscreen" else "tap to listen",
+            style = MaterialTheme.typography.caption3.scaled(),
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+        )
+    }
+    if (play) MediaPlayDialog(block.target, block.video, block.label, onDismiss = { play = false })
 }
 
 /**

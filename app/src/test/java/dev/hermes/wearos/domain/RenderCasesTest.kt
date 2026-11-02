@@ -18,7 +18,7 @@ class RenderCasesTest {
         assertEquals(RenderCase.Tables, RenderCase.of("tables"))
         assertEquals(RenderCase.Mermaid, RenderCase.of(" MERMAID "))
         assertNull(RenderCase.of("nonsense"))
-        assertEquals("tables,wide,mermaid,pdf,link,media,all", RenderCase.ids())
+        assertEquals("tables,wide,mermaid,pdf,link,media,av,all", RenderCase.ids())
     }
 
     @Test fun `the tables case has a five-column grid and a six-column degradation`() {
@@ -38,6 +38,8 @@ class RenderCasesTest {
         assertTrue(RenderCase.Media.markdown.contains("```mermaid"))
         assertTrue(RenderCase.Media.markdown.contains("|---"))
         assertTrue(RenderCase.Media.markdown.contains("![dial mock]"))
+        assertTrue(RenderCase.Av.markdown.contains("MEDIA:"))
+        assertTrue(RenderCase.Av.markdown.contains(".mp4"))
     }
 
     @Test fun `all concatenates the five media surfaces for one screenshot`() {

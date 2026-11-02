@@ -309,6 +309,22 @@ class WearApp : Application() {
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
                 scope.launch { settings.loadIntroVideo() } // Display ▸ launch video (SplashIntro gate)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
+                scope.launch {
+                    // Media epic: load the A/V scaling knobs and keep Watchkit's mirror current —
+                    // Settings ▸ Media changes re-shape every card/player URL without a restart.
+                    settings.loadMediaPrefs()
+                    fun push() = Watchkit.setMediaPrefs(
+                        Watchkit.MediaPrefs(
+                            settings.mediaQuality.value,
+                            mono = !settings.mediaStereo.value,
+                            audioKbps = settings.mediaAudioKbps.value,
+                        ),
+                    )
+                    push()
+                    launch { settings.mediaQuality.collect { push() } }
+                    launch { settings.mediaStereo.collect { push() } }
+                    launch { settings.mediaAudioKbps.collect { push() } }
+                }
                 scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
                 scope.launch { settings.loadAgentKeys() } // per-agent gateway keys (SPEC §12.2)
                 scope.launch { settings.loadCommandUsage() } // slash-overlay recents (SPEC §12.3)

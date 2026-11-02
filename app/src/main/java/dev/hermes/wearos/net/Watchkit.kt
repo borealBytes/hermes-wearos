@@ -222,6 +222,65 @@ object Watchkit {
         return bmp.asImageBitmap().also { cache.put(key, it) } // oversize entries simply don't cache
     }
 
+    // ─── MEDIA EPIC (owner 2026-11-02) ─────────────────────────────────────────────────────
+    /**
+     * The A/V shape the watch asks watchkit /media for. Mirrored from AppSettings by WearApp so
+     * every media URL is built with the CURRENT knobs and a Settings change re-keys the cards.
+     */
+    data class MediaPrefs(val q: Int = 50, val mono: Boolean = true, val audioKbps: Int = 64)
+    private val _mediaPrefs = MutableStateFlow(MediaPrefs())
+    val mediaPrefs: StateFlow<MediaPrefs> = _mediaPrefs
+    fun setMediaPrefs(p: MediaPrefs) { _mediaPrefs.value = p }
+
+    /** true ⇒ route through watchkit (bearer needed); false ⇒ public http(s), play direct. */
+    fun mediaNeedsAuth(target: String): Boolean =
+        !(target.startsWith("http://") || target.startsWith("https://"))
+
+    /** Bearer for media3's own HTTP data source (ExoPlayer does not ride OkHttp's tunnel client). */
+    fun currentToken(): String = _config.value.token
+
+    /** Fullscreen playback URL for a media target (local paths ⇒ watchkit /media, scaled per
+     *  [mediaPrefs]; remote URLs pass through untouched). */
+    fun mediaUrl(target: String): String {
+        if (!mediaNeedsAuth(target)) return target
+        val cfg = _config.value
+        val m = _mediaPrefs.value
+        return cfg.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("media")
+            .addQueryParameter("path", target)
+            .addQueryParameter("q", m.q.toString())
+            .addQueryParameter("mono", if (m.mono) "1" else "0")
+            .addQueryParameter("ab", m.audioKbps.toString())
+            .build().toString()
+    }
+
+    /**
+     * Inline-card poster frame for a LOCAL video (watchkit /media?poster=1 — ffmpeg grabs one
+     * JPEG). Remote videos get no poster (watchkit can't reach them with its own fs) — callers
+     * show the ▶ glyph card instead. Throws on any failure; the card falls back to the glyph.
+     */
+    suspend fun fetchPoster(target: String): ImageBitmap = withContext(Dispatchers.IO) {
+        val key = sha256("poster|$target")
+        (cache.get(key) as? ImageBitmap)?.let { return@withContext it }
+        val cfg = _config.value
+        val url = cfg.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("media")
+            .addQueryParameter("path", target)
+            .addQueryParameter("poster", "1")
+            .build().toString()
+        val req = Request.Builder().url(url).get()
+            .header("Authorization", "Bearer ${cfg.token}").build()
+        val bytes = clientCall(req) { r ->
+            val b = r.body?.bytes()
+            if (!r.isSuccessful || b == null || b.isEmpty())
+                throw ApiException(r.code, "poster ${r.code}: ${(b?.let { String(it) } ?: "").take(120)}")
+            b
+        }
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: throw IOException("poster decode failed (${bytes.size} B)")
+        bmp.asImageBitmap().also { cache.put(key, it) }
+    }
+
     /**
      * Agent switcher (owner ask #1): GET /agents → gateway profiles list (["default", ...]).
      * Bearer like every other watchkit endpoint; throws ApiException/IOException on any failure —

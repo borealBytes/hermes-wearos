@@ -260,6 +260,8 @@ fun SettingsScreen(
             // #13: voice-IN gets its own page (was buried in Voice out); subtitle names the
             // provider the orb will use, straight from the same in-memory truth the mic reads.
             SettingNavRow("🎤", "Voice in", SttProviders.navSummary(SttProviders.fromId(SttProviders.current))) { page = SettingsPage.VoiceIn }
+            val mediaStereo by settings.mediaStereo.collectAsState()
+            SettingNavRow("🎬", "Media", "A/V scaling · " + (if (mediaStereo) "stereo" else "mono") + " audio") { page = SettingsPage.Media }
             SettingNavRow("🎛️", "Display", "markdown · splash · orb") { page = SettingsPage.Display }
             SettingNavRow("⌚", "Watch", "body tools ${bodyTools.size} on · notifications") { page = SettingsPage.Watch }
             SettingNavRow("ℹ️", "About", "v$version · stt model") { page = SettingsPage.About }
@@ -1125,6 +1127,55 @@ fun SettingsScreen(
                 }
             }
         }
+        if (page == SettingsPage.Media) {
+            // MEDIA EPIC (owner 2026-11-02: "a slider for the video quality … an option for
+            // bitrate and stereo because with Bluetooth headphones you might want the stereo"):
+            // these knobs ride EVERY watchkit /media URL and the ffmpeg transcode matches them
+            // there (server cache keyed per shape — changing a knob re-shapes, never re-junks).
+            FieldLabel("🎬 media scaling")
+            val mediaQ by settings.mediaQuality.collectAsState()
+            val mediaStereo by settings.mediaStereo.collectAsState()
+            val mediaKbps by settings.mediaAudioKbps.collectAsState()
+            Text(
+                "Generated video/audio is shrunk on the gateway before it crosses the wire.",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+            )
+            QualitySlider(mediaQ) { v -> scope.launch { settings.setMediaQuality(v) } }
+            Text(
+                when {
+                    mediaQ < 34 -> "Small · ≤360p · ~350 kbps"
+                    mediaQ < 67 -> "Balanced · ≤480p · ~700 kbps"
+                    else -> "Sharp · ≤540p · ~1.2 Mbps"
+                },
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+            )
+            Spacer(Modifier.size(6.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Stereo audio", style = MaterialTheme.typography.caption1)
+                Switch(checked = mediaStereo, onCheckedChange = { v -> scope.launch { settings.setMediaStereo(v) } })
+            }
+            Text(
+                "Off = mono for the watch speaker; on for Bluetooth headphones.",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+            )
+            Spacer(Modifier.size(6.dp))
+            Text("Audio bitrate", style = MaterialTheme.typography.caption1)
+            // 2×2, not a 4-chip line: the round bezel clipped the wide row (Display-page lesson).
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SplashChoiceChip("32k", mediaKbps == 32) { scope.launch { settings.setMediaAudioKbps(32) } }
+                SplashChoiceChip("64k", mediaKbps == 64) { scope.launch { settings.setMediaAudioKbps(64) } }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SplashChoiceChip("96k", mediaKbps == 96) { scope.launch { settings.setMediaAudioKbps(96) } }
+                SplashChoiceChip("128k", mediaKbps == 128) { scope.launch { settings.setMediaAudioKbps(128) } }
+            }
+        }
         if (page == SettingsPage.Voice) {
             StatusLine("tts engine", ttsState.toString())
         }
@@ -1459,6 +1510,75 @@ private fun VoicePickRow(label: String, name: String, current: String, onSelect:
 }
 
 /**
+ * VIDEO-QUALITY SLIDER (media epic, owner 2026-11-02: "a slider for the video quality"): a
+ * three-stop track — Small / Balanced / Sharp — mapping onto the watchkit /media preset ladder.
+ * Same drag physics as RateSlider (no Slider component exists in wear-compose 1.4.1), commit on
+ * release so a drag never re-shapes the stream mid-finger.
+ */
+@Composable
+private fun QualitySlider(q: Int, onCommit: (Int) -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var trackW by remember { mutableStateOf(1f) }
+    val stops = listOf(0, 50, 100)
+    var level by remember(q) { mutableStateOf(q) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "video quality · " + when (level) {
+                in 0..33 -> "small"
+                in 34..66 -> "balanced"
+                else -> "sharp"
+            },
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
+                .onSizeChanged { trackW = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun applyAt(x: Float) {
+                            val raw = (x / trackW * 100).coerceIn(0f, 100f)
+                            level = stops.minByOrNull { kotlin.math.abs(it - raw) } ?: 50
+                        }
+                        applyAt(down.position.x)
+                        down.consume()
+                        while (true) {
+                            val ch = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: break
+                            applyAt(ch.position.x)
+                            ch.consume()
+                        }
+                        onCommit(level)
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            val knob = with(density) { 26.dp.toPx() }
+            Box(
+                modifier = Modifier
+                    .size(with(density) { 26.dp })
+                    .offset { IntOffset(((trackW - knob) * (level / 100f)).roundToInt(), 0) }
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colors.primary),
+            )
+        }
+        Text(
+            "small ←──→ sharp",
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.4f),
+        )
+    }
+}
+
+/**
  * REPLY-SPEED SLIDER (owner 2026-10-29, replacing same-day chip buttons that clipped the round
  * face): a drag-everywhere track — touch anywhere jumps the knob there, keep dragging to fine
  * tune, release to ear-test. Slow (0.5×) sits left, fast (2.0×) right; the mapping is pure
@@ -1632,6 +1752,9 @@ enum class SettingsPage(val title: String) {
     // settings so we can set the default one we want to use on the orb"*): the STT provider
     // picker moved OUT of the voice-out page into its own nested page.
     VoiceIn("Voice in"),
+    // MEDIA EPIC (owner 2026-11-02): the A/V scaling knobs (video quality slider + mono/stereo +
+    // audio bitrate) the watchkit /media endpoint reshapes generated clips with.
+    Media("Media"),
     About("About"),
 }
 
