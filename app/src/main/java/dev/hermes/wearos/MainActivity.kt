@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -74,6 +75,7 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.SwipeToDismissBox
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
+import dev.hermes.wearos.domain.RotaryVolume
 import dev.hermes.wearos.ui.AgentPickerDialog
 import dev.hermes.wearos.ui.ApprovalModeDialog
 import dev.hermes.wearos.ui.ModelPickerDialog
@@ -143,6 +145,37 @@ class MainActivity : ComponentActivity() {
     /** M5 U1: POST_NOTIFICATIONS ask on first launch (API 33+). Denied is fine: app still works. */
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) Log.w(TAG, "notifs denied")
+    }
+
+    /**
+     * BEZEL VOLUME (SPEC §12.10): the rotating bezel arrives as KEYCODE_VOLUME_UP/DOWN; while a
+     * player sheet owns the screen [RotaryVolume] steers the PLAYER and the key is consumed —
+     * no system HUD, no system stream move. With no player bound this Activity never touches
+     * volume keys: the bezel is plain old system volume. (The dev hook `-e volume <±n>` fires the
+     * same path for the bezel-less emulator.)
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val steps = when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> 1
+            KeyEvent.KEYCODE_VOLUME_DOWN -> -1
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        if (RotaryVolume.rotate(steps)) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            RotaryVolume.active
+        ) return true
+        return super.onKeyUp(keyCode, event)
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            RotaryVolume.active
+        ) return true
+        return super.onKeyLongPress(keyCode, event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

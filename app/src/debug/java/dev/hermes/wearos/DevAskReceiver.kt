@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
  *  touches, so this is how demo scripts reach Settings and the Chats list),
  *  -e ptt_demo <partial|off> (forces the PTT overlay for screenshots; NEVER -ez — see handler),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
+ *  -e volume <±N> (fire the bezel-volume lane N detents — player volume, SPEC §12.10),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
  *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
@@ -170,6 +171,14 @@ class DevAskReceiver : BroadcastReceiver() {
         intent?.getStringExtra("fontscale")?.let {
             // -e fontscale 1.4 → persist+apply; non-numeric ("reset") → back to 1.0.
             WearApp.Graph.devSetFontScale(it)
+            return
+        }
+        intent?.getStringExtra("volume")?.let {
+            // -e volume 3 / -e volume -2 → fire the BEZEL VOLUME lane (SPEC §12.10) the exact way
+            // a detent does; the emulator has no bezel, this is the only proof of that wire.
+            val steps = it.trim().toIntOrNull() ?: 1
+            val took = dev.hermes.wearos.domain.RotaryVolume.rotate(steps)
+            Log.i("HermesWear", "volume hook steps=$steps taken=$took")
             return
         }
         if (intent?.hasExtra("viewer_demo") == true) {

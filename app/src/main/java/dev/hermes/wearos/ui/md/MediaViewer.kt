@@ -79,6 +79,19 @@ fun ZoomableMediaViewer(
     bitmap: ImageBitmap,
     caption: String,
     onDismiss: () -> Unit,
+    initialScale: Float = MediaZoom.FIT,
+) = ZoomableMediaViewer(androidx.compose.ui.graphics.painter.BitmapPainter(bitmap), caption, onDismiss, initialScale)
+
+/**
+ * PAINTER-CORED viewer: the GIF epic (owner 2026-11-02: "animated GIFs are not rendering") routes
+ * [AnimatedDrawablePainter] here so the film animates at full res, and stills keep the identical
+ * pinch/pan/double-tap lane — the gesture code never notices which painter it drives.
+ */
+@Composable
+fun ZoomableMediaViewer(
+    painter: androidx.compose.ui.graphics.painter.Painter,
+    caption: String,
+    onDismiss: () -> Unit,
     // The dev hook (`-e viewer_demo <scale>`) opens the viewer BELOW fit for adb screenshots;
     // production callers pass nothing and land at fit like always.
     initialScale: Float = MediaZoom.FIT,
@@ -218,7 +231,7 @@ fun ZoomableMediaViewer(
                 },
         ) {
             Image(
-                bitmap = bitmap,
+                painter = painter,
                 contentDescription = caption.ifBlank { "media" },
                 contentScale = ContentScale.Fit,
                 modifier = Modifier

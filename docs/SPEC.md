@@ -888,6 +888,77 @@ makes a **desktop-CLI** session (`source='local'`) API-readable but API-RUN-REFU
 `permission_denied`. The watch surfaces that as a one-line read-only explanation and does NOT
 auto-fork (owner: “an auto-fork makes a fucking mess”). Gateway ask below (§13.5 #4).
 
+### 12.9 Flawless hand-off — the same chat from either place (`domain/ChatSession.kt` + watchkit `/session_promote`)
+
+Owner 2026-11-02: *"I want to pick up a chat from the desktop on my watch, and a chat from the
+watch on the desktop, and continue it from **either** place — same chat. WatchKit is just there to
+render images/video/audio for the wrist; that should not be what blocks hand-off."* The doctrine:
+
+- **The gateway is the ONLY session/run authority.** The watch talks to the gateway directly over
+  the embedded tailnet node (`/v1/runs`, `/api/sessions`, `/v1/events` SSE) — never through
+  watchkit. Adoption binds the SAME gateway session id (`resumeGatewaySession`), so a desktop chat
+  and a watch chat are already the same transcript once a run is admitted. This is what makes
+  hand-off symmetric: there is no second copy to keep in sync.
+- **History backfill goes GATEWAY-FIRST** (`HermesApi.sessionMessagesJson` →
+  `GET {lane}/api/sessions/{id}/messages`, bearer-authed, cross-source). It rides the SAME key an
+  ask uses, so it survives a watchkit outage — the 2026-11-02 “history unavailable — continuing
+  live” wave was one dead sidecar taking history down with it; watchkit's keyless
+  `/session_messages` is now the FALLBACK, not the only door (it still wins for profiles the watch
+  can't sign for — SPEC §12.2).
+- **WatchKit is a render sidecar, not a proxy.** It does the things the gateway does NOT: `/img`
+  (on-watch-decoded scaling), `/media` (H.264+AAC / Ogg-Opus pre-shrink), `/render/mermaid`, STT,
+  the health store, and the keyless `state.db` reads. It has no bearing on whether a run is
+  admitted — it is the same reason the DESKTOP renders the same markdown without it.
+- **The cross-source door is PROMOTE, not fork.** A desktop-CLI chat refuses an API-lane run
+  (`session_api.py::bind_api_steps` → 409 `permission_denied`) until it is on the API lane. The
+  watch promotes it — a ONE-COLUMN `UPDATE sessions SET source='api_server'` through watchkit
+  (`POST /session_promote`, this repo) — then resubmits under the SAME `Idempotency-Key`. Same row,
+  same id, same transcript; the chat simply appears in the desktop's API spot like a watch chat
+  always did. **Never a fork** (owner doctrine). If the desktop still holds the session live in
+  memory, the promote's resubmit 409s and the watch REVERTS its own flip, telling the owner to
+  close it on the desktop first — the flip is always reversible, so the desktop's own view never
+  drifts. Owner surfaces only (`desktop/tui/webui/cli/local`); cron/subagent rows are machine-owned
+  and refuse.
+- **`-e resume_session <id>` + a real desktop session, proven both ways:** a fresh desktop session
+  adopted-and-asked from the wrist promoted `local`→`api_server` and ran (interleaved user/
+  assistant, count 4→6, zero new rows, source `api_server` after). A session the watch ALREADY owns
+  (`desk-continue-probe-1`) answered from both ends as ONE row with no fork at all. The gateway's
+  native door (§13.5 #4: `bind_api_steps` admitting a `local` row with no live holder, or a
+  `POST /api/sessions/{id}/continue` CHAIN) would retire the watch-side flip; the watch is
+  client-ready — adoption binds the same id today and only needs the 409 to become a 200.
+
+### 12.10 The media lane — animated GIFs, pinch video, bezel volume (`ui/md/AnimatedImage.kt`,
+`PinchPlayerView.kt`, `domain/RotaryVolume.kt`)
+
+Owner 2026-11-02, three asks on the media surface, all rendered by the watch (gateway never
+transforms media on the wrist path):
+
+- **Animated GIFs** were frozen because every image path decoded to a still `Bitmap`
+  (BitmapFactory = first frame only). Now the ORIGINAL container is decoded via
+  `ImageDecoder.decodeDrawable` → an `AnimatedImageDrawable` when the bytes move, drawn through
+  `AnimatedDrawablePainter`. Both newer-than-API-27 animation hooks
+  (`setInvalidateCallback`, `advance`) are `@hide`, so frames are driven the classic PUBLIC way:
+  `start()` on the drawable + a `Drawable.Callback` (public since API 1) that bumps an `Int` the
+  painter reads in `onDraw` — one state read = one redraw, not a tree recompose. A cheap
+  header sniff (`looksAnimated`: any GIF, or WebP with the VP8X animation bit) decides inline
+  ANIMATED vs sampled-still without decoding a full Bitmap for every photo. The card shows a
+  `GIF` chip; tap opens the animated viewer. Playback is bound to composition — a GIF scrolled
+  off the transcript stops costing anything.
+- **Pinch-to-zoom VIDEO.** The image viewer already had a Compose gesture lane, but a
+  media3 `PlayerView` is an interop'd child that consumes every touch for its controller, so a
+  `pointerInput` above it only sees crumbs. The lane therefore lives IN the view: `PinchPlayerView`
+  intercepts on the 2nd finger (`ACTION_POINTER_DOWN`) and single-finger drags once zoomed, and
+  transforms the View's own `scaleX`/`translation` (GPU, no relayout). Untouched, a tap still
+  shows/hides the transport. Scale ∈ [1,3], pivot at center, pan clamped by the SAME
+  `MediaZoom.clampOffset` math the image viewer uses; double-tap toggles fit↔2.5×.
+- **Bezel volume.** *"enable bezel scrolling for volume up and down — if we're playing music on
+  the wrist that's how we do it."* On Galaxy Watch the rotating bezel arrives as
+  KEYCODE_VOLUME_UP/DOWN; `MainActivity.onKeyDown` routes those to `RotaryVolume` while a player
+  sheet owns the screen, so the bezel steers the PLAYER's `volume` (5 % detents on the dial grid,
+  one haptic tick per step, a `🔊 NN%` readout that fades) and the system stream never moves.
+  Close the player, unbind, and the bezel is plain system volume again. `-e volume <±N>` drives the
+  exact same path for the bezel-less emulator.
+
 ## 13. Next steps — branch 2 (media + voice quality), scoped 2026-10-26
 
 Agreed split: dial + agent switching + search land first and get a wrist review; everything below
@@ -1003,7 +1074,9 @@ before the final JSONL leaves stdout — cleanup then cut it; it awaits `close` 
    or expose `POST /api/sessions/{id}/continue {from:<session_id>}` that CHAINS (not forks:
    `parent_session_id` lineage, transcript carried, one conversation in both UIs — what
    `continued_api_session` already does across API generations). The watch is client-ready:
-   adoption binds the same id today and simply needs the 409 to become a 200.
+   adoption binds the same id today and simply needs the 409 to become a 200. (Interim shipped:
+   the watch promotes the row itself — one reversible `source` UPDATE through watchkit
+   `/session_promote`, §12.9 — and would retire that flip the day this door lands.)
 
 
 ## 14. Owner batch 4 (2026-10-29/30 night): circle-meat geometry, orb-flanking approvals, STT backends, edge scroll

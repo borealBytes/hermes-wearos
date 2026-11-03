@@ -207,15 +207,59 @@ class ChatSession(
      *
      * Everything else keeps its own message — no lying about real errors.
      */
+    /** Why the last promote attempt didn't land (SPEC §12.9); consumed by [explain] on the 409. */
+    @Volatile
+    private var handoffNote = ""
+
+    /**
+     * The §12.9 hand-off door: promote the adopted session's `source` row through watchkit and
+     * resubmit the SAME run under the SAME Idempotency-Key. Returns the accepted run, or null
+     * with `handoffNote` set to the honest reason — the caller then surfaces the original 409.
+     * A flip that the gateway still refuses (desktop holds the session live in memory) is
+     * REVERTED, so the desktop's own list never drifts: the chat stays exactly where it was
+     * until it's closed there and asked from the wrist once more.
+     */
+    private suspend fun handoffPromote(
+        api: HermesApi, input: String, session: String, idem: String, model: String, profile: String,
+    ): HermesApi.RunAccepted? {
+        val prof = profile.ifBlank { settings.profileSync() }
+        val res = runCatching { Watchkit.promoteSession(prof, session) }
+            .getOrElse {
+                handoffNote = "watchkit is down — desktop chats stay read-only until it's back"
+                return null
+            }
+        Log.i(TAG, "handoff promote session=$session was=${res.was} changed=${res.changed} reason=${res.reason}")
+        if (!res.ok) { handoffNote = "promote refused: ${res.reason.ifBlank { res.was }}"; return null }
+        if (!res.changed) { // row already api_server → the 409 came from the LIVE desktop hold
+            handoffNote = if (res.was == "api_server")
+                "that chat is open on the desktop right now — close it there, then ask from the watch"
+            else "promote refused: ${res.reason.ifBlank { res.was }}"
+            return null
+        }
+        return try {
+            api.submitRun(input, session, idem, model).also { handoffNote = "promoted:$res.was" }
+        } catch (e: Exception) {
+            runCatching { Watchkit.promoteSession(prof, session, revertTo = res.was) } // undo OUR flip
+            if (e is ApiException && e.code == 409)
+                handoffNote = "that chat is live on the desktop — close it there, then ask from the watch"
+            else handoffNote = "promoted, but the retry failed: ${e.message ?: "network"}"
+            null
+        }
+    }
+
     private fun explain(e: Throwable): String {
         val code = (e as? ApiException)?.code
         if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
         // 409 permission_denied on submit = the session-binding doctrine (gateway session_api.py):
-        // a session whose stored source is the desktop CLI (`local`) refuses an API-lane run.
-        // ADOPT-ONLY: read it, chat in it once the desktop itself moves it to an API chat — the
-        // watch NEVER forks it automatically (owner 2026-11-02: "an auto-fork makes a mess; a
-        // desktop session continues in the desktop AND on the watch"). Gateway ask: SPEC §13.5.
+        // a session whose stored source is the desktop CLI (`local`/`desktop`/…) refuses an
+        // API-lane run until the §12.9 hand-off promotes it. The promote attempt (ask's submit
+        // path) leaves the exact reason in `handoffNote`; without it (no watchkit at all) the
+        // read-only line stays honest. The watch NEVER forks (owner 2026-11-02: "an auto-fork
+        // makes a mess; a desktop session continues in the desktop AND on the watch").
         if (code == 409 && (e.message ?: "").contains("permission_denied")) {
+            val note = handoffNote
+            handoffNote = ""
+            if (note.isNotEmpty()) return note
             val s = store.get(activeId)?.sessionTitle?.take(20) ?: "this chat"
             return "read-only on the wrist: $s was made by the desktop CLI — the gateway only lets " +
                 "the API lane run API-created chats. Ask from the desktop, or start a watch chat."
@@ -461,9 +505,24 @@ class ChatSession(
                     // the gateway's next endpoint BEFORE retrying; the Idempotency-Key makes the
                     // retry a replay, never a double-run, whichever endpoint lands the request.
                     Log.w(TAG, "submit failed (${e.message}) — endpoint failover check")
+                    handoffNote = ""
                     val nextBase = advanceEndpoint(a.baseUrl)
                     val retryApi = nextBase?.let { apiTo(it) } ?: run { delay(1_500); a }
-                    retryApi.submitRun(trimmed, session, idem, modelSel)
+                    try {
+                        retryApi.submitRun(trimmed, session, idem, modelSel)
+                    } catch (e2: Exception) {
+                        // FLAWLESS HAND-OFF (SPEC §12.9): a desktop-CLI chat refuses the API lane
+                        // (409 permission_denied — gateway binding doctrine). ONE explicit promote
+                        // attempt: flip the same row's source via watchkit and resubmit under the
+                        // SAME Idempotency-Key (nothing was ever accepted, so no double-run is
+                        // possible). Same session id forever after — NEVER an auto-fork.
+                        if (e2 is ApiException && e2.code == 409 &&
+                            (e2.message ?: "").contains("permission_denied") && session.isNotEmpty()
+                        ) {
+                            handoffPromote(retryApi, trimmed, session, idem, modelSel, metaNow.profile)
+                                ?: throw e2
+                        } else throw e2
+                    }
                 }
                 store.update(activeId) { it.copy(lastRunId = accepted.runId, updatedAt = System.currentTimeMillis()) }
                 settings.setLastRun(accepted.runId) // legacy key: pre-registry resume path (migration source)
@@ -1148,6 +1207,25 @@ class ChatSession(
     private fun backfillHistory(meta: ChatMeta, localTranscriptSize: Int, profileHint: String) {
         if (!SessionHistory.shouldBackfill(meta.sessionTitle, localTranscriptSize)) return
         scope.launch {
+            // GATEWAY FIRST (SPEC §12.9): GET {lane}/api/sessions/{id}/messages rides the SAME
+            // bearer as an ask, so a watchkit outage can no longer sink the backfill — the whole
+            // "history unavailable — continuing live" wave of 2026-11-02 was one dead sidecar
+            // taking history down with it. watchkit's keyless read stays the fallback for
+            // profiles the watch can't sign for (§12.2) and lanes that 404 the id.
+            val gw = scope.async(Dispatchers.IO) {
+                SessionHistory.parseGateway(
+                    api().sessionMessagesJson(meta.sessionTitle, SessionHistory.MAX_MESSAGES))
+            }
+            val gatewayMsgs = try {
+                withTimeoutOrNull(historyFetchTimeoutMs) { gw.await() }
+            } catch (e: Exception) {
+                Log.i(TAG, "gateway history probe failed: ${e.message}"); null
+            }
+            gw.cancel()
+            if (!gatewayMsgs.isNullOrEmpty()) {
+                stamp(meta, gatewayMsgs, settings.profileSync())
+                return@launch
+            }
             for (p in SessionHistory.profileProbes(profileHint.ifBlank { meta.profile })) {
                 // async on the CHAT scope (not withContext children — those would have to finish
                 // before the timeout could return): the await below is what the leash controls.
@@ -1161,18 +1239,7 @@ class ChatSession(
                 }
                 probe.cancel()
                 if (msgs.isNullOrEmpty()) continue
-                val stamped = ArrayList<ChatMessage>(msgs.size + 1)
-                stamped += ChatMessage(nextId(), ChatMessage.Role.System, SessionHistory.captionLine(msgs.size, p))
-                msgs.forEach { stamped += ChatMessage(nextId(), it.role, it.text) }
-                if (activeId == meta.id) {
-                    stamped += messageLog // messages the user sent during the fetch stay newest/bottom
-                    messageLog = stamped
-                    _state.value = _state.value.copy(messages = messageLog.toList())
-                    store.saveTranscript(meta.id, messageLog)
-                } else if (store.loadTranscript(meta.id).isEmpty()) {
-                    store.saveTranscript(meta.id, stamped) // navigated away mid-fetch: next open has it
-                }
-                Log.i(TAG, "history backfill n=${msgs.size} chat=${meta.id} session=${meta.sessionTitle} profile=$p")
+                stamp(meta, msgs, p)
                 return@launch
             }
             Log.i(TAG, "history backfill unavailable chat=${meta.id} session=${meta.sessionTitle}")
@@ -1180,6 +1247,22 @@ class ChatSession(
                 android.widget.Toast.makeText(app, "history unavailable — continuing live", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** Prepend caption + history under whatever the user already typed; navigated-away chats get it on disk. */
+    private fun stamp(meta: ChatMeta, msgs: List<ChatMessage>, profile: String) {
+        val stamped = ArrayList<ChatMessage>(msgs.size + 1)
+        stamped += ChatMessage(nextId(), ChatMessage.Role.System, SessionHistory.captionLine(msgs.size, profile))
+        msgs.forEach { stamped += ChatMessage(nextId(), it.role, it.text) }
+        if (activeId == meta.id) {
+            stamped += messageLog // messages the user sent during the fetch stay newest/bottom
+            messageLog = stamped
+            _state.value = _state.value.copy(messages = messageLog.toList())
+            store.saveTranscript(meta.id, messageLog)
+        } else if (store.loadTranscript(meta.id).isEmpty()) {
+            store.saveTranscript(meta.id, stamped) // navigated away mid-fetch: next open has it
+        }
+        Log.i(TAG, "history backfill n=${msgs.size} chat=${meta.id} session=${meta.sessionTitle} profile=$profile")
     }
 
     /**

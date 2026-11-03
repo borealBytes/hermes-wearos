@@ -518,6 +518,18 @@ private fun ImageBlock(alt: String, target: String, blockKey: Any, modifier: Mod
         // bitmap from the shared bytes (the card bitmap shows while it loads, then swaps —
         // deep zoom stays sharp because the pixels are the original ones).
         var zoomed by remember(blockKey) { mutableStateOf(false) }
+        // GIF EPIC (owner 2026-11-02: "animated GIFs are not rendering"): the original container
+        // is fetched from the SAME cache the card used (no extra bytes on the wire) and sniffed:
+        // an animated GIF/WebP renders through AnimatedDrawablePainter — inline AND in the viewer,
+        // playing, stopped when scrolled away. Stills keep the sampled card bitmap (that's the
+        // inSampleSize memory story; a full-size Drawable inline would defeat it).
+        var bytes by remember(target, cfg) { mutableStateOf<ByteArray?>(null) }
+        LaunchedEffect(target, cfg) {
+            bytes = runCatching { Watchkit.fetchImageSourceBytes(target) }.getOrNull()
+        }
+        val rawBytes = bytes
+        val animated = rawBytes != null && looksAnimated(rawBytes)
+        val frame = if (animated) rememberAnimatedImage(rawBytes) else AnimatedImage(null, false)
         Box(
             modifier = modifier
                 .fillMaxWidth()
@@ -527,17 +539,45 @@ private fun ImageBlock(alt: String, target: String, blockKey: Any, modifier: Mod
                 .clickable(onClickLabel = "zoom image") { zoomed = true },
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = alt.ifBlank { "image" },
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.widthIn(max = 440.dp),
+            if (frame.painter != null)
+                Image(
+                    painter = frame.painter,
+                    contentDescription = alt.ifBlank { "image" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.widthIn(max = 440.dp),
+                )
+            else
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = alt.ifBlank { "image" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.widthIn(max = 440.dp),
+                )
+            if (animated) Text(
+                "GIF",
+                style = MaterialTheme.typography.caption3,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
             )
         }
         if (zoomed) {
+            // Full-res viewer from the same bytes: the animated painter when there is a film,
+            // the BitmapFactory full decode otherwise (identical sharpness to the old path).
             var full by remember(blockKey) { mutableStateOf<ImageBitmap?>(null) }
-            LaunchedEffect(Unit) { full = try { Watchkit.fetchImageFull(target) } catch (e: Exception) { null } }
-            ZoomableMediaViewer(full ?: bitmap, caption = alt, onDismiss = { zoomed = false })
+            LaunchedEffect(Unit) {
+                if (!animated) full = try { Watchkit.fetchImageFull(target) } catch (e: Exception) { null }
+            }
+            val viewerPainter = if (frame.painter != null) frame.painter
+                else full?.let { androidx.compose.ui.graphics.painter.BitmapPainter(it) }
+            ZoomableMediaViewer(
+                viewerPainter ?: androidx.compose.ui.graphics.painter.BitmapPainter(bitmap),
+                caption = alt, onDismiss = { zoomed = false },
+            )
         }
         return
     }

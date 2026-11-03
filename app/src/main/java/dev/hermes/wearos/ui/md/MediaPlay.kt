@@ -12,6 +12,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,9 +38,12 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import dev.hermes.wearos.domain.DialVolume
+import dev.hermes.wearos.domain.RotaryVolume
 import dev.hermes.wearos.net.TailnetRoute
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.ui.scaled
+import kotlinx.coroutines.delay
 
 /**
  * FULLSCREEN A/V PLAYER (media epic, owner 2026-11-02: "small inline like images, click play;
@@ -111,13 +116,40 @@ fun MediaPlayDialog(target: String, video: Boolean, label: String, onDismiss: ()
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // BEZEL VOLUME (owner 2026-11-02: "enable bezel scrolling for the volume up and down —
+        // if we're playing music … we need to do that"): while this sheet owns the screen the
+        // watch's volume keys (what the rotating bezel delivers on Galaxy Watch) steer the
+        // PLAYER, not the system stream — 5 % detents on DialVolume's haptic grid, one tick per
+        // step, and a readout that fades after a beat. Close the player and the bezel is the
+        // system volume again.
+        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+        var volPct by remember { mutableIntStateOf(-1) }
+        var lastTick by remember { mutableLongStateOf(0L) }
+        val volumeHandler = remember(player) { handler@{ steps: Int ->
+            val p = player ?: return@handler false
+            p.volume = RotaryVolume.step(p.volume, steps)
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastTick > 50L) {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                lastTick = now
+            }
+            volPct = DialVolume.pct(p.volume)
+            true
+        } }
+        DisposableEffect(volumeHandler) {
+            RotaryVolume.bind(volumeHandler)
+            onDispose { RotaryVolume.unbind(volumeHandler) }
+        }
+        LaunchedEffect(volPct) {
+            if (volPct >= 0) { delay(1_100); volPct = -1 }
+        }
         Box(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             contentAlignment = Alignment.Center,
         ) {
             AndroidView(
                 factory = { c ->
-                    PlayerView(c).apply {
+                    PinchPlayerView(c).apply {
                         useController = true
                         controllerShowTimeoutMs = 3_500
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -126,6 +158,12 @@ fun MediaPlayDialog(target: String, video: Boolean, label: String, onDismiss: ()
                 },
                 modifier = Modifier.fillMaxSize(),
                 update = { it.player = player },
+            )
+            if (volPct >= 0) Text(
+                "🔊 $volPct%",
+                modifier = Modifier.padding(top = 72.dp),
+                style = MaterialTheme.typography.body1.scaled(),
+                color = Color.White,
             )
             // Audio has no video surface: keep the glyph + name centered so the sheet is never
             // an empty black hole while the player hums along.

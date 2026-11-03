@@ -146,4 +146,51 @@ class SessionHistoryTest {
         assertNull(SessionHistory.catchUpPlan(emptyList(), listOf(user("q"))))
         assertNull(SessionHistory.catchUpPlan(listOf(user("q")), emptyList()))
     }
+
+    // ── gateway messages route (SPEC §12.9, verified live 2026-11-02 against /p/default) ──
+
+    private val gwSample = """
+        {"object":"list","session_id":"local-abc","data":[
+          {"id":1,"role":"user","content":"first q","timestamp":1},
+          {"id":2,"role":"tool","content":"{\"output\": \"machinery\"}","tool_name":"terminal"},
+          {"id":3,"role":"assistant","content":"first a"},
+          {"id":4,"role":"user","content":"hidden q","display_kind":"hidden"},
+          {"id":5,"role":"assistant","content":""},
+          {"id":6,"role":"system","content":"noise"},
+          {"id":7,"role":"assistant","content":"tail a"}
+        ]}
+    """.trimIndent()
+
+    @Test fun `gateway shape drops tool system and hidden rows keeps conversation order`() {
+        val msgs = SessionHistory.parseGateway(gwSample)
+        assertEquals(
+            listOf(ChatMessage.Role.User, ChatMessage.Role.Hermes, ChatMessage.Role.Hermes),
+            msgs.map { it.role },
+        )
+        assertEquals(listOf("first q", "first a", "tail a"), msgs.map { it.text })
+    }
+
+    @Test fun `gateway shape windows to the newest cap like the watchkit path`() {
+        val many = (1..20).joinToString(",") { """{"role":"user","content":"q$it"}""" }
+        val msgs = SessionHistory.parseGateway("""{"data":[$many]}""", cap = 5)
+        assertEquals(5, msgs.size)
+        assertEquals("q16", msgs[0].text) // NEWEST 5 kept, ascending order preserved
+    }
+
+    @Test fun `malformed gateway json throws like the watchkit path and the caller fail-softs`() {
+        // Same contract as parse(): a dead endpoint answer sinks THIS probe, not the app.
+        assertThrows(Exception::class.java) { SessionHistory.parseGateway("not json") }
+        assertEquals(emptyList<ChatMessage>(), SessionHistory.parseGateway("""{"data":"nope"}"""))
+    }
+
+    @Test fun `promote answers parse the lane answer of every flavor`() {
+        val flipped = SessionHistory.parsePromote("""{"was":"local","changed":true}""")
+        assertTrue(flipped.ok && flipped.changed && flipped.was == "local")
+        val held = SessionHistory.parsePromote("""{"was":"api_server","changed":false}""")
+        assertTrue(held.ok && !held.changed && held.reason.isEmpty())
+        val machine = SessionHistory.parsePromote("""{"was":"cron","changed":false,"reason":"machine"}""")
+        assertTrue(machine.ok && machine.reason == "machine")
+        val junk = SessionHistory.parsePromote("<html>502</html>")
+        assertFalse(junk.ok)
+    }
 }

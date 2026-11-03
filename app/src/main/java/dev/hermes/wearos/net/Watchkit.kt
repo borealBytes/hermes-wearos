@@ -222,6 +222,13 @@ object Watchkit {
         return bmp.asImageBitmap().also { cache.put(key, it) } // oversize entries simply don't cache
     }
 
+    /**
+     * RAW full-res bytes for the image lane — the GIF path: an animation only lives in the
+     * original container (BitmapFactory takes the first frame), so the painter decodes straight
+     * from these bytes. Shares the byte-weighted cache with [fetchImageCard]/[fetchImageFull].
+     */
+    suspend fun fetchImageSourceBytes(target: String): ByteArray = withContext(Dispatchers.IO) { imageBytes(target) }
+
     // ─── MEDIA EPIC (owner 2026-11-02) ─────────────────────────────────────────────────────
     /**
      * The A/V shape the watch asks watchkit /media for. Mirrored from AppSettings by WearApp so
@@ -389,6 +396,31 @@ object Watchkit {
                 val text = r.body?.string().orEmpty()
                 if (!r.isSuccessful) throw ApiException(r.code, "fork ${r.code}: ${text.take(140)}")
                 ForkResult.parse(text)
+            }
+        }
+
+    /**
+     * SESSION PROMOTE (SPEC §12.9, the hand-off door): flip a desktop chat's `source` column to
+     * `api_server` so the SAME row — same id, same transcript — runs from the wrist. watchkit
+     * writes state.db directly (the gateway PATCH has no `source` field yet, §13.5 #4). `revertTo`
+     * undoes exactly our own flip when the gateway still refuses (desktop holds the session live).
+     * Never a fork; returns the parsed answer — a throw here just means the read-only explanation
+     * stays, so it is fail-soft at the call site.
+     */
+    suspend fun promoteSession(profile: String, sessionId: String, revertTo: String? = null): SessionHistory.Promote =
+        withContext(Dispatchers.IO) {
+            val cfg = _config.value
+            val body = "{\"profile\":${esc(profile)},\"session_id\":${esc(sessionId)}" +
+                (if (revertTo == null) "}" else ",\"revert_to\":${esc(revertTo)}}")
+            val req = Request.Builder()
+                .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_promote").build())
+                .post(body.toRequestBody(JSON_MEDIA))
+                .header("Authorization", "Bearer ${cfg.token}")
+                .build()
+            clientCall(req) { r ->
+                val text = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "promote ${r.code}: ${text.take(140)}")
+                SessionHistory.parsePromote(text)
             }
         }
 

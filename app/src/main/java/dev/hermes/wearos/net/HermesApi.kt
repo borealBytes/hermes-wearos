@@ -139,6 +139,24 @@ class HermesApi(
     }
 
     /**
+     * Gateway transcript route (SPEC §12.9): GET /api/sessions/{id}/messages?limit=&order=latest
+     * → `{object:"list", data:[{role,content,…}]}` — bearer-authed, cross-source (answers for a
+     * desktop row too, unlike /v1/runs). Raw JSON out; SessionHistory.parseGateway maps it. Throws
+     * ApiException (401 = no key for this profile, 404 = not this lane) — the caller falls back
+     * to watchkit's keyless read.
+     */
+    fun sessionMessagesJson(sessionId: String, limit: Int): String {
+        client.newCall(request(
+            "$baseUrl/api/sessions/${java.net.URLEncoder.encode(sessionId, "UTF-8")}/messages" +
+                "?limit=$limit&order=latest"))
+            .execute().use { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "messages ${r.code}: ${text.take(120)}")
+            return text
+        }
+    }
+
+    /**
      * Gateway health probe (Settings "Test"). Verified: GET /v1/health → 200
      * `{status:"ok", platform:"hermes-agent", version:"0.21.7"}`. Throws on any failure.
      */

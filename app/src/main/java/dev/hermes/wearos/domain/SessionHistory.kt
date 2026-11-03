@@ -59,6 +59,48 @@ object SessionHistory {
         return rows.takeLast(cap.coerceAtLeast(0))
     }
 
+    /**
+     * GATEWAY transcript shape (SPEC §12.9): `GET {lane}/api/sessions/{id}/messages?limit=&order=latest`
+     * → `{object:"list", data:[{role,content,display_kind,…}]}`, the NEWEST page in ascending order
+     * (verified live). Same role mapping/noise rules as [parse]; the gateway route has no
+     * summary column, so `_compressed_summary` rows arrive as ordinary users and are dropped by
+     * the display_kind/blank filters exactly as watchkit drops them. tool/system/session_meta
+     * rows are dropped here — the desktop transcript keeps them, the wrist shows the conversation.
+     */
+    fun parseGateway(text: String, cap: Int = MAX_MESSAGES): List<ChatMessage> {
+        val arr = (HermesApi.parse(text)["data"] as? JsonArray) ?: return emptyList()
+        val rows = arr.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val role = (o["role"] as? JsonPrimitive?)?.contentOrNull ?: return@mapNotNull null
+            val dk = (o["display_kind"] as? JsonPrimitive?)?.contentOrNull
+            if (dk == "hidden" || dk == "process_complete" || dk == "internal_notification") return@mapNotNull null
+            val raw = (o["content"] as? JsonPrimitive?)?.contentOrNull ?: return@mapNotNull null
+            val body = raw.trim()
+            if (body.isEmpty() || isNoise(body)) return@mapNotNull null
+            val mapped = when (role) {
+                "user" -> ChatMessage.Role.User
+                "assistant" -> ChatMessage.Role.Hermes
+                else -> return@mapNotNull null // tool/system/etc: the watch shows the conversation, not the machinery
+            }
+            ChatMessage(0L, mapped, if (body.length > MAX_TEXT) body.take(MAX_TEXT) + "…" else body)
+        }
+        return rows.takeLast(cap.coerceAtLeast(0))
+    }
+
+    /** Answer of watchkit `POST /session_promote` (see server/watchkit) — pure, unit-tested. */
+    data class Promote(val ok: Boolean, val was: String, val changed: Boolean, val reason: String)
+
+    /** Parse `{was, changed, reason?}`; anything unparseable = not ok (retry the plain path). */
+    fun parsePromote(text: String): Promote = try {
+        val o = HermesApi.parse(text)
+        val was = (o["was"] as? JsonPrimitive?)?.contentOrNull ?: ""
+        val changed = (o["changed"] as? JsonPrimitive?)?.contentOrNull == "true"
+        val reason = (o["reason"] as? JsonPrimitive?)?.contentOrNull ?: ""
+        Promote(was.isNotEmpty(), was, changed, reason)
+    } catch (e: Exception) {
+        Promote(false, "", false, "unparsable answer")
+    }
+
     /** Residual noise the endpoint can still leak: injected process notifications, bare markers. */
     private fun isNoise(body: String): Boolean =
         body.startsWith("[IMPORTANT: Background process") ||

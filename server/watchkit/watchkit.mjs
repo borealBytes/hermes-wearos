@@ -16,6 +16,9 @@
  *        Same state.db, `messages` table: user/assistant + active + non-empty content, compression
  *        summary rows surfacing as role:"summary", noise display_kinds dropped, NEWEST [limit] rows
  *        returned oldest-first, per-message content capped at 2KB. Empty list for unknown ids (200).
+ *   POST /session_promote → one-column lane flip so a desktop chat runs from the wrist (SPEC §12.9)
+ *        {profile, session_id, revert_to?} → {object, id, profile, was, changed}; owner surfaces only
+ *        (desktop/tui/webui/cli/local); SAME row/id/transcript — never a fork; revert undoes our flip.
  *   POST /health/snapshot → {ok:true}   body = watch body-tools snapshot JSON (W1-W8, bearer)
  *   GET  /health/latest   → latest stored snapshot (bearer, 404 before first push)
  *   GET  /health/tool/<name> → per-tool MCP-style answer derived from the snapshot
@@ -23,7 +26,8 @@
  *        {tool, ok:true, data:{…}} | {tool, ok:false, reason} | {tool, ok:false, stale:true, age_s}
  *   GET  /img             → scaled image/webp ?path=…&width=460 (allowlisted scaler, Pillow → WebP q82)
  *        width OPTIONAL (owner batch 2): no width (or width=0) ⇒ ORIGINAL bytes served, no re-encode,
- *        for png/jpeg/webp (watch downsamples at decode); gif/bmp still fall back to the 460 scaler.
+ *        for png/jpeg/webp/gif (watch downsamples at decode; gif stays ANIMATED — verbatim bytes);
+ *        bmp still falls back to the 460 scaler.
  *        15MB cap + img_roots allowlist always apply. X-Cache key = realpath|mtime|width ("full").
  *   POST /img             → same, JSON body {path[,width]}
  *   GET  /media           → scaled A/V stream (bearer, HTTP Range). ?path=…[&q=0..100&mono=1&ab=64]
@@ -552,6 +556,56 @@ async function handleSessionArchive(req, res, ip, body) {
   }
 }
 
+// ── /session_promote — the hand-off door, client side (SPEC §12.9) ──────────
+// The gateway's API lane runs only sessions whose stored `source` is `api_server`
+// (gateway/session_api.py::bind_api_steps — a desktop-CLI chat answers 409
+// permission_denied). PROMOTING is a one-column UPDATE: the SAME row, id and transcript
+// become runnable from the wrist — no fork, no copy, the desktop keeps showing the chat
+// (it moves to the desktop's API spot, exactly where watch chats already live). The
+// gateway ALSO refuses while the desktop holds the session live in memory, so the watch
+// reverts with {revert_to:<was>} and tells the owner to close it on the desktop first.
+// Owner surfaces only — cron/subagent/telegram rows are machine-owned and refuse.
+const PROMOTABLE_SOURCES = new Set(['desktop', 'tui', 'webui', 'cli', 'local']);
+const PROMOTE_REVERT_RE = /^[a-z][a-z0-9_]{0,31}$/;
+
+async function handleSessionPromote(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const sessionId = String(body.session_id || '').trim();
+  const revertTo = body.revert_to == null ? null : String(body.revert_to).trim().toLowerCase();
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_promote', 400);
+  if (!SESSION_ID_RE.test(sessionId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_promote', 400);
+  if (revertTo !== null && !PROMOTE_REVERT_RE.test(revertTo))
+    return done(res, sendErr(res, 400, 'bad revert_to'), t0, ip, 'session_promote', 400);
+  let db = null;
+  try {
+    db = await openStore(profile, false);
+    if (!db) return done(res, sendErr(res, 404, 'store missing'), t0, ip, 'session_promote', 404);
+    const row = db.prepare('SELECT source FROM sessions WHERE id = ?').get(sessionId);
+    if (!row) return done(res, sendErr(res, 404, 'session not found'), t0, ip, 'session_promote', 404);
+    const was = String(row.source ?? '');
+    const out = (changed, extra) => JSON.stringify(Object.assign(
+      { object: 'hermes.session.promoted', id: sessionId, profile, was, changed }, extra || {}));
+    if (revertTo !== null) { // only ever undo OUR flip: never clobber a foreign lane change
+      if (was !== 'api_server') return done(res, send(res, 200, out(false, { reason: 'not-promoted' })), t0, ip, 'session_promote', 200);
+      db.prepare('UPDATE sessions SET source = ? WHERE id = ? AND source = ?').run(revertTo, sessionId, 'api_server');
+      return done(res, send(res, 200, out(true, { reverted: revertTo })), t0, ip, 'session_promote', 200);
+    }
+    if (was === 'api_server') // already the API lane: the watch's 409 came from a LIVE desktop hold
+      return done(res, send(res, 200, out(false)), t0, ip, 'session_promote', 200);
+    if (!PROMOTABLE_SOURCES.has(was))
+      return done(res, send(res, 200, out(false, { reason: `source '${was || '?'}' is machine-owned` })), t0, ip, 'session_promote', 200);
+    db.prepare('UPDATE sessions SET source = ? WHERE id = ? AND source = ?').run('api_server', sessionId, was);
+    return done(res, send(res, 200, out(true)), t0, ip, 'session_promote', 200);
+  } catch (e) {
+    return done(res, sendErr(res, 503, `promote failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_promote', 503);
+  } finally {
+    try { db?.close(); } catch { /* gone */ }
+  }
+}
+
 async function handleSessionDelete(req, res, ip, body) {
   const t0 = Date.now();
   const profile = String(body.profile || 'default').trim();
@@ -783,9 +837,12 @@ async function handleRender(req, res, ip) {
 const IMG_MAX_INPUT_BYTES = 15 * 1024 * 1024;
 const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // Full-res passthrough (owner batch 2: "images should be in full res to the watch; scaling should
-// happen on the watch"): originals are byte-identical only for these types — gif/bmp fall back to
-// the legacy scaler (animation/mode conversion genuinely needs Pillow).
-const IMG_FULL_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+// happen on the watch"): originals are byte-identical for these types — bmp falls back to the
+// legacy scaler (mode conversion genuinely needs Pillow). GIF joined in 2026-11-02 (GIF epic,
+// SPEC §12.10): the Pillow flatten to static WebP DESTROYED the animation before the watch ever
+// saw the bytes; the watch now decodes the container itself (ImageDecoder → AnimatedImageDrawable)
+// and samples the card with inSampleSize like every other type — scaling still happens on the watch.
+const IMG_FULL_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
 const IMG_SCALER = path.join(WK_DIR, 'img_scale.py');
 // Mounted drives (owner 2026-11-02: a DESKTOP session's figure under /run/media/<user>/dev 403'd
 // — agents write media wherever their repo lives, and mounts are not all under home). Linux's
@@ -848,7 +905,7 @@ async function handleImg(req, res, ip, params) {
         return done(res, sendErr(res, 500, `read failed: ${e.message}`.slice(0, 200)), t0, ip, 'img', 500);
       }
     }
-    // gif/bmp asked for full but genuinely need the scaler → legacy 460 below (documented).
+    // bmp asked for full but genuinely needs the scaler → legacy 460 below (documented).
   }
 
   const key = sha256(`${real}|${st.mtimeMs}|${width}`);
@@ -1385,12 +1442,13 @@ const server = http.createServer(async (req, res) => {
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
     // Session management for the watch's long-press menu (SPEC §12.4 follow-up): fork any session
     // into the current agent, delete any session. Bearer-guarded like every other route.
-    if (req.method === 'POST' && (url === '/session_fork' || url === '/session_delete' || url === '/session_archive')) {
+    if (req.method === 'POST' && (url === '/session_fork' || url === '/session_delete' || url === '/session_archive' || url === '/session_promote')) {
       let q;
       try { q = JSON.parse((await readBody(req, JSON_MAX_BYTES)).toString('utf8')); }
       catch { return done(res, sendErr(res, 400, 'bad json body'), Date.now(), ip, url.slice(1), 400); }
       if (url === '/session_fork') return await handleSessionFork(req, res, ip, q);
       if (url === '/session_archive') return await handleSessionArchive(req, res, ip, q);
+      if (url === '/session_promote') return await handleSessionPromote(req, res, ip, q);
       return await handleSessionDelete(req, res, ip, q);
     }
     // Full-text session search for the watch's Sessions screen (SPEC §12.4).
