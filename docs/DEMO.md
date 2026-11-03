@@ -111,7 +111,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | shot ✓ |
 | 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 · capture: ask via `-e text` (editor swipes = handwriting junk), blue-cluster CENTROID tap, GitHub `borealBytes/hermes-wearos` page rendered on the watch | shot ✓ |
 | 16 | Approval card **in-session** + Approve tap | `33-approval-card.png` NEW, `34-approval-approved.png` NEW | S33, S34 | shot ✓ |
-| 17 | Sessions list (wear-demo rows) | `08-sessions.png` | S17 | shot ✓ |
+| 17 | Sessions list (wear-demo rows; batch-9 re-shot — the chip row now includes the 💻 computer lane filter) | `08-sessions.png` | S17 | shot ✓ |
 | 18 | Session search `harbor` | `21-session-search.png` | S21 | shot ✓ |
 | 19 | Long-press sheet + fork | `22-session-sheet.png` | S22 | shot ✓ |
 | 20 | Archive (🗃 chip) | `23-archived-chip.png` | S23 | shot ✓ |
@@ -120,7 +120,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) · capture: EXPANDED in place via `notify_demo approval` + one card tap: **Approve / Deny / Open session** pills all visible (OneUI does NOT cap at Open+Clear — earlier claim was wrong); demo run denied via the receiver afterwards | shot ✓ |
 | 24 | Open-session deep link from notification | `09-resumed.png` | S09 | shot ✓ |
 | 25 | Agent picker (wear-demo + names OK) | `17-agent-picker.png` | S18 | shot ✓ |
-| 26 | Gateways: ● winner, tailnet/LAN failover | `11-gateways.png` | S11 | shot ✓ |
+| 26 | Gateways: ● winner, failover (batch-9 re-shot: transport line `wifi(wlan0) · validated`, two rows, hostname pixelated per §0; the Tailnet section is its own row 56) | `11-gateways.png` | S11 | shot ✓ |
 | 27 | ⚙ settings lane opens Settings | `30-settings-lane.png` NEW | S30 | shot ✓ |
 | 28 | Settings ▸ Home | `18-settings-home.png` | S19 | shot ✓ |
 | 29 | Settings ▸ Display | `19-settings-display.png` | S13→S14 | shot ✓ |
@@ -137,13 +137,21 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 40 | Karaoke follow — glass scrolls to the sentence being spoken (teleprompter yields to taps) | `39-karaoke-follow.png` NEW | S39 | shot ✓ |
 | 41 | STT source: on-watch Vosk ⇄ OFF-DEVICE vendor (Google/Samsung) ⇄ Gateway whisper/parakeet engines | `40-stt-source.png` NEW | S40 · capture: Voice-in scrolled with the gateway row CLICKED OPEN: engine picker shows `★ gateway default · parakeet` (selected), `whisper · text streaming ✗ · final when you stop`, `parakeet · text streaming ✓` (watchkit v0.6.0 from this worktree; Voice in restored to Local Vosk after) | shot ✓ |
 | 42 | Edge-circle scrolling on EVERY list (Settings pages, Agents, Model, Approvals, Chats — 2f) AND normal swipes still scroll | `41-edge-circle-pair.png` NEW (before/after pair in one frame) | S41 | shot ✓ |
-| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` NEW | S42 · capture: re-shot on the fixed build (title clears the clock pill); harbor-lab staged live via `-e add_gw` (which exposed + fixed the mirror bug: dev upsert now refreshes gatewayList), demo gateway deleted from the watch after capture | shot ✓ |
-| 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn | `43-agent-keys.png` NEW | S42b | shot ✓ |
+| 43 | Gateway registry: multi-gateway save/select/delete, ● winner dot, failover badge | `42-gateways-multi.png` | S42 · batch-9 re-shot with harbor-lab restaged via `-e add_gw 'label|api|wk'` (delete after), hostname pixelated | shot ✓ |
+| 44 | Agent keys per profile ✓/— (SPEC §12.2 one-login) + ⟳ learn — batch 9 added the 60 s self-sweep (no pixels change; README caption says it) | `43-agent-keys.png` | S42b | shot ✓ |
 | 45 | DESKTOP WATCH — approval park from a DESKTOP/API session buzzes the wrist with the parked command (beacon-derived); **Open adopts the session** and finishes it with ✅/❌ in chat (watch-started runs keep inline Approve/Deny) | `44-notify-desktop-approval.png` NEW | S44a | shot ✓ |
 | 46 | DESKTOP WATCH — answer finished off the wrist → "Answer ready on the desktop" notify | `45-notify-desktop-settled.png` NEW | S44b | shot ✓ |
 | 47 | THE ATTENTION POLICY — live on screen: inline + voice, no notify; anywhere else: notify + silent (§16.3) | `46-attention-pair.png` NEW (live vs off-screen pair) | S45 | shot ✓ |
 | 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
-| 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` NEW | S47 · capture: Settings ▸ ℹ️ About (also fixed: page title sat under OneUI's clock pill at default text scale — SettingsScreen top padding 12→34dp) | shot ✓ |
+| 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` | S47 · batch-9 re-shot (v0.7.0 version line; About is the owner-blessed identity-whitelist page) | shot ✓ |
+
+| 50 | MEDIA EPIC — generated video/audio play in chat (cards inline, tap→fullscreen media3 player; watchkit `/media` pre-shrink) (SPEC §17, §12.14) | `48-media-cards.png`, `49-video-player.png`, `52-audio-player.png` | S48a, S48b, S48c | shot ✓ |
+| 51 | Animated GIFs decode ON THE WRIST (ImageDecoder→AnimatedImageDrawable via public Drawable.Callback; watchkit `/img` passes gif verbatim) (SPEC §12.14) | `50-gif-card.gif` (screen-recorded, circle-masked — the splash-film precedent for motion artifacts) | S50 | shot ✓ |
+| 52 | Pinch-to-zoom VIDEO — PinchPlayerView intercepts the 2nd finger, MediaZoom parity clamp, double-tap fit↔2.5× | `51-video-pinched.png` (capture: `-e media_zoom 2.4` fires the double-tap's own `animateScale` — adb can't inject two fingers) | S51 | shot ✓ |
+| 53 | BEZEL VOLUME — player binds the rotary while on screen; 5 % detents, haptic tick, fading 🔊 readout; unbind = system volume again | readout visible in `49-video-player.png` (60 %, driven by `-e volume -8` through the exact key path the bezel fires) | rides S48b | shot ✓ |
+| 54 | FLAWLESS HAND-OFF — desktop chat adopted on the wrist, gateway-first backfill, one-column promote, NO fork (SPEC §12.13) | `53-handoff-adopted.png` (capture: seeded `desk-echo-probe-7` (source=local) → `-e resume_session` → ask answered from desktop history `ORCHID`; one row) | S53 | shot ✓ |
+| 55 | Tool-activity card — collapsible per-run ledger persisted in the transcript (SPEC §12.12) | `54-tool-activity.png` (capture: real gated `uname -r` terminal run on wear-demo) | S54 | shot ✓ |
+| 56 | Tailnet status page — node FQDN + gateway peer + phase + Test, owner identity pixelated (SPEC §11.4) | `55-tailnet-status.png` (capture: emulator's own node; `tailca7ee1`/peer-IP boxes scanned then pixelated on the SQUARE before masking) | S55 | shot ✓ |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -180,6 +188,9 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `21-session-search.png` | re-shot | honest: query is `harbors ` with IME up; results = 2 seeded wear-demo rows | refreshed |
 | `11-gateways.png` | re-shot (from the r7d film raw — live registry); 42 shows the same registry a beat later | alt re-worded to pixels | refreshed |
 | `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5); ● marks the live agent | refreshed |
+| — (new, batch 9 / v0.7.0) | `48-media-cards.png`, `49-video-player.png`, `50-gif-card.gif` (MOTION artifact, screen-recorded), `51-video-pinched.png`, `52-audio-player.png`, `53-handoff-adopted.png`, `54-tool-activity.png`, `55-tailnet-status.png`; re-shots of `08`/`11`/`42`/`47` | NEW README rows in the feature grid + handoff lead-in + tailnet img in §Networking + `wifi(wlan0)`/pixelation alt refresh | refreshed |
+| hero GIF | re-cut as **`demo-walkthrough-v0.7.0.gif`** (v0.6.0 GIF purged per §9); master `demo-vertical-v0.7.0-raw.mp4` cut for the owner's scoring pass (never committed) | alt text lists the new beats | refreshed |
+| weights section | numbers re-measured (106 MB APK incl. the gomobile tailnet node) | table matches `unzip -l` of the shipped debug APK | refreshed |
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
@@ -245,6 +256,24 @@ adb shell settings put global enable_display_offload 0 # else screencap returns 
 offload) — offload is disabled above; still drive a small UI animation per take.
 Assemble traps: `-ss` AFTER all `-i`; drawtext text without `:` or `'`; escape
 commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
+
+**Batch-9 recipes (2026-11-03, the v0.7.0 media round):**
+
+- Staged media lives on the GATEWAY box (`/tmp/anim.gif`, `/tmp/clip.mp4` H.264+AAC, `/tmp/tone.opus`)
+  — `/tmp` is a watchkit img/media root already; ask wear-demo to emit the exact `MEDIA:` line(s).
+- **Video pinch still:** `-e media_zoom <s>` fires the player's own `animateScale` (adb can't inject
+  two fingers); play first (tap center), then zoom, then capture — a paused frame carries the big ▶ glyph.
+- **Bezel-volume still:** `-e volume <±N>` drives the same lane the physical bezel fires; the 🔊
+  readout lives 1.1 s — fire the broadcast and screencap in the same breath. Player volume starts at
+  1.0 (ceiling), so go NEGATIVE to land a readable percentage like 60 %.
+- **Motion artifacts:** `screenrecord --time-limit 3`, pull, crop the card box (measure rows by
+  saturation, don't eyeball — one crop missed and shipped the prompt bubble), circle-mask every
+  frame, one GIF @10 fps, `disposal=2` — 0.3 MB for 26 frames.
+- **Hand-off beat:** seed the desktop-starter row straight into the wear-demo state.db (source
+  `local`), adopt with `-e resume_session`, ask something only the seeded history answers.
+- **Identity scan on the SHIPPED squares** before masking: tesseract `--psm 11` + `--psm 6` sweep
+  for hostname/tailnet-id/IP; blur boxes measured from cyan/gray text-band scans (psm-7 crops drift).
+- `-e add_gw` wants the full `label|api|watchkit` spec (bare URL = `add_gw BAD spec`).
 
 **Batch-7 recipes (2026-11-01, the honesty round):**
 
@@ -420,6 +449,21 @@ strings only) → restore from `refs/original` on any botched pass → single
 Branch keeps exactly ONE generation of every tracked media path.
 
 ## 10. Feature changelog (append when a feature lands)
+
+- **2026-11-03 (batch-9: the v0.7.0 media round)** — every artifact regenerated for THIS branch only
+  (owner: "leave old features that didn't change, remove/update what did"). NEW: media-epic cards +
+  fullscreen player (48/49/52), the first MOTION artifact since the splash — a real screen-recorded
+  animated-GIF card (50-gif-card.gif), pinched video (51, via the new `-e media_zoom` hook), the
+  60 % bezel-readout frame, hand-off adopted-with-history (53), tool-activity card (54), and the
+  Tailnet status page the owner asked to show (55, FQDN + peer IP pixelated on the square before
+  masking). RE-SHOT (changed surfaces): 08 (💻 computer chip), 11/42 (transport row + pixelated
+  hostname; harbor-lab restaged and deleted after), 47 (v0.7.0 line). RETIRED wording everywhere:
+  "LAN or Tailscale" is dead — the embedded node IS the transport (§11.4); weights re-measured
+  (106 MB incl. the 44 MB gomobile node across ABIs); voice table says the mic rides as Opus.
+  Captured on the Wear OS 5 emulator (the physical watch's port slept mid-round — honest note in
+  the README license line; the volume key path is the bezel's own). GIF re-cut
+  `demo-walkthrough-v0.7.0.gif`; silent master `demo-vertical-v0.7.0-raw.mp4` for the owner's score.
+  `tools/demo/pixelate.py` persisted (the round-1 tool had been living in /tmp).
 
 - **2026-11-02 (batch-8: GIF typography round, owner screenshot review)** — the owner read the
   walkthrough GIF frame-by-frame and the canvas port lost its geometry: caption pills measured

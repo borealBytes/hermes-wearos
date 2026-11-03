@@ -7,7 +7,8 @@ memory, cron jobs, and your files — answers on your wrist, out loud, before yo
 <img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb at the center ringed by its lane icons — the orb is the only control; each drag direction fires keyboard, mute, settings, model, commands, chats, sessions, or agents" align="right" hspace="24"/>
 
 Everything heavy runs on your gateway. The watch streams text in, streams tokens back, renders the
-answer (markdown, code, tables, **mermaid**, full-res images), and speaks it with an on-device voice.
+answer (markdown, code, tables, **mermaid**, full-res images, **animated GIFs**, **generated
+video and audio**), and speaks it with an on-device voice.
 The app is Kotlin + an embedded Tailscale node (Go runtime via gomobile — it's why the APK is chunky)
 + a zero-dependency Node helper on the server side.
 
@@ -27,10 +28,10 @@ carries on. Expect small per-OEM tweaks for non-Samsung watches (IME and notific
 mannerisms); a OnePlus Watch is next on the test bench.
 
 <p align="center">
-  <a href="https://youtu.be/Cd4Y_ESQoQ0"><img src="docs/demo/demo-walkthrough-v0.6.0.gif" width="480" alt="Animated walkthrough: the splash film, dial, voice ask, streaming answer, a stopped run, an approval tap, the karaoke reply — every feature at real wrist speed"/></a><br/>
+  <a href="https://youtu.be/Cd4Y_ESQoQ0"><img src="docs/demo/demo-walkthrough-v0.7.0.gif" width="480" alt="Animated walkthrough: the splash film, dial, voice ask, streaming answer, a stopped run, an approval tap, the karaoke reply, generated video and audio on the wrist, animated GIFs, pinch-zoomed video, the tailnet status page, and a desktop chat picked up mid-thread — every feature at real wrist speed"/></a><br/>
   <sub>Click the strip for the <a href="https://youtu.be/Cd4Y_ESQoQ0">▶ full vertical tour</a> — 2:30,
-  1080×1920, with a score by the owner's agent. Every feature at real wrist speed, captured live off a
-  Galaxy Watch with no edits to the answers.</sub><br/>
+  1080×1920, with a score by the owner's agent (the v0.6.0 cut; the v0.7.0 master ships with this
+  release). Every feature at real wrist speed, captured live with no edits to the answers.</sub><br/>
   <sub>Splash art: <a href="docs/art-selfportrait.webp">her self-portrait</a> — engraved by the on-gateway
   image agent from its own idea of itself; it flashes for a beat on cold start, then gets out of your way.</sub>
 </p>
@@ -52,9 +53,16 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/02b-chat-table.png" width="180"/> |
 | **Streaming markdown**, rendered for a round screen: headings, bold, italics, bullets, numbered lists, and tap-to-expand code chips — with math in real unicode (`E = mc²`, subscripts), because LaTeX doesn't render on 1.4 inches. **Links are links:** tap one and the watch's browser takes it. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Real tables from plain markdown** — bold header, hairline rule, aligned cells, no pipe vomit; wider tables degrade to readable rows instead of a grid you can't parse. |
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
-| **Sessions, from your wrist** — every session your agent has, newest first, filtered per agent with one tap (`all` / `wear-demo` / `💻 computer` / `archived`); one-tap new, and a **voice-or-type search** over every chat (server-side full-text). Opening a session re-pulls its gateway tail by itself — a chat that kept talking elsewhere shows the rest without a manual refresh. | **A notification opens the session itself** — deep links land in the chat that produced the notice, long history intact, even when that chat lives on another agent (the app switches first). |
+| **Sessions, from your wrist** — every session your agent has, newest first, with a scrolling chip row to filter in one tap (`all` / per-agent / `💻 computer` — desktop-and-web lanes — / `archived`); one-tap new, and a **voice-or-type search** over every chat (server-side full-text). Opening a session re-pulls its gateway tail by itself — a chat that kept talking elsewhere shows the rest without a manual refresh. | **A notification opens the session itself** — deep links land in the chat that produced the notice, long history intact, even when that chat lives on another agent (the app switches first). |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
 | **Images at full resolution** — a gateway image skill's aurora render, shown inline full-res; cards and skill charts mix into the answer flow. Tap any card to open the viewer. | **Zoom viewer** — double-tap jumps to 2.5× (pinch works too), drag to pan, close with the ✕ chip or the back button. |
+| <img src="docs/screens/48-media-cards.png" width="180"/> | <img src="docs/screens/49-video-player.png" width="180"/> |
+| **Generated video and audio play in chat** — when the desktop can render a clip, so can the wrist: `MEDIA:` lines and media-extension links land as cards (tap to play · fullscreen), inline in the answer flow exactly like images. | **Full-screen player, bezel-steered** — media3 transport with −5/+5 chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — the 60 % here came off that exact code path over adb). Close the sheet, and the bezel is system volume again. |
+| <img src="docs/screens/50-gif-card.gif" width="180" alt="A chat image card playing an animated GIF: test-pattern bars cycling under a GIF chip, recorded off the watch and circle-masked — real motion, real pixels"/> | <img src="docs/screens/51-video-pinched.png" width="180"/> |
+| **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This frame is a screen recording, circle-masked: the bars are moving. | **Pinch-to-zoom video** — the same zoom lane the image viewer has, living inside the player itself: pinch to 3×, drag to pan, double-tap toggles fit↔2.5×, and taps still raise the transport. |
+| <img src="docs/screens/52-audio-player.png" width="180"/> | <img src="docs/screens/54-tool-activity.png" width="180"/> |
+| **Audio gets the same front door** — an Opus clip from the gateway's media pipeline opens a full-screen sheet with the media3 transport; the bezel steers its volume exactly like video's. | **See what the tools did** — every run that touches a tool carries a collapsible activity card: step count, per-tool commands, done ✓. The desktop's verbosity box, on your wrist, persisted in the transcript. |
+| <img src="docs/screens/53-handoff-adopted.png" width="220" align="left" hspace="16"/> | **One conversation, either device.** A chat started at the desktop opens on the wrist with its whole history (gateway-first backfill — the orange "from" pill counts the rows that arrived from the gateway), you keep talking in the *same* session, and it keeps answering for the desktop too. No fork, no second copy: the cross-lane door is a one-column promote the watch does for you (SPEC §12.13), always reversible, and the desktop's own view never drifts. Manual fork stays exactly where it was — in your hand, on the session sheet. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
 | **Tap-to-talk** — tap the orb and just talk; a pause sends it (on-device VAD). Tap again mid-speech to *cancel* the half-sentence, tap after a pause to send now. | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. |
 | <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/27-commands-overlay.png" width="180"/> |
@@ -164,7 +172,8 @@ respect.
 
 The gateways manager is a real registry — several gateways saved, one winner dot chosen by the
 health probe, failover in seconds — and underneath it the **agent-key matrix**: a ✓/— per profile,
-learned from watchkit's read of the profiles' `.env`s. Agents without a key still list their
+learned from watchkit's read of the profiles' `.env`s (re-learned on a self-timed sweep, so a newly
+created agent is asking-ready before you ever tap it). Agents without a key still list their
 sessions; asking them needs the key:
 
 <img src="docs/screens/42-gateways-multi.png" width="180"/> <img src="docs/screens/43-agent-keys.png" width="180"/>
@@ -193,14 +202,16 @@ sequenceDiagram
 flowchart LR
     subgraph watch [Wear OS watch — standalone, no phone app]
         UI[Chat UI + orb] --- STT[Vosk STT] & TTS[Android TTS] & MD[Markdown/Mermaid render]
+        NODE[embedded tsnet node<br/>Go via gomobile] --- SOCKS[loopback SOCKS5 shim]
     end
     subgraph server [Your gateway box]
         HG[Hermes gateway API :8642<br/>/p/wear profile] --> LLM[Self-hosted LLM<br/>OpenAI-compatible]
-        WK[watchkit helper :42651<br/>zero-dep Node] --- IMG[img / mermaid render]
+        WK[watchkit helper :42651<br/>zero-dep Node] --- IMG[img / media / mermaid render]
         WK --- BODY[health snapshot cache]
     end
-    UI -- "LAN or Tailscale<br/>HTTP + SSE" --> HG
-    MD -- "/img, /render/mermaid" --> WK
+    UI -- "every call rides the tunnel<br/>HTTP + SSE" --> HG
+    MD -- "/img, /media, /render/mermaid" --> WK
+    SOCKS -. WireGuard (tailscale) .-> HG
     BODY -- "HR · steps · GPS (opt-in tools)" --> UI
 ```
 
@@ -210,7 +221,7 @@ Three moving parts:
 |---|---|
 | `app/` | The watch app. Kotlin, Wear Compose, OkHttp/SSE. No Google services, no Firebase, no push. |
 | Hermes gateway | Any Hermes install: point it at a profile (e.g. `wear`) with a persona, tools, and an API key. SSE run streaming + cancel. |
-| `server/watchkit/` | Optional zero-dependency Node daemon: mermaid → PNG, full-res `/img` serving from allow-listed roots, opt-in body-tool snapshot cache (+ MCP for the agent), cron/job probes. |
+| `server/watchkit/` | Optional zero-dependency Node daemon: mermaid → PNG, full-res `/img` serving from allow-listed roots (GIFs verbatim — the animation survives), `/media` pre-shrink (H.264+AAC / Ogg-Opus) so clips stream smooth on wrist Wi-Fi, opt-in body-tool snapshot cache (+ MCP for the agent), cron/job probes. A render sidecar — never in the run path (SPEC §12.13). |
 
 ## Voice, honestly
 
@@ -221,8 +232,8 @@ paths (and one keyboard back door):
 |---|---|---|---|
 | **Local Vosk · offline** | never leaves the watch | Best-effort on-device. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. | ✅ default |
 | **OFF-DEVICE · vendor (Google or Samsung)** | the vendor's cloud — whatever recognizer your watch ships | Usually the best raw accuracy on the watch, at the cost of the vendor hearing it. The picker says **OFF-DEVICE** even when the vendor caches locally — that's deliberate. | your choice |
-| **Gateway · whisper** (`watchkit /stt/whisper`) | your own LAN/tailnet, your own box | Noticeably better than Vosk — but buffered: the final text lands when you stop talking. Model choice is a row on the Voice page. | opt-in |
-| **Gateway · parakeet** (streaming) | your own LAN/tailnet, your own box | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. | opt-in |
+| **Gateway · whisper** (`watchkit /stt/whisper`) | your own box, through your own tunnel (the mic clip rides as **Opus**, AAC fallback — watchkit sniffs the container) | Noticeably better than Vosk — but buffered: the final text lands when you stop talking. Model choice is a row on the Voice page. | opt-in |
+| **Gateway · parakeet** (streaming) | your own box, through your own tunnel (same Opus wire) | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. | opt-in |
 | GBoard typing → its mic | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
 
 TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
@@ -242,6 +253,8 @@ everything is visible and editable on the watch: Settings ▸ Gateways is a real
 manager, not a single URL box. Tailnet truth lives one level down in Settings ▸ Gateways ▸
 Tailnet: node name, key, live phase, and a Test button that health-checks the gateway through
 the exact tunnel an ask rides:
+
+<img src="docs/screens/55-tailnet-status.png" width="220" alt="Tailnet status page: tailnet up, the watch's node FQDN and gateway peer IP (owner identity pixelated) in green with 'online', the node line with its loopback SOCKS port, the Use-tailnet switch, and the node-name editor below" align="right" hspace="16"/>
 
 <img src="docs/screens/18-settings-home.png" width="220" alt="Settings home: the Gateways row showing two saved gateways with the current one checked, Voice out / Voice in / Display / Watch below" align="right" hspace="16"/>
 
@@ -264,23 +277,25 @@ stateDiagram-v2
 The old model — watch outside the tailnet, reaching `.ts.net` names only when the *router* did
 the resolving, LAN at home as fallback — is retired; SPEC §11.4 keeps the full decision record.
 
-Inside the gateway manager, every saved gateway is a row — here the owner's box and a parked
-fallback, each with its live probe dot, the current auto-selected winner marked, and the active
-endpoint begins below:
+Inside the gateway manager, every saved gateway is a row — here the owner's box (its hostname
+pixelated, per this repo's own privacy rule) and a parked LAN-literal fallback, each with its
+live probe dot, the current auto-selected winner marked, the transport line above
+(`wifi(wlan0) · validated`), and the active endpoint's editor beginning below:
 
-<img src="docs/screens/11-gateways.png" width="220" alt="Gateways manager: two saved gateway rows with live probe dots, the winner selected, an add row, and the Base URL editor label for the active entry beginning below"/>
+<img src="docs/screens/11-gateways.png" width="220" alt="Gateways manager: two saved gateway rows (hostname pixelated) with live probe dots and the winner selected, an add row, and the Base URL editor label for the active entry beginning below"/>
 
 ## What it weighs — and why it never grows
 
-Compiled today (debug build — the R8 hardening pass is on the roadmap): the APK is **≈60 MB**,
+Compiled today (debug build — the R8 hardening pass is on the roadmap): the APK is **≈106 MB**,
 and the watch's own numbers say what that is made of:
 
 | What | Size | Honest footnote |
 |---|---|---|
 | dex (your code, unshrunk) | ~46 MB | debug builds skip R8 entirely — this is the fat part, and the roadmap's release pass shrinks it hardest |
+| embedded tailnet node (`libgojni.so` — tsnet via gomobile, 2 ABIs) | ~44 MB | the price of "no LAN, no phone, no relay": a real WireGuard node in the app; the watch's `armeabi-v7a` slice alone is 21 MB |
 | Vosk JNI (`libvosk.so`, 2 ABIs) | ~18 MB | the STT engine binary; x86_64 rides the emulator build for free |
 | splash intro film | 0.9 MB | yes, the fun part is under a megabyte |
-| resources + everything else | ~1 MB | |
+| resources + everything else | ~2 MB | media3, Compose, the lot |
 
 Optional pieces live OUTSIDE the APK: the Vosk acoustic model is **68 MB** pushed once into the
 app's files dir (`scripts/get-vosk-model.sh`; the Settings ▸ About page tells you whether it's
@@ -394,7 +409,8 @@ mermaid as fence blocks (the watch renders them). Start the watchkit helper with
 
 - **Audio stays on-device** in the default config (Vosk). Whisper fallback sends audio to *your* gateway only. GBoard's mic is Google — documented, opt-in.
 - **TTS is on-device** by default (no cloud voice calls).
-- Text + run streaming go **only** to your configured gateways over LAN/tailnet.
+- Text + run streaming go **only** to your configured gateways, through the watch's own tailnet
+  node (SPEC §11.4) — no relay, no companion app, no LAN requirement.
 - On-watch cache is **encrypted at rest and size-bounded**; delete = app data wipe.
 - Body data flows **only** when you flip the toggles; snapshots push to your watchkit, nowhere else.
 - No analytics. No crash reporter. No push tokens. `grep` for tracking SDKs: nothing.
@@ -447,5 +463,7 @@ scripts/doctor.sh                          # toolchain + link health report
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Screenshots were captured on a physical Galaxy Watch Ultra; the demo
+MIT — see [LICENSE](LICENSE). Screenshots were captured on a physical Galaxy Watch Ultra (and, for
+the v0.7.0 batch, the headless Wear OS 5 emulator at the same framebuffer size — the bezel-volume
+frame on that build is driven through the exact key path the physical bezel fires); the demo
 chats use neutral scripted prompts, and every visible pixel is exactly what the watch showed.
