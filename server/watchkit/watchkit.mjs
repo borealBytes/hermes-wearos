@@ -787,7 +787,17 @@ const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // the legacy scaler (animation/mode conversion genuinely needs Pillow).
 const IMG_FULL_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const IMG_SCALER = path.join(WK_DIR, 'img_scale.py');
+// Mounted drives (owner 2026-11-02: a DESKTOP session's figure under /run/media/<user>/dev 403'd
+// — agents write media wherever their repo lives, and mounts are not all under home). Linux's
+// auto-mount point /run/media/<user> (and the /mnt/<user> variant) is an implicit root when it
+// exists: everything on the user's own drives is exactly as trusted as $HOME itself — same
+// bearer, read-only, and /media//sessions already expose more. cfg.img_roots covers any other.
+const MOUNT_PARENTS = [os.userInfo().username]
+  .map((u) => [`/run/media/${u}`, `/mnt/${u}`])
+  .flat()
+  .filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } });
 const IMG_ROOTS = [os.homedir(), '/tmp', '/var/tmp',
+  ...MOUNT_PARENTS,
   ...(Array.isArray(cfg.img_roots) ? cfg.img_roots : [])]
   .map(r => { try { return fs.realpathSync(path.resolve(String(r))); } catch { return null; } })
   .filter(Boolean);
@@ -1535,5 +1545,12 @@ if (MCP_MODE) {
     // throttled sweep the away-poll drives. unref() so it never keeps the process alive on its own.
     setInterval(() => { try { seedProfileKeys(false); } catch { /* next round */ } }, 60_000).unref();
   });
-  for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { logLine({ ev: 'stop', sig: s }); server.close(() => process.exit(0)); });
+  for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => {
+    logLine({ ev: 'stop', sig: s });
+    server.close(() => process.exit(0));
+    // Keep-alive sockets (ExoPlayer range streams, watch probes) hold server.close()'s callback
+    // open forever — restarts silently left a zombie holding the port. Force the idle crew out.
+    server.closeIdleConnections();
+    setTimeout(() => { server.closeAllConnections(); }, 250).unref();
+  });
 }
