@@ -8,8 +8,12 @@
 #   scripts/circle-shot.sh out.png                  # capture $SERIAL/ANDROID_SERIAL + mask
 #   scripts/circle-shot.sh --mask in.png out.png    # mask an existing square capture
 #
-# The mask is the inscribed circle (r = min/2, physical glass). Pixels outside are BLACK —
-# exactly the dead corner zone — never cropped away, so the frame stays 1:1 with the panel.
+# The mask is the inscribed circle (r = min/2, physical glass). Pixels outside become
+# TRANSPARENT — the dead corner zone, gone exactly as it is gone on the round glass — and the
+# frame is never cropped, so it stays 1:1 with the panel. Shipped stills (docs/screens/*) MUST
+# carry alpha: an opaque black-corner square is what the analysis frame looks like on the watch,
+# but on the README's white page it reads as a black plate — the bank has always shipped as a
+# true circle. scripts/demo-check.sh asserts corner alpha == 0 on every committed still.
 set -euo pipefail
 
 mask() { # mask <in> <out>
@@ -22,8 +26,8 @@ w, h = im.size
 r = min(w, h) // 2
 mask = Image.new("L", (w, h), 0)
 ImageDraw.Draw(mask).ellipse(((w - r * 2) // 2, (h - r * 2) // 2, (w + r * 2) // 2, (h + r * 2) // 2), fill=255)
-black = Image.new("RGB", (w, h), (0, 0, 0))
-Image.composite(im, black, mask).save(dst)
+im.putalpha(mask)
+im.save(dst)
 PY
 }
 

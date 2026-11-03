@@ -24,6 +24,19 @@
   with the vision endpoint) before shipping; docs text writes paths as
   `/run/media/<user>/…`. Reusable tool: `pixelate.py` (block-pixel + blur,
   alpha-preserving — plain `cv2.imread` strips the circle mask's alpha).
+  **This applies to hostnames and tailnet names too** — and not only in pixels:
+  repo text (code comments, tests, docs) carries neutral stand-ins (a fake
+  tailnet, `labhost`, `/home/user`) so a public clone can't rebuild the owner's
+  network. The batch-9 privacy sweep found the last real ones; scrub new ones
+  the same day they appear.
+- **Shipped stills are TRANSPARENT CIRCLES.** The corners never existed on the
+  round glass, so committed `docs/screens/*` carry alpha: outside the inscribed
+  circle is TRANSPARENT (never a black-cornered square — on the README's white
+  page that reads as a black plate; the batch-9 regression this bullet exists
+  for). `circle-shot.sh` (capture AND `--mask`) writes this mask — canvas stays
+  square 1:1 with the panel. Motion artifacts mask EVERY frame.
+  `scripts/demo-check.sh` asserts corner alpha == 0 on every still; a square
+  fails the gate. The tall poster GIFs in `docs/demo` are harbor art and exempt.
 - **Screenshots show what WORKS.** A model-picked toast must name a model that
   actually answers (claude-fable-5.1 400s on this gateway — never on screen);
   verify the pick by making it answer (`luna-online` pattern) before capturing.
@@ -465,7 +478,14 @@ Branch keeps exactly ONE generation of every tracked media path.
   Captured on the Wear OS 5 emulator (the physical watch's port slept mid-round — honest note in
   the README license line; the volume key path is the bezel's own). GIF re-cut
   `demo-walkthrough-v0.7.0.gif`; silent master `demo-vertical-v0.7.0-raw.mp4` for the owner's score.
-  `tools/demo/pixelate.py` persisted (the round-1 tool had been living in /tmp).
+  `tools/demo/pixelate.py` persisted (the round-1 tool had been living in /tmp). Post-review fixups rode the same
+  commit train: the batch-9 stills first shipped as black-corner squares — re-masked to
+  transparent circles (new §0 bullet + the `demo-check.sh` corner-alpha audit make it permanent),
+  and a full privacy sweep pixelated the Settings-home hostname (row 18 re-shot: harbor-lab
+  restaged, the real hostname mosaic-blurred on the square, deleted after) AND scrubbed every real
+  hostname / tailnet name / peer IP / home-path out of ALL repo text — code comments, test
+  fixtures and docs now carry neutral stand-ins (`tailca7ee1`, `labhost`, `100.99.1.42`,
+  `/home/user`) so the public clone cannot rebuild the owner's network.
 
 - **2026-11-02 (batch-8: GIF typography round, owner screenshot review)** — the owner read the
   walkthrough GIF frame-by-frame and the canvas port lost its geometry: caption pills measured
@@ -490,7 +510,7 @@ Branch keeps exactly ONE generation of every tracked media path.
   pairs at build and captions each half as its own beat (four single-screen beats), rule in §4.
 
 - **2026-11-01 (batch-7: honesty round)** — owner's eye found what the gates missed. SHIPPED CHANGES:
-  `/home/user` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
+  `/home/<user>` pixelated out of `09`+`14a` stills and every v0.6.0 hero-GIF frame (fade frames caught by
   the vision endpoint after OCR went blind on dissolves; mask must be ALPHA-PRESERVING — plain imread
   silently squares the circle); SPEC text anonymized; §8 privacy gate extended (OCR every PNG + EVERY GIF
   frame, fades by vision; `Clayton` whitelisted — it's a credit, not a leak). Honest re-shoots: `26` =

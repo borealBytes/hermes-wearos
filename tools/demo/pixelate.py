@@ -40,7 +40,7 @@ def parse(spec):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 4:
         print(__doc__)
         sys.exit(2)
     redact(sys.argv[1], sys.argv[2], parse(sys.argv[3:]))

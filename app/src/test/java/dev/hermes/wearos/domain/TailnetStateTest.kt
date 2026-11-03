@@ -43,7 +43,7 @@ class TailnetStateTest {
 
     @Test fun `gateway peer matches dnsName case-insensitively and by tailnet ip`() = runBlocking {
         val s = TailnetLogic.parse(runningFixture)
-        assertEquals("labhost.tailca7ee1.ts.net", TailnetLogic.gatewayPeer(s, "labhost.tailca7ee1.ts.net")?.dnsName)
+        assertEquals("labhost.tailca7ee1.ts.net", TailnetLogic.gatewayPeer(s, "LabHost.tailca7ee1.ts.net")?.dnsName)
         assertEquals("labhost", TailnetLogic.gatewayPeer(s, "100.99.1.42")?.hostname)
         assertNull(TailnetLogic.gatewayPeer(s, ""))
         assertNull(TailnetLogic.gatewayPeer(s, "somewhere.else.ts.net"))

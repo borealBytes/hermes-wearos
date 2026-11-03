@@ -256,7 +256,7 @@ the exact tunnel an ask rides:
 
 <img src="docs/screens/55-tailnet-status.png" width="220" alt="Tailnet status page: tailnet up, the watch's node FQDN and gateway peer IP (owner identity pixelated) in green with 'online', the node line with its loopback SOCKS port, the Use-tailnet switch, and the node-name editor below" align="right" hspace="16"/>
 
-<img src="docs/screens/18-settings-home.png" width="220" alt="Settings home: the Gateways row showing two saved gateways with the current one checked, Voice out / Voice in / Display / Watch below" align="right" hspace="16"/>
+<img src="docs/screens/18-settings-home.png" width="220" alt="Settings home: the Gateways row showing two saved gateways with the current one checked (hostname pixelated), Voice out / Voice in / Display / Watch below" align="right" hspace="16"/>
 
 ```mermaid
 stateDiagram-v2

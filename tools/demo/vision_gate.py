@@ -35,7 +35,7 @@ CLAIMS = {
  "15-settings-tail.png": "A settings list tail shows a 'Watch' row with subtitle mentioning 'Body tools' and notifications, and an 'About' row showing version text 'v0.7.0' with 'stt model' beneath.",
  "16-edit-resend.png": "A bottom sheet quotes the sent message 'count' and offers buttons: '✎ Edit & resend' (highlighted blue), 'Copy', and 'close'.",
  "17-agent-picker.png": "An agent list shows pill buttons for profiles: redridge-treasurer, research, resume-builder, squawkbox, wear, and 'wear-demo' highlighted in blue as selected.",
- "18-settings-home.png": "A screen titled Settings shows rows: '🌐 Gateways' with subtitle '2 saved · ✓ labhost', '🔊 Voice out' with subtitle 'off · 1.81×', and '🎙 Voice in'.",
+ "18-settings-home.png": "A screen titled Settings shows rows: '🌐 Gateways' with subtitle '2 saved · ✓' followed by a mosaic-blurred hostname, '🔊 Voice out' with subtitle 'on · 1.67×', and '🎙 Voice in'.",
  "19-settings-display.png": "A Display settings page scrolled down shows 'Launch splash' with a blue 'Video' chip beside a 'Static' chip, a blue 'Pick media' button, 'Media: built-in', 'Pinch text ×1.00' with 'pinch the chat to resize text', and an 'Orb dial — drag 8 ways' section with rows '12:00 keyboard' and mute.",
  "21-session-search.png": "A search screen shows 'harbors' in a text field with a ✕ button, a heading 'Search · 2', and two result rows, the top one titled 'Essay: history of harbor lamps'.",
  "22-session-sheet.png": "A sheet opened on the session row 'Generate Aurora Borealis photo via Comfy' shows buttons: '⑂ fork & open' (blue), 'archive' with a box icon, 'delete…' in red, and 'close'.",
