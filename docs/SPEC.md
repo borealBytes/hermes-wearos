@@ -931,6 +931,24 @@ always-send-every-clip policy; the owner decides per note (auto-quality is a lat
 Mic discipline: `VoskStt` holds `AudioRecord` under a mutex, so the record lane takes that same
 mutex rather than opening a second capture.
 
+**THE MIC STOPPED SHIPPING RAW WAVE (owner 2026-11-02: "why'd you send the audio as a wave? use
+the best current one").** The streamed lane (`/stt/stream`) used to push raw 16 kHz mono PCM16 —
+256 kbit/s, ~32 KB/s through the tailnet. `voice/MicCodec.kt` now picks the best encoder the
+device carries: **Opus 24k** (VoIP application — the best current speech codec; ~10x lighter, and
+the Wear emulator image proved to have it even where `media_codecs.xml` lists no encoder — query
+MediaCodec, not the XML), **AAC-LC 32k** as the every-Android fallback (ADTS-framed by hand —
+`voice/CodecMuxers.kt`, MP4's moov-at-end is the wrong shape for a live stream), or raw PCM when
+the device has neither. The wire format is **sniffed from the first bytes** server-side
+(`OggS` → Ogg/Opus, exact ADTS shape → AAC, else PCM), and encoded lanes are demuxed by watchkit
+through ffmpeg to engine PCM — the engines never changed, and an old watch ↔ new watchkit (or
+vice versa) just works. RFC 7845 gotcha that cost a debug cycle: **OpusHead must END the BOS
+page** — sharing it with OpusTags makes ffmpeg read the tags as a second OpusHead and reject the
+stream ("Channel change is not supported"). Proof: the same ATC speech clip transcribed to the
+same words over all three wires (Opus at 29.9 KB vs the wave's 320 KB for 10 s, partials included);
+`CodecMuxersTest` byte-compares the pages against an independent Python encoder and ffmpeg's own
+ADTS bytes. Also fixed by the same probe: the engine child was awaited on `exit`, which can fire
+before the final JSONL leaves stdout — cleanup then cut it; it awaits `close` now.
+
 ### 13.5 Asks for the Hermes gateway (not this repo)
 
 1. `GET /v1/commands` — expose `hermes_cli.commands.COMMAND_REGISTRY` (already gateway-importable,
@@ -1242,7 +1260,9 @@ Remote http(s) targets play DIRECT (no bearer — a public URL needs no secret);
 absolute paths stream through watchkit `/media` with the bearer header.
 
 **Server side (watchkit `/media`, SPEC §13 surface).** ffmpeg pre-shrink before the wrist ever
-sees bytes: H.264 faststart mp4 / AAC m4a, quality presets from the watch's `q=0..100` (q<34 →
+sees bytes: H.264 faststart mp4 (AAC audio — hardware decode) / **Ogg/Opus for standalone audio**
+(the best current codec; falls back to AAC m4a on boxes whose ffmpeg lacks libopus — probed once),
+quality presets from the watch's `q=0..100` (q<34 →
 ≤360p/350k, <67 → ≤480p/700k, else ≤540p/1.2M), `mono=0/1`, `ab=<kbps>`; `poster=1` returns a
 JPEG frame, `probe=1` metadata; HTTP Range responses so ExoPlayer seeks. Cache key =
 realpath|mtime|params under `.cache/media` — same file + same knobs is a <5 ms hit; a knob
