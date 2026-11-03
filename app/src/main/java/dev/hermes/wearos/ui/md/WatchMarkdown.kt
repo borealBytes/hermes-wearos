@@ -51,6 +51,27 @@ sealed interface MdBlock {
     data class Media(val video: Boolean, val target: String, val label: String) : MdBlock
 
     /**
+     * TOOL ACTIVITY (owner 2026-11-02: "more verbosity for code edits and terminal outputs,
+     * running and when done, in a collapsable box like hermes desktop"). One card per run:
+     * a header line that expands to the per-step rows. Produced from the ```hermes-steps fence
+     * ChatSession writes when a run settles — and fed DIRECTLY (no fence) to the same card
+     * while the run streams.
+     */
+    data class ActivityRun(val steps: List<ActStep>) : MdBlock
+
+    /** One tool-call row: name, seconds, failure flag, the start preview (command/path), and
+     *  the bounded result preview when the gateway carries one (newer gateway builds only).
+     *  [running] = the call is mid-flight (live ledger only — a settled fence never runs). */
+    data class ActStep(
+        val tool: String,
+        val durS: Double,
+        val error: Boolean,
+        val preview: String,
+        val result: String,
+        val running: Boolean = false,
+    )
+
+    /**
      * Markdown tables degrade to pre-formatted "· col: cell" caption lines — the watch is too
      * narrow for a wide grid, so each non-blank cell becomes its own labelled line (F3 note).
      * Structured [header]/[rows] ride along: when the table is exactly two labelled columns
@@ -162,8 +183,13 @@ object WatchMarkdown {
                     code.appendLine(lines[j]); j++
                 }
                 val body = code.toString().removeSuffix("\n")
-                out += if (info.lowercase().startsWith("mermaid")) MdBlock.MermaidFence(body)
-                else MdBlock.CodeBlock(info, body)
+                out += when {
+                    info.lowercase().startsWith("mermaid") -> MdBlock.MermaidFence(body)
+                    // Tool-activity fence written by ChatSession on settle (domain.StepsFence —
+                    // format lives there; parse is here). Junk rows skip, never storm.
+                    info.lowercase().startsWith("hermes-steps") -> MdBlock.ActivityRun(parseStepsFence(body))
+                    else -> MdBlock.CodeBlock(info, body)
+                }
                 i = if (closed) j + 1 else j
                 continue
             }
@@ -279,6 +305,23 @@ object WatchMarkdown {
 
     private fun cellsOf(line: String): List<String> =
         line.trim().trimStart('|').trimEnd('|').split('|').map { it.trim() }
+
+    /** ```hermes-steps body → step rows (written by domain.StepsFence — encode lives there).
+     *  `tool|durS|status|preview|result`; short rows fill from the right so a truncated line
+     *  still names its tool; a garbage durS is 0, never a throw. */
+    internal fun parseStepsFence(body: String): List<MdBlock.ActStep> =
+        body.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.map { ln ->
+            val f = ln.split('|').map { it.trim() }
+            val status = f.getOrElse(2) { "" }
+            MdBlock.ActStep(
+                tool = f.getOrElse(0) { "?" },
+                durS = f.getOrElse(1) { "" }.toDoubleOrNull() ?: 0.0,
+                error = status == "err",
+                preview = f.getOrElse(3) { "" },
+                result = f.getOrElse(4) { "" },
+                running = status == "run",
+            )
+        }.toList()
 
     // ---- inline pass: **bold**, *italic*, `code`, [label](url), bare https://…; unterminated stays literal ----
 

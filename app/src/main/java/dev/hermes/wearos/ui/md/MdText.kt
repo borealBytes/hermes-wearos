@@ -105,6 +105,8 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
 
         is MdBlock.Media -> MediaBlock(block, blockKey, modifier)
 
+        is MdBlock.ActivityRun -> ActivityRunCard(block.steps, running = false, blockKey, modifier)
+
         is MdBlock.Table -> if (block.gridable) {
             // True mini-grid for exactly-2 labelled columns: header + hairline + rows (F3 note).
             Column(modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -172,9 +174,124 @@ fun MdMessage(text: String, msgKey: Any, modifier: Modifier = Modifier) {
 }
 
 /** Collapsed code: `‹lang› code · tap` + first-line hint; tap → full monospace, h-scroll. */
+/**
+ * THE COLLAPSIBLE TOOL-ACTIVITY CARD (owner 2026-11-02: "collapsable box like hermes desktop — a
+ * little window that pops up, I click it, it collapses"). Header = count + live state; tap the
+ * header to collapse/expand; a step's bounded result (newer gateways carry one) is per-row.
+ * Fed LIVE (from ChatSession's ledger, running=true, starts expanded) and from the persisted
+ * ```hermes-steps fence after settle (starts collapsed — the answer owns the stage, the theatre
+ * is one tap away, exactly the desktop posture).
+ */
 @Composable
-private fun CodeCard(lang: String, code: String, blockKey: Any, modifier: Modifier) {
-    var expanded by remember(blockKey) { mutableStateOf(false) }
+fun ActivityRunCard(
+    steps: List<MdBlock.ActStep>,
+    running: Boolean,
+    blockKey: Any,
+    modifier: Modifier,
+    expandedDefault: Boolean = false,
+) {
+    var expanded by remember(blockKey) { mutableStateOf(expandedDefault) }
+    val nErrors = steps.count { it.error }
+    val head = when {
+        running -> "⚙ ${steps.size} step${if (steps.size == 1) "" else "s"} · running…"
+        nErrors > 0 -> "⚙ ${steps.size} step${if (steps.size == 1) "" else "s"} · $nErrors failed"
+        else -> "⚙ ${steps.size} step${if (steps.size == 1) "" else "s"} · done ✓"
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colors.surface.copy(alpha = 0.4f))
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        Text(
+            head + (if (expanded) "  ‹collapse›" else "  ‹expand›"),
+            style = MaterialTheme.typography.caption3.scaled(),
+            color = if (running) Color(0xFFF5C518) else MaterialTheme.colors.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (!expanded) {
+            // Collapsed still shows the LATEST move — the glance answer to "what is it doing".
+            val last = steps.lastOrNull()
+            if (last != null) Text(
+                "${stepIcon(last.tool)} ${last.preview.ifBlank { last.tool }}",
+                style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 160.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                steps.forEachIndexed { i, s ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = if (i == 0) 2.dp else 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "${stepIcon(s.tool)} ${s.tool}",
+                            style = MaterialTheme.typography.caption3.scaled(),
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                s.error -> Color(0xFFFF8A80)
+                                s.running -> Color(0xFFF5C518)
+                                else -> MaterialTheme.colors.onBackground
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            when {
+                                s.running -> "▸"
+                                s.error -> "⚠"
+                                s.durS > 0 -> "%.1fs".format(s.durS)
+                                else -> "✓"
+                            },
+                            style = MaterialTheme.typography.caption3.scaled(),
+                            color = if (s.error) Color(0xFFFF8A80) else MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+                        )
+                    }
+                    if (s.preview.isNotBlank()) Text(
+                        s.preview,
+                        style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
+                        color = MaterialTheme.colors.onBackground.copy(alpha = 0.8f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (s.result.isNotBlank()) Text(
+                        s.result,
+                        style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
+                        color = if (s.error) Color(0xFFFF8A80) else MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Tool → one-glyph family (monochrome: survives any watch font; mirrors the desktop's </>-style tag). */
+internal fun stepIcon(tool: String): String = when {
+    tool.contains("terminal") || tool.contains("shell") || tool.contains("exec") -> "⌨"
+    tool.contains("edit") || tool.contains("write") || tool.contains("patch") -> "✎"
+    tool.contains("read") || tool.contains("list") || tool.contains("glob") -> "≡"
+    tool.contains("search") || tool.contains("grep") || tool.contains("browser") || tool.contains("web") -> "⌕"
+    tool.contains("delegate") || tool.contains("agent") -> "⇢"
+    else -> "⚙"
+}
+
+@Composable
+private fun CodeCard(lang: String, code: String, blockKey: Any, modifier: Modifier) {    var expanded by remember(blockKey) { mutableStateOf(false) }
     val label = lang.ifBlank { "code" }
     Column(
         modifier = modifier

@@ -91,6 +91,19 @@ enum class RenderCase(val id: String, val markdown: String) {
             "MEDIA:/tmp/medtest.wav\n\n" +
             "Tap a card for fullscreen; back returns here.\n",
     ),
+    Steps(
+        "steps",
+        "Fixed the maturity maps — here's the run trace (tap the ⚙ box to collapse/expand):\n\n" +
+            "```hermes-steps\n" +
+            "terminal|1.24|ok|python render_maturity_maps.py --year 2023|\n" +
+            "read_file|0.03|ok|research/figures/corn_rm_us_canada_2019_2023_mean.png|\n" +
+            "edit_file|0.05|ok|render_maturity_maps.py|+6 -2 (colorbar label fix)\n" +
+            "terminal|0.41|err|pytest -q tests/test_maps.py|2 failed, 41 passed ⏎ AssertionError: cmap length\n" +
+            "edit_file|0.04|ok|render_maturity_maps.py|tick rounding moved below colorbar\n" +
+            "terminal|2.10|ok|pytest -q tests/test_maps.py|43 passed in 1.9s\n" +
+            "```\n\n" +
+            "All green now.\n",
+    ),
     All(
         "all",
         Tables.markdown + "\n" + Wide.markdown + "\n" + Mermaid.markdown + "\n" +

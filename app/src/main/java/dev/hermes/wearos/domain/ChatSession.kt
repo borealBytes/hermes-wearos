@@ -46,6 +46,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val live: String = "",            // streaming buffer for the answer in flight
     val status: String = "",          // one-line "what the agent is doing"
+    val steps: List<ToolStep> = emptyList(), // tool-activity ledger for the run in flight (CollapsibleActivity)
     val approval: ApprovalInfo? = null,
     val busy: Boolean = false,
     val gen: Long = 0L,               // bumped on chat switch: transcript reloads must not re-speak
@@ -209,6 +210,16 @@ class ChatSession(
     private fun explain(e: Throwable): String {
         val code = (e as? ApiException)?.code
         if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
+        // 409 permission_denied on submit = the session-binding doctrine (gateway session_api.py):
+        // a session whose stored source is the desktop CLI (`local`) refuses an API-lane run.
+        // ADOPT-ONLY: read it, chat in it once the desktop itself moves it to an API chat — the
+        // watch NEVER forks it automatically (owner 2026-11-02: "an auto-fork makes a mess; a
+        // desktop session continues in the desktop AND on the watch"). Gateway ask: SPEC §13.5.
+        if (code == 409 && (e.message ?: "").contains("permission_denied")) {
+            val s = store.get(activeId)?.sessionTitle?.take(20) ?: "this chat"
+            return "read-only on the wrist: $s was made by the desktop CLI — the gateway only lets " +
+                "the API lane run API-created chats. Ask from the desktop, or start a watch chat."
+        }
         val tried = runCatching {
             if (WearApp.Graph.hasEndpoints()) WearApp.Graph.endpoints.status.value.apiResults else emptyMap()
         }.getOrDefault(emptyMap())
@@ -420,7 +431,7 @@ class ChatSession(
         stoppedRunId = ""
         deltaCount = 0L
         addMessage(ChatMessage.Role.User, trimmed)
-        _state.value = _state.value.copy(busy = true, live = "", status = "sending…")
+        _state.value = _state.value.copy(busy = true, live = "", status = "sending…", steps = emptyList())
         // W8: a chat may consume body tools (MCP) — refresh the watchkit snapshot first
         // (fire-and-forget, rate-limited inside; no-op when all tools are off).
         try { WearApp.Graph.pusher.refreshOnAsk() } catch (e: Exception) { /* Graph not ready */ }
@@ -518,8 +529,29 @@ class ChatSession(
             "message.interim" -> if (obj["already_streamed"]?.toString() != "true") obj.str("text")?.let { t ->
                 _state.value = _state.value.copy(live = _state.value.live + t)
             }
-            "tool.started" -> _state.value = _state.value.copy(status = "🔧 ${obj.str("tool") ?: "tool"}…")
-            "tool.completed" -> _state.value = _state.value.copy(status = "")
+            "tool.started" -> {
+                val tool = obj.str("tool") ?: "tool"
+                _state.value = _state.value.copy(
+                    status = "🔧 $tool…",
+                    // THE ACTIVITY LEDGER (owner 2026-11-02: "I feel like I'm missing what's
+                    // actually going on"): every tool call becomes a card row the instant it
+                    // starts — command/path ride in `preview`.
+                    steps = _state.value.steps + ToolStep(obj.str("tool_call_id") ?: "", tool, obj.str("preview") ?: ""),
+                )
+            }
+            "tool.completed" -> {
+                val callId = obj.str("tool_call_id")
+                val tool = obj.str("tool") ?: "tool"
+                val steps = _state.value.steps.toMutableList()
+                val at = steps.indexOfLast { s -> !s.done && (callId != null && s.callId == callId || s.tool == tool) }
+                val fin = ToolStep(
+                    callId ?: "", tool, steps.getOrNull(at)?.preview ?: "",
+                    done = true, error = obj.flag("error"), durS = obj.num("duration"),
+                    result = obj.str("preview") ?: "", // bounded result text on NEWER gateways; "" today
+                )
+                if (at >= 0) steps[at] = fin else steps += fin // started missed (mid-run resume): the completed row still counts
+                _state.value = _state.value.copy(status = "", steps = steps)
+            }
             "approval.request" -> {
                 val q = obj.str("command") ?: obj.str("question") ?: obj.str("message") ?: "Approve this action?"
                 onApprovalArrived(ApprovalInfo(runId, obj.str("request_id") ?: obj.str("id"), q, obj.choiceNames()))
@@ -1278,14 +1310,21 @@ class ChatSession(
         eventSource?.cancel()
         RunWakeLock.release("settle run=$currentRunId")
         if (currentRunId.isNotEmpty()) Notifs.cancelApproval(app, currentRunId)
+        // THE FOLD (owner 2026-11-02: "verbosity … when done … collapsable box like desktop"):
+        // the run's tool ledger settles INTO the transcript as a fence-block before the answer —
+        // collapsed by default after settle, one tap from the full theatre, and reload-stable.
+        val stepsNow = _state.value.steps
+        if (stepsNow.isNotEmpty()) addMessage(ChatMessage.Role.Hermes, StepsFence.encode(stepsNow))
         addMessage(if (error) ChatMessage.Role.System else ChatMessage.Role.Hermes, text)
-        _state.value = _state.value.copy(live = "", status = "", busy = false, approval = null)
+        // The live card hands over to the persisted fence card — keeping both would double up.
+        _state.value = _state.value.copy(live = "", status = "", busy = false, approval = null, steps = emptyList())
         val chatId = activeId
         store.update(chatId) { it.copy(lastRunId = "", updatedAt = System.currentTimeMillis()) }
         scope.launch { settings.setLastRun("") }
         store.saveTranscript(chatId, messageLog)
         // First answer settled: pull the gateway's session title into the list label (§3 titles).
-        if (!error && messageLog.count { it.role == ChatMessage.Role.Hermes } == 1) enrichLabel(chatId)
+        // (the activity fence is a Hermes message too — only real answers count)
+        if (!error && messageLog.count { it.role == ChatMessage.Role.Hermes && !it.text.startsWith("```" + StepsFence.LANG) } == 1) enrichLabel(chatId)
         // M5 + owner rule 2026-10-29: a settle goes to Wear OS notifications unless THIS chat is
         // the front screen (see Graph.viewingChatId) — another chat open, another surface, or
         // screen-off all notify; only the chat you're literally watching renders inline instead.
@@ -1326,3 +1365,11 @@ class ChatSession(
         }
     }
 }
+
+// SSE number/boolean getters to match HermesApi.str: kotlinx primitives must be read via
+// .content — JsonPrimitive.toString() is the JSON form ("0.21" with quotes, true bare).
+private fun kotlinx.serialization.json.JsonObject.num(key: String): Double =
+    (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull() ?: 0.0
+
+private fun kotlinx.serialization.json.JsonObject.flag(key: String): Boolean =
+    (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() == true

@@ -18,7 +18,7 @@ class RenderCasesTest {
         assertEquals(RenderCase.Tables, RenderCase.of("tables"))
         assertEquals(RenderCase.Mermaid, RenderCase.of(" MERMAID "))
         assertNull(RenderCase.of("nonsense"))
-        assertEquals("tables,wide,mermaid,pdf,link,media,av,all", RenderCase.ids())
+        assertEquals("tables,wide,mermaid,pdf,link,media,av,steps,all", RenderCase.ids())
     }
 
     @Test fun `the tables case has a five-column grid and a six-column degradation`() {

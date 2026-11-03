@@ -60,6 +60,9 @@ import dev.hermes.wearos.domain.ApprovalInfo
 import dev.hermes.wearos.domain.ChatFollow
 import dev.hermes.wearos.domain.ChatMessage
 import dev.hermes.wearos.domain.ChatUiState
+import dev.hermes.wearos.domain.ToolStep
+import dev.hermes.wearos.ui.md.ActivityRunCard
+import dev.hermes.wearos.ui.md.MdBlock
 import dev.hermes.wearos.ui.md.MdMessage
 
 @Composable
@@ -450,6 +453,18 @@ fun ChatScreen(
         // pixel-truthful top-rest regime (ChatAnchor hold constants + ticker). The same rows
         // return, keyed and intact, the moment the first delta answers.
         items(state.messages, key = { it.id }) { msg -> MessageLine(msg, markdown, onEditPrompt) }
+        // LIVE ACTIVITY CARD (owner 2026-11-02): the theatre ABOVE the answer, expanded while
+        // it runs, tap-to-collapse — the same card the fence renders after settle, so the
+        // fold-out look never changes mid-run.
+        if (state.steps.isNotEmpty()) item {
+            ActivityRunCard(
+                state.steps.map { it.toActStep() },
+                running = state.busy,
+                blockKey = "live-steps",
+                modifier = Modifier.fillMaxWidth(),
+                expandedDefault = true,
+            )
+        }
         if (state.approval != null) {
             item { ApprovalCard(state.approval, onApprove) }
         }
@@ -501,6 +516,15 @@ fun ChatScreen(
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
+            // The live activity card rides the hold too — a long terminal command streams NO
+            // deltas, and this is exactly when "what's actually going on" matters most.
+            if (state.steps.isNotEmpty()) ActivityRunCard(
+                state.steps.map { it.toActStep() },
+                running = state.busy,
+                blockKey = "hold-steps",
+                modifier = Modifier.fillMaxWidth(),
+                expandedDefault = true,
+            )
             // Fill to the crown: the status row's BOTTOM rests on the 8:20 line — where the
             // settled answer's last line will rest, so the panel lifts and the reply simply
             // continues the sentence the status was holding.
@@ -522,6 +546,9 @@ fun ChatScreen(
     }
     } // Box (batch-5 #21 hold-scrim host)
 }
+
+internal fun ToolStep.toActStep(): MdBlock.ActStep =
+    MdBlock.ActStep(tool, durS, error, preview, result, running = !done)
 
 /**
  * ONE PASSIVE CAPTION LINE (owner batch 3: "would it simplify the interface even more to get all
