@@ -202,7 +202,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `11-gateways.png` | re-shot (from the r7d film raw — live registry); 42 shows the same registry a beat later | alt re-worded to pixels | refreshed |
 | `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5); ● marks the live agent | refreshed |
 | — (new, batch 9 / v0.7.0) | `48-media-cards.png`, `49-video-player.png`, `50-gif-card.gif` (MOTION artifact, screen-recorded), `51-video-pinched.png`, `52-audio-player.png`, `53-handoff-adopted.png`, `54-tool-activity.png`, `55-tailnet-status.png`; re-shots of `08`/`11`/`42`/`47` | NEW README rows in the feature grid + handoff lead-in + tailnet img in §Networking + `wifi(wlan0)`/pixelation alt refresh | refreshed |
-| hero GIF | re-cut as **`demo-walkthrough-v0.7.0.gif`** (v0.6.0 GIF purged per §9); master `demo-vertical-v0.7.0-raw.mp4` cut for the owner's scoring pass (never committed) | alt text lists the new beats | refreshed |
+| hero GIF | re-cut as **`demo-walkthrough-v0.7.0.gif`** (v0.6.0 GIF purged per §9); master `demo-vertical-v0.7.0-raw.mp4` scored and UPLOADED by the owner — README hero links [youtube.com/shorts/eSGy7jFHi18](https://www.youtube.com/shorts/eSGy7jFHi18) (v0.7.0 tour; the v0.6.0 full tour stays linked) (never committed) | alt text lists the new beats | refreshed |
 | weights section | numbers re-measured (106 MB APK incl. the gomobile tailnet node) | table matches `unzip -l` of the shipped debug APK | refreshed |
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
@@ -477,7 +477,8 @@ Branch keeps exactly ONE generation of every tracked media path.
   (106 MB incl. the 44 MB gomobile node across ABIs); voice table says the mic rides as Opus.
   Captured on the Wear OS 5 emulator (the physical watch's port slept mid-round — honest note in
   the README license line; the volume key path is the bezel's own). GIF re-cut
-  `demo-walkthrough-v0.7.0.gif`; silent master `demo-vertical-v0.7.0-raw.mp4` for the owner's score.
+  `demo-walkthrough-v0.7.0.gif`; silent master `demo-vertical-v0.7.0-raw.mp4` — owner scored and uploaded
+  it as the v0.7.0 YouTube Short the README hero now links.
   `tools/demo/pixelate.py` persisted (the round-1 tool had been living in /tmp). Post-review fixups rode the same
   commit train: the batch-9 stills first shipped as black-corner squares — re-masked to
   transparent circles (new §0 bullet + the `demo-check.sh` corner-alpha audit make it permanent),

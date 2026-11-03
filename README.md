@@ -30,10 +30,10 @@ carries on. Expect small per-OEM tweaks for non-Samsung watches (IME and notific
 mannerisms); a OnePlus Watch is next on the test bench.
 
 <p align="center">
-  <a href="https://youtu.be/Cd4Y_ESQoQ0"><img src="docs/demo/demo-walkthrough-v0.7.0.gif" width="480" alt="Animated walkthrough: the splash film, dial, voice ask, streaming answer, a stopped run, an approval tap, the karaoke reply, generated video and audio on the wrist, animated GIFs, pinch-zoomed video, the tailnet status page, and a desktop chat picked up mid-thread — every feature at real wrist speed"/></a><br/>
-  <sub>Click the strip for the <a href="https://youtu.be/Cd4Y_ESQoQ0">▶ full vertical tour</a> — 2:30,
-  1080×1920, with a score by the owner's agent (the v0.6.0 cut; the v0.7.0 master ships with this
-  release). Every feature at real wrist speed, captured live with no edits to the answers.</sub><br/>
+  <a href="https://www.youtube.com/shorts/eSGy7jFHi18"><img src="docs/demo/demo-walkthrough-v0.7.0.gif" width="480" alt="Animated walkthrough: the splash film, dial, voice ask, streaming answer, a stopped run, an approval tap, the karaoke reply, generated video and audio on the wrist, animated GIFs, pinch-zoomed video, the tailnet status page, and a desktop chat picked up mid-thread — every feature at real wrist speed"/></a><br/>
+  <sub>Click the strip for the <a href="https://www.youtube.com/shorts/eSGy7jFHi18">▶ v0.7.0 tour</a> —
+  1080×1920, scored by the owner's agent. Every feature at real wrist speed, captured live with no
+  edits to the answers (<a href="https://youtu.be/Cd4Y_ESQoQ0">the v0.6.0 full tour is here</a>).</sub><br/>
   <sub>Splash art: <a href="docs/art-selfportrait.webp">her self-portrait</a> — engraved by the on-gateway
   image agent from its own idea of itself; it flashes for a beat on cold start, then gets out of your way.</sub>
 </p>
