@@ -72,6 +72,8 @@ import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
 import dev.hermes.wearos.domain.NetworkWatch
 import dev.hermes.wearos.domain.RouteReport
+import dev.hermes.wearos.domain.TailnetLogic
+import dev.hermes.wearos.domain.TailnetPhase
 import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
 import dev.hermes.wearos.location.LocationTool
@@ -104,6 +106,15 @@ fun SettingsScreen(
     var baseUrl by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
+    // TAILNET page state (SPEC §11.4); the engine's live status rides the Graph mirror.
+    var tnEnabled by remember { mutableStateOf(true) }
+    var tnKey by remember { mutableStateOf("") }
+    var tnHost by remember { mutableStateOf("") }
+    var tnKeySaved by remember { mutableStateOf(false) }
+    var tnHostSaved by remember { mutableStateOf(false) }
+    var tnTesting by remember { mutableStateOf(false) }
+    var tnTestResult by remember { mutableStateOf("") }
+    var tnReenrollArmed by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("…") }
     var testing by remember { mutableStateOf(false) }
     var wkResult by remember { mutableStateOf("") }
@@ -188,7 +199,14 @@ fun SettingsScreen(
         baseUrl = settings.baseUrl()
         token = settings.token()
         settings.loadBodyTools()
+        tnEnabled = settings.tailnetEnabled()
+        tnKey = settings.tailnetKey()
+        tnHost = settings.tailnetHostname()
     }
+
+    /** Host of the active gateway endpoint — the peer the tailnet phase is judged against. */
+    fun settingsGwHost(): String =
+        runCatching { android.net.Uri.parse(baseUrl).host.orEmpty() }.getOrDefault("")
 
     val settingsScroll = androidx.compose.foundation.rememberScrollState()
     val edgeScope = rememberCoroutineScope()
@@ -242,6 +260,8 @@ fun SettingsScreen(
             // #13: voice-IN gets its own page (was buried in Voice out); subtitle names the
             // provider the orb will use, straight from the same in-memory truth the mic reads.
             SettingNavRow("🎤", "Voice in", SttProviders.navSummary(SttProviders.fromId(SttProviders.current))) { page = SettingsPage.VoiceIn }
+            val mediaStereo by settings.mediaStereo.collectAsState()
+            SettingNavRow("🎬", "Media", "A/V scaling · " + (if (mediaStereo) "stereo" else "mono") + " audio") { page = SettingsPage.Media }
             SettingNavRow("🎛️", "Display", "markdown · splash · orb") { page = SettingsPage.Display }
             SettingNavRow("⌚", "Watch", "body tools ${bodyTools.size} on · notifications") { page = SettingsPage.Watch }
             SettingNavRow("ℹ️", "About", "v$version · stt model") { page = SettingsPage.About }
@@ -500,6 +520,125 @@ fun SettingsScreen(
         // ui/md/WatchMarkdown instead of raw text. Default ON; StateFlow so the chat re-renders live.
             Spacer(Modifier.height(2.dp))
             SettingNavRow("🔑", "Agent keys", "learned from the selected gateway") { page = SettingsPage.AgentKeys }
+            val tnSt by WearApp.Graph.tailnetStatus.collectAsState()
+            val tnPhase = TailnetLogic.phase(tnSt, tnEnabled, settingsGwHost())
+            SettingNavRow("🕸️", "Tailnet", TailnetLogic.describe(tnPhase, tnSt, settingsGwHost())) { page = SettingsPage.Tailnet }
+        }
+        if (page == SettingsPage.Tailnet) {
+        // ─── TAILNET (SPEC §11.4): the watch's own node is THE transport ─────────────────
+        // Phase truth comes from the engine (parsed in domain/TailnetState); this page owns
+        // only the enrollment inputs. IME rule holds: every EditLine saves on Done AND on
+        // the Save button — nothing here depends on Enter.
+        FieldLabel("Status")
+        val tnSt by WearApp.Graph.tailnetStatus.collectAsState()
+        val tnGw = settingsGwHost()
+        val tnPhase = TailnetLogic.phase(tnSt, tnEnabled, tnGw)
+        Text(
+            TailnetLogic.describe(tnPhase, tnSt, tnGw),
+            style = MaterialTheme.typography.caption1,
+            color = when (tnPhase) {
+                TailnetPhase.ACTIVE -> Color(0xFF81C784)
+                TailnetPhase.NEEDS_AUTH, TailnetPhase.DEGRADED, TailnetPhase.STOPPED -> Color(0xFFE57373)
+                else -> Color(0xFFB0BEC5)
+            },
+        )
+        if (tnPhase == TailnetPhase.ACTIVE && tnSt.self != null) {
+            Text(
+                "node ${tnSt.self?.dnsName} · via 127.0.0.1:${tnSt.socksPort}",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Use tailnet", style = MaterialTheme.typography.caption1)
+            Switch(
+                checked = tnEnabled,
+                onCheckedChange = { v -> tnEnabled = v; WearApp.Graph.tailnetSetEnabled(v) },
+            )
+        }
+        FieldLabel("Node name")
+        EditLine(
+            value = tnHost,
+            onChange = { tnHost = it; tnHostSaved = false },
+            placeholder = "hermes-wearos",
+            onDone = { scope.launch { settings.setTailnetHostname(tnHost); tnHostSaved = true } },
+        )
+        Text(
+            "Shows in the tailnet admin · applied at next enrollment",
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+        )
+        FieldLabel("Auth key")
+        EditLine(
+            value = tnKey,
+            onChange = { tnKey = it; tnKeySaved = false },
+            placeholder = "tskey-auth-… (admin ▸ Keys)",
+            password = true,
+            onDone = {
+                scope.launch {
+                    settings.setTailnetKey(tnKey); tnKeySaved = true
+                    WearApp.Graph.tailnetStart() // fresh key → land it (enroll if not in yet)
+                }
+            },
+        )
+        // Two rows, not three buttons on one: the ring's ~170dp content width fits two
+        // buttons comfortably and clips a third (caught on screenshot, 2026-11-02 — the
+        // Gateways page's Save+Test row is the precedent this copies).
+        Button(
+            onClick = {
+                scope.launch {
+                    settings.setTailnetKey(tnKey); tnKeySaved = true
+                    WearApp.Graph.tailnetStart()
+                }
+            },
+            modifier = Modifier.size(width = 72.dp, height = 32.dp),
+        ) { Text(if (tnKeySaved) "✓" else "Save", style = MaterialTheme.typography.button) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Two-tap confirm (the ring has no dialog real estate worth burning here): first
+            // tap arms, second enrolls fresh — and a fresh enrollment means a NEW node row in
+            // the admin console, so it must not be a fatality.
+            Button(
+                onClick = {
+                    if (tnReenrollArmed) { WearApp.Graph.tailnetReenroll(); tnReenrollArmed = false }
+                    else tnReenrollArmed = true
+                },
+                modifier = Modifier.size(width = 84.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) { Text(if (tnReenrollArmed) "Sure?" else "Re-enroll", style = MaterialTheme.typography.button) }
+            // THE honest test: a gateway health call that rides whatever the app rides right
+            // now — through the tunnel when it's up (same client, same ProxySelector).
+            Button(
+                onClick = {
+                    tnTesting = true; tnTestResult = "…"
+                    scope.launch {
+                        tnTestResult = try {
+                            val a = dev.hermes.wearos.net.HermesApi(settings.baseUrl(), settings.token())
+                            withContext(Dispatchers.IO) { a.health() }
+                        } catch (e: Exception) {
+                            "⚠️ " + RouteReport.explain(e)
+                        }
+                        tnTesting = false
+                    }
+                },
+                modifier = Modifier.size(width = 72.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) { Text(if (tnTesting) "…" else "Test", style = MaterialTheme.typography.button) }
+        }
+        if (tnTestResult.isNotEmpty() && !tnTesting) {
+            Text(
+                if (tnTestResult.startsWith("ok") || tnTestResult.startsWith("OK") || tnTestResult.startsWith("✅"))
+                    "✅ $tnTestResult" else tnTestResult,
+                style = MaterialTheme.typography.caption2,
+                color = if (tnTestResult.startsWith("⚠️")) Color(0xFFE57373) else Color(0xFF81C784),
+                fontSize = 11.sp,
+            )
+        }
+        Text(
+            "Every ask rides the tunnel — no LAN, no phone. Node state lives on this watch; " +
+                "a Re-enroll spends a key and leaves the old node for pruning in the admin.",
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+        )
         }
         if (page == SettingsPage.Display) {
         FieldLabel("Display")
@@ -671,7 +810,7 @@ fun SettingsScreen(
             )
         }
 
-        // watchkit helper daemon (server/watchkit, tailnet :8651): health probe like the Hermes Test.
+        // watchkit helper daemon (server/watchkit, tailnet :42651): health probe like the Hermes Test.
         }
         if (page == SettingsPage.Gateways) {
         FieldLabel("Watchkit")
@@ -988,6 +1127,55 @@ fun SettingsScreen(
                 }
             }
         }
+        if (page == SettingsPage.Media) {
+            // MEDIA EPIC (owner 2026-11-02: "a slider for the video quality … an option for
+            // bitrate and stereo because with Bluetooth headphones you might want the stereo"):
+            // these knobs ride EVERY watchkit /media URL and the ffmpeg transcode matches them
+            // there (server cache keyed per shape — changing a knob re-shapes, never re-junks).
+            FieldLabel("🎬 media scaling")
+            val mediaQ by settings.mediaQuality.collectAsState()
+            val mediaStereo by settings.mediaStereo.collectAsState()
+            val mediaKbps by settings.mediaAudioKbps.collectAsState()
+            Text(
+                "Generated video/audio is shrunk on the gateway before it crosses the wire.",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+            )
+            QualitySlider(mediaQ) { v -> scope.launch { settings.setMediaQuality(v) } }
+            Text(
+                when {
+                    mediaQ < 34 -> "Small · ≤360p · ~350 kbps"
+                    mediaQ < 67 -> "Balanced · ≤480p · ~700 kbps"
+                    else -> "Sharp · ≤540p · ~1.2 Mbps"
+                },
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+            )
+            Spacer(Modifier.size(6.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Stereo audio", style = MaterialTheme.typography.caption1)
+                Switch(checked = mediaStereo, onCheckedChange = { v -> scope.launch { settings.setMediaStereo(v) } })
+            }
+            Text(
+                "Off = mono for the watch speaker; on for Bluetooth headphones.",
+                style = MaterialTheme.typography.caption2,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+            )
+            Spacer(Modifier.size(6.dp))
+            Text("Audio bitrate", style = MaterialTheme.typography.caption1)
+            // 2×2, not a 4-chip line: the round bezel clipped the wide row (Display-page lesson).
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SplashChoiceChip("32k", mediaKbps == 32) { scope.launch { settings.setMediaAudioKbps(32) } }
+                SplashChoiceChip("64k", mediaKbps == 64) { scope.launch { settings.setMediaAudioKbps(64) } }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SplashChoiceChip("96k", mediaKbps == 96) { scope.launch { settings.setMediaAudioKbps(96) } }
+                SplashChoiceChip("128k", mediaKbps == 128) { scope.launch { settings.setMediaAudioKbps(128) } }
+            }
+        }
         if (page == SettingsPage.Voice) {
             StatusLine("tts engine", ttsState.toString())
         }
@@ -1171,7 +1359,7 @@ private fun GatewayEditor(
         }
         FieldLabel("Watchkit URL (optional)")
         EditLine(value = draft.wkA, onChange = { onChange(draft.copy(wkA = it)) },
-            placeholder = "http://host:8651", onDone = { onSave(draft) })
+            placeholder = "http://host:42651", onDone = { onSave(draft) })
         FieldLabel("Token")
         EditLine(value = draft.token, onChange = { onChange(draft.copy(token = it)) },
             placeholder = "••••••", password = true, onDone = { onSave(draft) })
@@ -1319,6 +1507,75 @@ private fun VoicePickRow(label: String, name: String, current: String, onSelect:
             contentColor = if (selected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
         ),
     ) { Text(label, style = MaterialTheme.typography.caption1, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+}
+
+/**
+ * VIDEO-QUALITY SLIDER (media epic, owner 2026-11-02: "a slider for the video quality"): a
+ * three-stop track — Small / Balanced / Sharp — mapping onto the watchkit /media preset ladder.
+ * Same drag physics as RateSlider (no Slider component exists in wear-compose 1.4.1), commit on
+ * release so a drag never re-shapes the stream mid-finger.
+ */
+@Composable
+private fun QualitySlider(q: Int, onCommit: (Int) -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var trackW by remember { mutableStateOf(1f) }
+    val stops = listOf(0, 50, 100)
+    var level by remember(q) { mutableStateOf(q) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "video quality · " + when (level) {
+                in 0..33 -> "small"
+                in 34..66 -> "balanced"
+                else -> "sharp"
+            },
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
+                .onSizeChanged { trackW = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun applyAt(x: Float) {
+                            val raw = (x / trackW * 100).coerceIn(0f, 100f)
+                            level = stops.minByOrNull { kotlin.math.abs(it - raw) } ?: 50
+                        }
+                        applyAt(down.position.x)
+                        down.consume()
+                        while (true) {
+                            val ch = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: break
+                            applyAt(ch.position.x)
+                            ch.consume()
+                        }
+                        onCommit(level)
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            val knob = with(density) { 26.dp.toPx() }
+            Box(
+                modifier = Modifier
+                    .size(with(density) { 26.dp })
+                    .offset { IntOffset(((trackW - knob) * (level / 100f)).roundToInt(), 0) }
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colors.primary),
+            )
+        }
+        Text(
+            "small ←──→ sharp",
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.4f),
+        )
+    }
 }
 
 /**
@@ -1485,6 +1742,9 @@ enum class SettingsPage(val title: String) {
     // its parent. See up() below.
     Gateways("Gateways"),
     AgentKeys("Agent keys"),
+    // The watch's own tailnet node (SPEC §11.4): like agent keys, it belongs UNDER Gateways —
+    // the tunnel exists to reach them.
+    Tailnet("Tailnet"),
     Display("Display"),
     Watch("Watch"),
     Voice("Voice out"),
@@ -1492,11 +1752,15 @@ enum class SettingsPage(val title: String) {
     // settings so we can set the default one we want to use on the orb"*): the STT provider
     // picker moved OUT of the voice-out page into its own nested page.
     VoiceIn("Voice in"),
+    // MEDIA EPIC (owner 2026-11-02): the A/V scaling knobs (video quality slider + mono/stereo +
+    // audio bitrate) the watchkit /media endpoint reshapes generated clips with.
+    Media("Media"),
     About("About"),
 }
 
-/** Back-target per page: Agent keys returns to Gateways, everything else to the hub. */
-private fun SettingsPage.up(): SettingsPage = if (this == SettingsPage.AgentKeys) SettingsPage.Gateways else SettingsPage.Root
+/** Back-target per page: Agent keys and Tailnet return to Gateways, everything else to the hub. */
+private fun SettingsPage.up(): SettingsPage =
+    if (this == SettingsPage.AgentKeys || this == SettingsPage.Tailnet) SettingsPage.Gateways else SettingsPage.Root
 
 @Composable
 private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClick: () -> Unit) {
@@ -1506,11 +1770,17 @@ private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClic
         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.5f)),
     ) {
-        Column(horizontalAlignment = Alignment.Start) {
-            Text("$emoji  $title", style = MaterialTheme.typography.button)
-            Text(subtitle, style = MaterialTheme.typography.caption2, color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        // LEADING chevron (owner 2026-11-02: "that arrow doohickey in the middle of the button
+        // makes no sense where it is"). The wear Button content scope does NOT lay children in a
+        // row — an explicit Row is the only way the chevron sits beside the text instead of
+        // floating over it; Wear list convention puts drill-in chevrons in FRONT of the content.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("›  ", style = MaterialTheme.typography.title3)
+            Column(horizontalAlignment = Alignment.Start) {
+                Text("$emoji  $title", style = MaterialTheme.typography.button)
+                Text(subtitle, style = MaterialTheme.typography.caption2, color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
         }
-        Text("  ›", style = MaterialTheme.typography.title3)
     }
     Spacer(Modifier.height(4.dp))
 }

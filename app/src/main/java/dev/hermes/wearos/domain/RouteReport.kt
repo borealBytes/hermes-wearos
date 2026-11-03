@@ -6,7 +6,7 @@ package dev.hermes.wearos.domain
  * WHY THIS EXISTS (owner report, 2026-10-29: *"it said it couldn't connect over tailnet to gateway
  * when I was on wifi — I even had the phone on tailnet so I thought it should have worked"*): the
  * chat surface used to paste OkHttp's own words, so what appeared on the watch was
- * `Unable to resolve host "tuxdesktop.tailb12aa5.ts.net": No address associated with hostname`.
+ * `Unable to resolve host "labhost.tailca7ee1.ts.net": No address associated with hostname`.
  * That sentence is true, useless, and — worse — actively misleading: the phone's tailnet membership
  * says NOTHING about the watch, which has its own network stack, no tailscaled, and therefore no
  * MagicDNS. A `.ts.net` name can only resolve on a device that is itself in the tailnet, and this

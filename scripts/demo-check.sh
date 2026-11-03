@@ -30,5 +30,22 @@ for n, feat, s in missing:
 for n, feat, st in pending:
     if not any(n == m and feat == f for m, f, _ in missing):
         print(f"  {st:<9} #{n} {feat[:44]}")
-sys.exit(1 if final and (missing or pending) else 0)
+# Circle invariant (DEMO.md §0): committed SCREEN-SHAPED stills (docs/screens) ship as
+# TRANSPARENT circles — the corners never existed on the round glass. An opaque black-corner
+# square is the batch-9 relapse this check exists to catch. The tall poster GIFs in docs/demo
+# are harbor-canvas art (opaque by design) and are NOT subject to the invariant.
+squares = []
+import glob
+try:
+    from PIL import Image
+    for pat in ("docs/screens/*.png", "docs/screens/*.gif"):
+        for p in glob.glob(pat):
+            im = Image.open(p).convert("RGBA")
+            if im.getpixel((2, 2))[3] != 0 or im.getpixel((im.width - 3, im.height - 3))[3] != 0:
+                squares.append(p)
+except ImportError:
+    print("  (PIL missing — circle-invariant audit skipped)")
+for p in squares:
+    print(f"  SQUARE (needs circle mask): {p}")
+sys.exit(1 if final and (missing or pending or squares) else 0)
 EOF

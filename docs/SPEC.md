@@ -202,7 +202,7 @@ First run / untouched stock defaults seed `hermes` with
 
 ```
 api:      [http://hermes.tailnet.ts.net:8642,  http://192.168.1.50:8642]
-watchkit: [http://hermes.tailnet.ts.net:8651,  http://192.168.1.50:8651]
+watchkit: [http://hermes.tailnet.ts.net:42651, http://192.168.1.50:42651]
 ```
 
 — placeholder tailnet identity FIRST (MagicDNS publishes `.ts.net` names → CGNAT 100.64.0.0/10
@@ -258,11 +258,62 @@ action as its explicit button, and the explicit Save/Send button is always visib
 (`send ➤`), settings (Save), gateway editor (Save/Cancel), rename (Save), prompt editor (send ➤).
 A misbehaving IME can slow input, never strand it.
 
-### 11.4 In-app tailnet (tsnet) — STATUS: researched, NOT shipped (timebox stop)
+### 11.4 In-app tailnet (tsnet) — STATUS: SHIPPED (2026-11-02, lane (a))
 
-Plan was `github.com/tailscale/tsnet-go` embedded via gomobile (tsnet node in-process + SOCKS5,
-no system VPN). **VERIFIED 2026-10-24: that repository does not exist** (GitHub 404; Go module
-proxy `not found` for both `tailscale/tsnet-go` and `tailscale/tsnet`). The real landscape:
+**Doctrine (owner, 2026-11-02): "tailnet only, always."** The watch's own embedded node is THE
+transport — the §11.2 tailnet-first/LAN-fallback doctrine is retired as a *transport* story
+(endpoint failover between listed endpoints survives, but every one of them is reached THROUGH
+the tunnel; LAN-direct exists only as the `-e tailnet_on off` dev escape hatch).
+
+**Shipped shape (lane (a) from the research below):** `tailnet/go/` — a Go shim wrapping
+`tailscale.com/tsnet` v1.104.4 + a CONNECT-only SOCKS5 server on loopback (tsnet has no native
+SOCKS listener), exposed via `gomobile bind` as the COMMITTED `app/libs/hermes-tailnet.aar`
+(rebuild: `scripts/tailnet-build.sh`). All four OkHttp clients install one
+`TailnetRoute.SELECTOR` proxy — non-loopback URI ⇒ SOCKS to `127.0.0.1:<port>` ⇒ hostnames
+resolve inside the tailnet (MagicDNS truth). Keeper: permanent `specialUse` FGS (NOT dataSync —
+its 6 h/day cap on API 34 would tear the tunnel down nightly) + partial wake lock + boot
+receiver, so the tunnel predates the first ask. Health doctrine: node Running is NOT health —
+the gateway peer answering is (`domain/TailnetState` phase rules; DEGRADED covers
+node-up/gateway-down). Enrollment: reusable, non-ephemeral authkey (an ephemeral key strands a
+reinstalled app in NEEDS_AUTH); identity persists in `filesDir/tailnet`; Re-enroll = wipe +
+NEW admin-console node.
+
+**Android app-sandbox survival (all measured live on the Wear emulator, 2026-11-02 — none of
+this guessable from docs):**
+
+1. `route ip+net: netlinkrib: permission denied` — SELinux denies apps the NETLINK_ROUTE
+   socket, so Go's `net.Interfaces` always fails and tsnet dies at Start. `feature/androidbin`
+   is excluded from `android && cgo` builds (gomobile!), so we register the same
+   synthetic-interface fallback ourselves via `netmon.RegisterInterfaceGetter` (addresses from
+   kernel UDP route selection, permitted) + blank-import `androiddns` (dnsproxyd resolver).
+2. `panic: no safe place found to store log state` — logpolicy's fallback chain ends at a `/tmp`
+   that doesn't exist in the sandbox and PANICS in an internal goroutine (fatal under gomobile).
+   `TS_LOGS_DIR` is honored only if the dir ALREADY EXISTS (LogsDir Stats, never creates) —
+   create first, then set (JVM-side `Os.setenv` mirrors both before the Go runtime snapshots env).
+   `TS_NO_LOGS_NO_SUPPORT=1`: no log.tailscale.com upload from a personal watch node.
+3. `-tags=version_android` on the AAR build (the official Android client's build profile).
+4. **SOCKS5 parser off-by-one:** the domain length IS the 5th CONNECT byte
+   (`[VER,CMD,RSV,ATYP,DOMLEN,…]`); reading it as a separate byte behind a 5-byte header
+   misreads `t` as length 0x74 and strands every domain CONNECT (IP targets pass — the bug
+   hid behind working loopback tests until a live ask). Parser accumulates any TCP
+   segmentation: Android libcore is NOT curl.
+
+**Gateway-box truth (measured with nft counters):** tailscaled installs its own `ts-input`
+chain that ACCEPTS all traffic arriving on `tailscale0` — **no ufw rule is needed for tunnel
+traffic** (a hand-added `allow from 100.64.0.0/10` rule counted zero packets; the SYN was
+already accepted upstream of it). The only real requirements: tailscaled running + MagicDNS on
++ services listening (`:8642`, watchkit `:42651`). "Connection refused" through the tunnel =
+service not listening; timeout = node data-path problem — read `tailnet_log`.
+
+**Known costs:** APK 40 → ~105 MB (Go runtime × 2 ABIs; packaging squeeze open:
+`useLegacyPackaging`); permanent silent ongoing notification; battery impact to be measured on
+real metal (milestone 5). `TS_DEBUG_DISCO=1` in the engine env turns on disco tracing in
+`tailnet_log` when endpoint discovery is the suspect.
+
+**Research history (2026-10-24, kept as decision record).** Plan was
+`github.com/tailscale/tsnet-go` embedded via gomobile. **VERIFIED 2026-10-24: that repository
+does not exist** (GitHub 404; Go module proxy `not found` for both `tailscale/tsnet-go` and
+`tailscale/tsnet`). The real landscape:
 
 | Option | Shape | Fit here |
 |---|---|---|
@@ -271,14 +322,9 @@ proxy `not found` for both `tailscale/tsnet-go` and `tailscale/tsnet`). The real
 | `leondgarse/tailscale_mobile` | community fork exposing tsnet as c-shared + C API | JNI/JNA glue + same size/ABI/auth caveats; no SOCKS5 |
 | exit-node fallback (ships TODAY, §2 badge 🌐) | BT-tethered phone holds the tailnet; watch default-routes through it | zero APK size, works; costs the phone radio; the endpoint system already handles it — LAN/phone-absent failover picks the tailnet URL when reachable |
 
-**Stop decision (per this ticket's own timebox):** ship the gateway system; the tailnet DEFAULT
-already behaves correctly at home via failover, and away-from-home works via the tethered-phone
-path. To make the watch a first-class tailnet node, the owner picks the lane: (a) gomobile tsnet
-shim (SOCKS5, +size, battery note: goroutine lives in Graph scope, state on
-`filesDir/tailnet` re-auths silently — WorkManager-gated cadence is the follow-up), or (b) ride
-libtailscale/VpnService (official, consent dialog, heavier on Wear). Either needs a tsnet
-**authkey** (or once-per-node approval on his phone: AuthURL → tailscale.com/key). Dev hook
-today: none — this section IS the Phase B artifact.
+**Stop decision (2026-10-24, superseded 2026-11-02):** the owner picked lane (a) and it shipped —
+see the SHIPPED block above; the authkey flow is `-e set_tailnet_key`/Settings ▸ Tailnet, and
+the "Phase B artifact" this section was is now `tailnet/go/` + `TailnetService`.
 
 
 ### 11.5 What "tailnet endpoint" can and cannot mean on the watch (owner bug, 2026-10-29)
@@ -289,7 +335,7 @@ to make sure lan/tailnet routing is automatic in all agents."* Reproduced on the
 selecting a gateway whose only API endpoint is the MagicDNS name:
 
 ```
-submit failed (Unable to resolve host "tuxdesktop…ts.net": No address associated with hostname)
+submit failed (Unable to resolve host "labhost…ts.net": No address associated with hostname)
 ```
 
 **Root cause, measured on the device:** `adb shell ping <tailnet FQDN>` → `ping: unknown host`.
@@ -308,7 +354,7 @@ Two real bugs surfaced while reproducing it, both fixed:
   I/O failure `advanceFrom` dethrones the winner, probes the rest once, and — when nothing answered —
   fell back to `effective()`, i.e. the PRIMARY. With a tailnet primary that pointer is a hostname DNS
   cannot answer, so the mirror was rewritten to it, the retry died on DNS, and the owner's screen said
-  "…tailb12aa5.ts.net…" for what was just a LAN blip. Now `Failover` remembers `lastKnownGood` (the last
+  "…tailca7ee1.ts.net…" for what was just a LAN blip. Now `Failover` remembers `lastKnownGood` (the last
   endpoint that answered, never cleared) and hands callers `fallbackPointer()`, which returns **null**
   when nothing is known better than the base already in use — the caller keeps its endpoint and retries
   (which is what the function always promised in its own doc comment).
@@ -372,7 +418,7 @@ so the watch now re-picks its route before the owner taps anything.
 the watch?"* on the wrist. It is `vpn`/`ts-resolver` when a tunnel is genuinely in front of the watch
 (exit-node-for-LAN devices, or a future tsnet node, §11.4) and plain `wifi` when it is not — so the
 claim is checked in 20 seconds instead of by bug report. That is also why the endpoint list should
-carry the **tailnet IP** (`http://100.69.144.33:8642`), not only the MagicDNS name: forwarding to
+carry the **tailnet IP** (`http://100.99.1.42:8642`), not only the MagicDNS name: forwarding to
 100/10 is the reliable half of exit-node, resolving `.ts.net` for a tethered client is the flaky half.
 
 **Verified:** emulator (deterministic) — Wi-Fi off → `network change: network lost · no network` →
@@ -514,6 +560,16 @@ its gateway fetch failed and it served the stale cache, so a new agent showed th
 list. `switchAgent` now triggers `refreshGatewaySessions()` and that refresh reads the **current**
 agent's list through watchkit `/sessions?profile=<p>` (state.db, no profile key needed) in
 addition to the gateway route — so a fresh agent always shows its own recent sessions, key or no key.
+
+**AUTO-KEY NEW AGENTS (2026-11-02, watchkit `seedProfileKeys`).** The one-login roll-out above was
+a one-time sweep, so agents created AFTER it came up keyless — the gateway fails closed for them,
+and "Learn from watchkit" honestly answered *no key* (owner: "watchkit should look for new agents
+and get that key in there"). Now the recipe is automatic: every `/agent_keys` Learn force-seeds
+every keyless profile (appends `~/.hermes/.env`'s key to its `.env`, append-only, never clobbering
+an operator key, missing `.env` created 0600 — the `setup.sh --agent-keys` recipe), and a 60 s
+unref'd timer plus the watch's own 20 s away-poll keep sweeping so a brand-new agent is keyed
+within a minute of appearing, with no human step and no gateway restart (hot-read verified live:
+`chef-agent` + `delx-wellness` went — → ✓ and an ask streamed end to end). Key values never log.
 
 ### 12.3 Slash commands (F15) — `domain/SlashCommands.kt`
 
@@ -797,6 +853,122 @@ thing instead of just above the orb".
   ask rests above the orb from the thinking state on; long lists tail-pin unchanged; a swipe-back
   mid-stream holds through 6 s of deltas.
 
+### 12.12 The tool-activity card (verbosity, desktop-style) — `domain/ToolActivity.kt` + `ui/md/MdText.kt`
+
+Owner 2026-11-02: *“things go straight to the answers and I feel like I'm missing what's actually
+going on — code edits and terminal outputs, running and when done, in a collapsable box like
+hermes desktop.”* The wire already carried it: `tool.started {tool, preview, tool_call_id}`
+(preview = the command / file path / “cmd + N more”) and `tool.completed {duration, error,
+tool_call_id}` — the watch dropped it into a transient `🔧 terminal…` line. Now:
+
+- **Live:** `ChatSession` keeps a `steps: List<ToolStep>` ledger (correlated by `tool_call_id`,
+  falling back to tool-name + first-unmatched), and `ChatScreen` renders `ActivityRunCard`
+  **while the run streams** — in the transcript list and in the FOCUS-HOLD layout (a long
+  terminal command streams no deltas; that is exactly when the box matters). Header
+  `⚙ N steps · running…`, amber current row, per-step monospace preview, tap = collapse.
+- **Settled:** `finishWith` folds the ledger into the transcript as a ` ```hermes-steps ` fence
+  (one `tool|durS|run|ok|err|preview|result` line per step, pipes/newlines sanitized) placed
+  BEFORE the answer, and the live card clears so the card never doubles. The fence persists in
+  the transcript file, parses back via `WatchMarkdown.parseStepsFence` → `MdBlock.ActivityRun`,
+  and re-renders collapsed — reload-stable. `StepsFenceTest` round-trips encode→parse.
+- **Result previews:** today's gateway sends `tool.completed.preview = ""`; the newer source
+  (`api_server_runs.py::_tool_completed_preview`, 500 chars, redacted) fills it — the watch
+  parser takes it with zero protocol change (row shows up to 4 result lines on expand).
+- Dev fixture: `-e render steps`. Proof (emulator, wear-demo ask “du -sh /usr”): live card
+  appeared 3 s in showing the running command; on settle one collapsed card
+  `⚙ 1 step · 1 failed ‹expand›` (the ⚠ came from the gateway's OWN `_detect_tool_failure` on
+  du's permission-denied partial — the card is honest, not decorative).
+
+**Watch ⇄ desktop session continuity (same owner, same day).** Adoption is never a fork:
+`resumeGatewaySession` binds the next asks to the SAME gateway session id — proven live both
+ways (an `/v1/runs`-created session asked from desktop-API then from the watch shows one
+session row, interleaved transcript, zero new rows). The gateway's session-binding doctrine
+(`gateway/session_api.py`: stored `source` must be `api_server` to run from the API lane)
+makes a **desktop-CLI** session (`source='local'`) API-readable but API-RUN-REFUSED → 409
+`permission_denied`. The watch surfaces that as a one-line read-only explanation and does NOT
+auto-fork (owner: “an auto-fork makes a fucking mess”). Gateway ask below (§13.5 #4).
+
+### 12.13 Flawless hand-off — the same chat from either place (`domain/ChatSession.kt` + watchkit `/session_promote`)
+
+Owner 2026-11-02: *"I want to pick up a chat from the desktop on my watch, and a chat from the
+watch on the desktop, and continue it from **either** place — same chat. WatchKit is just there to
+render images/video/audio for the wrist; that should not be what blocks hand-off."* The doctrine:
+
+- **The gateway is the ONLY session/run authority.** The watch talks to the gateway directly over
+  the embedded tailnet node (`/v1/runs`, `/api/sessions`, `/v1/events` SSE) — never through
+  watchkit. Adoption binds the SAME gateway session id (`resumeGatewaySession`), so a desktop chat
+  and a watch chat are already the same transcript once a run is admitted. This is what makes
+  hand-off symmetric: there is no second copy to keep in sync.
+- **History backfill goes GATEWAY-FIRST** (`HermesApi.sessionMessagesJson` →
+  `GET {lane}/api/sessions/{id}/messages`, bearer-authed, cross-source). It rides the SAME key an
+  ask uses, so it survives a watchkit outage — the 2026-11-02 “history unavailable — continuing
+  live” wave was one dead sidecar taking history down with it; watchkit's keyless
+  `/session_messages` is now the FALLBACK, not the only door (it still wins for profiles the watch
+  can't sign for — SPEC §12.2).
+- **WatchKit is a render sidecar, not a proxy.** It does the things the gateway does NOT: `/img`
+  (on-watch-decoded scaling), `/media` (H.264+AAC / Ogg-Opus pre-shrink), `/render/mermaid`, STT,
+  the health store, and the keyless `state.db` reads. It has no bearing on whether a run is
+  admitted — it is the same reason the DESKTOP renders the same markdown without it.
+- **The cross-source door is PROMOTE, not fork.** A desktop-CLI chat refuses an API-lane run
+  (`session_api.py::bind_api_steps` → 409 `permission_denied`) until it is on the API lane. The
+  watch promotes it — a ONE-COLUMN `UPDATE sessions SET source='api_server'` through watchkit
+  (`POST /session_promote`, this repo) — then resubmits under the SAME `Idempotency-Key`. Same row,
+  same id, same transcript; the chat simply appears in the desktop's API spot like a watch chat
+  always did. **Never a fork** (owner doctrine). If the desktop still holds the session live in
+  memory, the promote's resubmit 409s and the watch REVERTS its own flip, telling the owner to
+  close it on the desktop first — the flip is always reversible, so the desktop's own view never
+  drifts. Owner surfaces only (`desktop/tui/webui/cli/local`); cron/subagent rows are machine-owned
+  and refuse.
+- **The gate has TWO checks, and promote only answers the persisted one** (curl-proven 2026-11-03:
+  row hand-flipped to `api_server`, pure gateway-side `POST /p/<p>/v1/runs` → still 409).
+  `bind_api_steps` first refuses on the gateway's **live in-memory map**: `session_id in
+  authority.sessions` with `source.platform != API_SERVER` — and the desktop app HYDRATES a chat
+  into that map by having it open, run or no run. So a desktop chat that is NOT currently open on
+  the desktop promotes and runs from the wrist on the spot (proven: a seeded desktop-starter
+  session, adopted, promoted `local`→`api_server`, answered from its own history — one row, zero
+  forks); a chat OPEN on the desktop needs “close it there” first, which is exactly what the
+  watch's revert message says. Entries leave the map when the desktop closes the chat, the app
+  exits, or the gateway restarts. Real relief is §13.5 #4.
+- **`-e resume_session <id>` + a real desktop session, proven both ways:** a fresh desktop session
+  adopted-and-asked from the wrist promoted `local`→`api_server` and ran (interleaved user/
+  assistant, count 4→6, zero new rows, source `api_server` after). A session the watch ALREADY owns
+  (`desk-continue-probe-1`) answered from both ends as ONE row with no fork at all. The gateway's
+  native door (§13.5 #4: `bind_api_steps` admitting a `local` row with no live holder, or a
+  `POST /api/sessions/{id}/continue` CHAIN) would retire the watch-side flip; the watch is
+  client-ready — adoption binds the same id today and only needs the 409 to become a 200.
+
+### 12.14 The media lane — animated GIFs, pinch video, bezel volume (`ui/md/AnimatedImage.kt`,
+`PinchPlayerView.kt`, `domain/RotaryVolume.kt`)
+
+Owner 2026-11-02, three asks on the media surface, all rendered by the watch (gateway never
+transforms media on the wrist path):
+
+- **Animated GIFs** were frozen because every image path decoded to a still `Bitmap`
+  (BitmapFactory = first frame only). Now the ORIGINAL container is decoded via
+  `ImageDecoder.decodeDrawable` → an `AnimatedImageDrawable` when the bytes move, drawn through
+  `AnimatedDrawablePainter`. Both newer-than-API-27 animation hooks
+  (`setInvalidateCallback`, `advance`) are `@hide`, so frames are driven the classic PUBLIC way:
+  `start()` on the drawable + a `Drawable.Callback` (public since API 1) that bumps an `Int` the
+  painter reads in `onDraw` — one state read = one redraw, not a tree recompose. A cheap
+  header sniff (`looksAnimated`: any GIF, or WebP with the VP8X animation bit) decides inline
+  ANIMATED vs sampled-still without decoding a full Bitmap for every photo. The card shows a
+  `GIF` chip; tap opens the animated viewer. Playback is bound to composition — a GIF scrolled
+  off the transcript stops costing anything.
+- **Pinch-to-zoom VIDEO.** The image viewer already had a Compose gesture lane, but a
+  media3 `PlayerView` is an interop'd child that consumes every touch for its controller, so a
+  `pointerInput` above it only sees crumbs. The lane therefore lives IN the view: `PinchPlayerView`
+  intercepts on the 2nd finger (`ACTION_POINTER_DOWN`) and single-finger drags once zoomed, and
+  transforms the View's own `scaleX`/`translation` (GPU, no relayout). Untouched, a tap still
+  shows/hides the transport. Scale ∈ [1,3], pivot at center, pan clamped by the SAME
+  `MediaZoom.clampOffset` math the image viewer uses; double-tap toggles fit↔2.5×.
+- **Bezel volume.** *"enable bezel scrolling for volume up and down — if we're playing music on
+  the wrist that's how we do it."* On Galaxy Watch the rotating bezel arrives as
+  KEYCODE_VOLUME_UP/DOWN; `MainActivity.onKeyDown` routes those to `RotaryVolume` while a player
+  sheet owns the screen, so the bezel steers the PLAYER's `volume` (5 % detents on the dial grid,
+  one haptic tick per step, a `🔊 NN%` readout that fades) and the system stream never moves.
+  Close the player, unbind, and the bezel is plain system volume again. `-e volume <±N>` drives the
+  exact same path for the bezel-less emulator.
+
 ## 13. Next steps — branch 2 (media + voice quality), scoped 2026-10-26
 
 Agreed split: dial + agent switching + search land first and get a wrist review; everything below
@@ -875,6 +1047,24 @@ always-send-every-clip policy; the owner decides per note (auto-quality is a lat
 Mic discipline: `VoskStt` holds `AudioRecord` under a mutex, so the record lane takes that same
 mutex rather than opening a second capture.
 
+**THE MIC STOPPED SHIPPING RAW WAVE (owner 2026-11-02: "why'd you send the audio as a wave? use
+the best current one").** The streamed lane (`/stt/stream`) used to push raw 16 kHz mono PCM16 —
+256 kbit/s, ~32 KB/s through the tailnet. `voice/MicCodec.kt` now picks the best encoder the
+device carries: **Opus 24k** (VoIP application — the best current speech codec; ~10x lighter, and
+the Wear emulator image proved to have it even where `media_codecs.xml` lists no encoder — query
+MediaCodec, not the XML), **AAC-LC 32k** as the every-Android fallback (ADTS-framed by hand —
+`voice/CodecMuxers.kt`, MP4's moov-at-end is the wrong shape for a live stream), or raw PCM when
+the device has neither. The wire format is **sniffed from the first bytes** server-side
+(`OggS` → Ogg/Opus, exact ADTS shape → AAC, else PCM), and encoded lanes are demuxed by watchkit
+through ffmpeg to engine PCM — the engines never changed, and an old watch ↔ new watchkit (or
+vice versa) just works. RFC 7845 gotcha that cost a debug cycle: **OpusHead must END the BOS
+page** — sharing it with OpusTags makes ffmpeg read the tags as a second OpusHead and reject the
+stream ("Channel change is not supported"). Proof: the same ATC speech clip transcribed to the
+same words over all three wires (Opus at 29.9 KB vs the wave's 320 KB for 10 s, partials included);
+`CodecMuxersTest` byte-compares the pages against an independent Python encoder and ffmpeg's own
+ADTS bytes. Also fixed by the same probe: the engine child was awaited on `exit`, which can fire
+before the final JSONL leaves stdout — cleanup then cut it; it awaits `close` now.
+
 ### 13.5 Asks for the Hermes gateway (not this repo)
 
 1. `GET /v1/commands` — expose `hermes_cli.commands.COMMAND_REGISTRY` (already gateway-importable,
@@ -884,6 +1074,26 @@ mutex rather than opening a second capture.
    fork-per-edit workaround in F16.
 3. Consider one `API_SERVER_KEY` per profile in the install docs — the fail-closed 401 with an
    open `/v1/health` is a trap for every client, not just the watch (§12.2).
+4. **Cross-platform session continuation** (owner 2026-11-02: "a desktop session must continue on
+   the watch AND the desktop — the watch must NOT auto-fork, that makes a mess"): today
+   `gateway/session_api.py::bind_api_session` refuses any run whose target session's stored
+   `source` isn't `api_server` — a desktop-CLI session (`source='local'`) is API-RUN-REFUSED with
+   a bare 409 `permission_denied`. The watch adopted-and-asked live: 409, no fork (correct per
+   owner doctrine). Ask: admit an API turn onto a `local` session when no live writer holds it
+   (the Bot-Chat FIFO door in `api_server_bot_chat.py` is precedent for exactly this hand-off),
+   or expose `POST /api/sessions/{id}/continue {from:<session_id>}` that CHAINS (not forks:
+   `parent_session_id` lineage, transcript carried, one conversation in both UIs — what
+   `continued_api_session` already does across API generations). The watch is client-ready:
+   adoption binds the same id today and simply needs the 409 to become a 200. (Interim shipped:
+   the watch promotes the row itself — one reversible `source` UPDATE through watchkit
+   `/session_promote`, §12.13 — and would retire that flip the day this door lands.
+   2026-11-03 precision for whoever picks this up: `bind_api_session` refuses on EITHER check —
+   `session_id in authority.sessions` with in-memory `platform != API_SERVER` runs FIRST, and the
+   desktop app hydrates an OPEN chat into that map without any active run; the persisted-source
+   re-check in the write step only gets a vote when the map is clear. A hand-flipped row + pure
+   gateway-side `POST /v1/runs` → still 409 (curl-proven). The ask narrows to: admit when the
+   in-memory entry is IDLE (no active execution/lease — FIFO-door precedent again), because that
+   is the case the watch's flip visibly cannot fix.)
 
 
 ## 14. Owner batch 4 (2026-10-29/30 night): circle-meat geometry, orb-flanking approvals, STT backends, edge scroll
@@ -1165,7 +1375,67 @@ cadence after the loop went quiet; an unattended off-wrist settle buzzed; 4 minu
 screen-off darkness delivered 3 sweeps (old build: zero). Honest limit: under real Doze,
 CONNECTED-constrained work defers to maintenance windows — minutes of latency, not seconds.
 
+## 17. MEDIA EPIC — generated video/audio play in chat (owner 2026-11-02)
+
+Owner doctrine: *anything the desktop Hermes app shows, the wrist shows.* Generated A/V arriving
+in a session transcript (from comfy, from skills, from any lane) must appear as a card and PLAY
+on the watch, like images already do.
+
+**Parsing (`ui/md/WatchMarkdown.kt`).** Media targets are extension-routed across all three
+transport shapes the gateway produces: `![desc](target)`, `MEDIA:<target>` lines, and BARE
+whole-line paths/URLs. `.mp4/.mov/.mkv/.webm…` → `MdBlock.Media(video=true)`;
+`.mp3/.wav/.m4a/.ogg…` → `Media(video=false)`; image extensions keep the F6 `MdBlock.Image`
+lane untouched. Two safety rails: a media path *inside* a sentence stays prose (the card is for
+whole-line attachments only), and a half-arrived extension (`.mp` mid-stream) stays a paragraph
+until streaming completes — no flicker mid-token. Nine routing tests pin all of it.
+
+**The card + player (`ui/md/MdText.kt` MediaBlock, `ui/md/MediaPlay.kt`).** Video cards render a
+poster JPEG and open a fullscreen `Dialog` ExoPlayer on tap (play/pause, ±15/−5, scrubber,
+hardware back → straight back into the session). Audio cards play in place with a progress line.
+Remote http(s) targets play DIRECT (no bearer — a public URL needs no secret); gateway-host
+absolute paths stream through watchkit `/media` with the bearer header.
+
+**Server side (watchkit `/media`, SPEC §13 surface).** ffmpeg pre-shrink before the wrist ever
+sees bytes: H.264 faststart mp4 (AAC audio — hardware decode) / **Ogg/Opus for standalone audio**
+(the best current codec; falls back to AAC m4a on boxes whose ffmpeg lacks libopus — probed once),
+quality presets from the watch's `q=0..100` (q<34 →
+≤360p/350k, <67 → ≤480p/700k, else ≤540p/1.2M), `mono=0/1`, `ab=<kbps>`; `poster=1` returns a
+JPEG frame, `probe=1` metadata; HTTP Range responses so ExoPlayer seeks. Cache key =
+realpath|mtime|params under `.cache/media` — same file + same knobs is a <5 ms hit; a knob
+change is a fresh key and a re-transcode (verified live: sharp+stereo produced a new 4.66 MB
+derivative beside the balanced/mono 2.83 MB). Roots are the same `img_roots` policy as `/img`.
+
+**The proxy problem.** Every leg rides the embedded tailnet node (§11.4) through a loopback
+SOCKS shim — but media3 1.4.1 has no `DataSource.Factory.setProxy` (added upstream in 1.5) and
+its `DefaultHttpDataSource` rides libcore `HttpURLConnection`, which consults
+`java.net.ProxySelector.getDefault()`. So the player installs `TailnetRoute.SELECTOR` as the JVM
+default selector for its lifetime and restores the prior one on dispose — the player reaches the
+tailnet exactly like OkHttp does, and nothing else in the process ever sees the swap.
+
+**Settings ▸ Media (owner: "a quality slider… and let me pick stereo for my headphones").**
+`QualitySlider` (custom — wear-compose 1.4.1 ships no Slider; same drag physics as the proven
+RateSlider, commit-on-release), a Stereo audio switch (off = mono for the watch speaker), and a
+2×2 audio-bitrate chip grid (32/64/96/128k). All persist in `AppSettings`
+(`media_quality`/`media_stereo`/`media_audio_kbps`), mirror into `Watchkit.mediaPrefs`, and ride
+every `/media` URL the watch requests. `WearApp.loadMediaPrefs` rehydrates at boot.
+
+**Proof.** `-e render av` (RenderCases.Av — real gateway-box files); Watch Ultra screenshots show
+the poster card, the playing fullscreen player, and the session restored on back; the emulator
+UI pass shows the full Media settings page and the knob→server round trip end to end.
+
 ## Appendix A — Landed slices (build log, newest first)
+
+-- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
+  (2026-11-01/02, watch-proven on the Watch Ultra AND emulator).** EMBEDDED TAILNET (§11.4): a
+  real tsnet node inside the app (gomobile AAR + CONNECT-only SOCKS5 shim, `TailnetRoute.SELECTOR`
+  injected into OkHttp) — every REST/SSE/WebSocket call rides the tailnet, no LAN path, no
+  phone-tailnet; the root cause of every early tunnel timeout was a SOCKS parser bug (the domain
+  length IS the 5th CONNECT byte). NOTIF DEEP LINK: "Open session" switches to the owning agent
+  AND opens that exact session. SETTINGS rows got leading chevrons. AUTO-KEY NEW AGENTS (§12.2
+  addendum): watchkit force-seeds on Learn and sweeps every 60 s, so agents created after setup
+  are keyed within a minute, no human step. MEDIA EPIC (§17): media cards + fullscreen
+  ExoPlayer + watchkit `/media` pre-shrink + Settings ▸ Media (quality slider, stereo, bitrate);
+  pinch zoom-out floor lowered to 0.55 (owner reads small text fine).
 
 -- **Batch 6 — cold-start cuts, dB volume, the desktop watch (#23–#28, 2026-10-30/31,
   watch-proven).** The system splash holds the small launcher icon until the chosen intro media

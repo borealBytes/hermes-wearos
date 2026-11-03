@@ -2,7 +2,11 @@
  * stt_stream_ws.mjs — BATCH-4 #9: the watch streams raw mic PCM to the gateway.
  *
  *   WS /stt/stream (bearer, same token as every watchkit endpoint — header or ?token=)
- *     client → server : BINARY frames = 16 kHz mono PCM16-LE, ~100 ms each
+ *     client → server : BINARY frames = mic audio, format SNIFFED from the first bytes:
+ *                        'OggS…'  → Ogg/Opus (current watch: 24 kbit/s, the best speech codec)
+ *                        ADTS     → AAC-LC 32k (watch without an Opus encoder)
+ *                        else     → raw 16 kHz mono PCM16-LE (legacy watches)
+ *                       any format is transcoded to the engine's PCM here — engines never change.
  *                       TEXT   frame  = {"end":true} → wearer stopped talking
  *     server → client : TEXT frames, JSON lines from the engine adapter:
  *                       {"partial":"…"} (engine-dependent), {"final":"…"}, {"error":"…"}
@@ -145,6 +149,26 @@ export function decodeFrames(buf, acc) {
 
 /* ── session plumbing ─────────────────────────────────────────────────────── */
 
+/**
+ * First-bytes format sniff (owner 2026-11-02: stop shipping the raw wave): 'OggS' → Ogg/Opus;
+ * a header that is exactly our ADTS shape (MPEG-2 sync, AAC-LC profile, the 16 kHz table index,
+ * mono, sane frame length) → AAC; anything else → legacy raw PCM. The PCM-vs-ADTS ambiguity
+ * (near-silence PCM can start 0xFF 0xF0) is broken by requiring sf=16k AND LC AND mono AND a
+ * plausible length — a PCM byte pair matching ALL FOUR is rare, and the worst case is one
+ * garbled first frame, not a lost utterance.
+ */
+export function sniffWire(p) {
+  if (p.length >= 4 && p[0] === 0x4f && p[1] === 0x67 && p[2] === 0x67 && p[3] === 0x53) return 'ogg';
+  if (p.length >= 7 && p[0] === 0xff && (p[1] & 0xf0) === 0xf0) {
+    const profile = (p[2] >> 6) & 3;
+    const sf = (p[2] >> 2) & 0xf;
+    const chan = ((p[2] & 1) << 2) | ((p[3] >> 6) & 3);
+    const len = ((p[3] & 0xf) << 11) | (p[4] << 3) | ((p[5] >> 5) & 7);
+    if (profile === 1 && sf === 8 && chan === 1 && len >= 8 && len <= 4000) return 'aac';
+  }
+  return 'pcm';
+}
+
 function pipeSession(socket, head, ctx, ip, engineOverride) {
   const status = sttEngineStatus(ctx.cfg, ctx.venvPy, ctx.wkDir);
   const engine = engineOverride || status.engine;
@@ -152,11 +176,12 @@ function pipeSession(socket, head, ctx, ip, engineOverride) {
   ctx.logLine({ ev: 'stt-stream', ip, ep: '/stt/stream', engine, status: 101, ms: 0 });
 
   const sendText = (s) => { try { socket.write(encodeFrame(s)); } catch { /* gone */ } };
-  let child = null, stdinOpen = false, ended = false, closed = false, bytesIn = 0, sawFinal = false;
+  let child = null, decoder = null, wire = null, stdinOpen = false, ended = false, closed = false, bytesIn = 0, sawFinal = false;
 
   const cleanup = (why) => {
     if (closed) return;
     closed = true;
+    if (decoder) { try { decoder.kill('SIGKILL'); } catch { } }
     if (child) { try { child.kill('SIGTERM'); } catch { } }
     ctx.logLine({ ev: 'stt-stream', ip, ep: '/stt/stream', status: 0, ms: Date.now() - t0, bytes: bytesIn, why });
     // RFC6455 close frame (code 1000) BEFORE the TCP end — okhttp reports clean closes, and
@@ -183,11 +208,34 @@ function pipeSession(socket, head, ctx, ip, engineOverride) {
       }
     });
     child.stderr.on('data', (d) => { errTail = (errTail + d.toString('utf8')).slice(-2000); });
-    child.on('exit', (code) => {
+    // 'close', NOT 'exit': 'exit' can fire while the final JSONL line still sits in the stdout
+    // pipe, and cleanup's socket.end() would cut it off (a latent race the fast-path probe
+    // exposed). 'close' guarantees stdout has been delivered before we decide and hang up.
+    child.on('close', (code) => {
       if (!closed && !sawFinal) {
         sendText(JSON.stringify({ error: `engine exit ${code}: ${(errTail || 'no stderr').slice(-200)}` }));
       }
       clearTimeout(cap); cleanup(`exit ${code}`);
+    });
+  };
+
+  // Opus/AAC lanes ride through ffmpeg: container-demux → s16le 16 kHz mono into the engine's
+  // stdin, so stt_stream.py never learns a new format. Missing/broken ffmpeg surfaces as an
+  // error frame, which the watch treats as "not answered yet" → its local Vosk fallback replays
+  // the whole utterance (that buffer is raw PCM from the mic, independent of this leg).
+  const startDecoder = (fmt) => {
+    const ff = ctx.ffmpeg || 'ffmpeg';
+    try {
+      decoder = spawn(ff, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-f', fmt, '-i', 'pipe:0',
+        '-map', '0:a:0', '-vn', '-f', 's16le', '-ac', '1', '-ar', '16000', 'pipe:1'],
+      { cwd: ctx.wkDir, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch { decoder = null; sendText(JSON.stringify({ error: `mic decode spawn failed (${fmt})` })); return; }
+    let errTail = '';
+    decoder.stdout.pipe(child.stdin);
+    decoder.stderr.on('data', (d) => { errTail = (errTail + d.toString('utf8')).slice(-1000); });
+    decoder.on('error', (e) => { if (!closed && !sawFinal) sendText(JSON.stringify({ error: `mic decode: ${e.message}` })); });
+    decoder.on('exit', (code) => {
+      if (code && !closed && !sawFinal) sendText(JSON.stringify({ error: `mic decode exit ${code}: ${errTail.slice(-160)}` }));
     });
   };
 
@@ -201,11 +249,24 @@ function pipeSession(socket, head, ctx, ip, engineOverride) {
       if (f.op === 0x8) { cleanup('client-close'); return; }
       if (f.op === 0x2) {
         if (!child) startEngine();
-        if (child && stdinOpen) { child.stdin.write(f.payload); bytesIn += f.payload.length; }
+        if (!child) continue;
+        if (wire === null) {
+          wire = sniffWire(f.payload);
+          ctx.logLine({ ev: 'stt-stream', ip, ep: '/stt/stream', wire, ms: 0 });
+          if (wire !== 'pcm') startDecoder(wire);
+        }
+        if (!stdinOpen) continue;
+        if (decoder) {
+          if (!decoder.stdin.destroyed) { decoder.stdin.write(f.payload); bytesIn += f.payload.length; }
+        } else if (!child.stdin.destroyed) {
+          child.stdin.write(f.payload); bytesIn += f.payload.length;
+        }
       } else if (f.op === 0x1) {
         const t = f.payload.toString('utf8');
         if (/^\s*\{.*"end"\s*:\s*true/.test(t) && child && stdinOpen) {
-          child.stdin.end(); stdinOpen = false; ended = true;
+          if (decoder && !decoder.stdin.destroyed) decoder.stdin.end(); // flushes through; pipe ends the engine
+          else child.stdin.end();
+          stdinOpen = false; ended = true;
         }
       }
     }

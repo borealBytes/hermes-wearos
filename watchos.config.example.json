@@ -1,14 +1,17 @@
 {
-  "_comment": "Copy to watchos.config.json (gitignored) and fill in — scripts/setup.sh reads it. All values overridable by flags. Endpoints are ordered: first is the DEFAULT entry, the rest are failover fallbacks (SPEC §11).",
+  "_comment": "Copy to watchos.config.json (gitignored) and fill in — scripts/setup.sh reads it. All values overridable by flags. Endpoints are ordered: first is the DEFAULT entry, the rest are failover fallbacks (SPEC §11). With the embedded tailnet node (SPEC §11.4) endpoints are reached THROUGH the tunnel — list the tailnet FQDN/IP; a LAN literal only makes sense with the tailnet dev-off.",
   "gatewayLabel": "hermes",
   "apiEndpoints": [
-    "http://hermes.tailnet.ts.net:8642",
-    "http://192.168.1.50:8642"
+    "http://hermes.tailnet.ts.net:8642"
   ],
   "watchkitEndpoints": [
-    "http://hermes.tailnet.ts.net:8651",
-    "http://192.168.1.50:8651"
+    "http://hermes.tailnet.ts.net:42651"
   ],
+  "tailnet": {
+    "_comment": "authKey = reusable, non-ephemeral key from the Tailscale admin console (Keys ▸ generate). It enrolls the watch node ONCE (identity then lives in app data); re-enroll needs a fresh key. hostname = node name shown in the admin console.",
+    "hostname": "hermes-wearos",
+    "authKey": "tskey-auth-REPLACE"
+  },
   "token": "REPLACE-with-<API_SERVER_KEY of the wear profile: ~/.hermes/profiles/wear/.env>",
   "watchkitToken": "",
   "watchSerial": ""

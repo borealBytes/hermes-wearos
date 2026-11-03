@@ -103,6 +103,10 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
 
         is MdBlock.Image -> ImageBlock(block.alt, block.target, blockKey, modifier)
 
+        is MdBlock.Media -> MediaBlock(block, blockKey, modifier)
+
+        is MdBlock.ActivityRun -> ActivityRunCard(block.steps, running = false, blockKey, modifier)
+
         is MdBlock.Table -> if (block.gridable) {
             // True mini-grid for exactly-2 labelled columns: header + hairline + rows (F3 note).
             Column(modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -170,9 +174,124 @@ fun MdMessage(text: String, msgKey: Any, modifier: Modifier = Modifier) {
 }
 
 /** Collapsed code: `‹lang› code · tap` + first-line hint; tap → full monospace, h-scroll. */
+/**
+ * THE COLLAPSIBLE TOOL-ACTIVITY CARD (owner 2026-11-02: "collapsable box like hermes desktop — a
+ * little window that pops up, I click it, it collapses"). Header = count + live state; tap the
+ * header to collapse/expand; a step's bounded result (newer gateways carry one) is per-row.
+ * Fed LIVE (from ChatSession's ledger, running=true, starts expanded) and from the persisted
+ * ```hermes-steps fence after settle (starts collapsed — the answer owns the stage, the theatre
+ * is one tap away, exactly the desktop posture).
+ */
 @Composable
-private fun CodeCard(lang: String, code: String, blockKey: Any, modifier: Modifier) {
-    var expanded by remember(blockKey) { mutableStateOf(false) }
+fun ActivityRunCard(
+    steps: List<MdBlock.ActStep>,
+    running: Boolean,
+    blockKey: Any,
+    modifier: Modifier,
+    expandedDefault: Boolean = false,
+) {
+    var expanded by remember(blockKey) { mutableStateOf(expandedDefault) }
+    val nErrors = steps.count { it.error }
+    val head = when {
+        running -> "⚙ ${steps.size} step${if (steps.size == 1) "" else "s"} · running…"
+        nErrors > 0 -> "⚙ ${steps.size} step${if (steps.size == 1) "" else "s"} · $nErrors failed"
+        else -> "⚙ ${steps.size} step${if (steps.size == 1) "" else "s"} · done ✓"
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colors.surface.copy(alpha = 0.4f))
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        Text(
+            head + (if (expanded) "  ‹collapse›" else "  ‹expand›"),
+            style = MaterialTheme.typography.caption3.scaled(),
+            color = if (running) Color(0xFFF5C518) else MaterialTheme.colors.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (!expanded) {
+            // Collapsed still shows the LATEST move — the glance answer to "what is it doing".
+            val last = steps.lastOrNull()
+            if (last != null) Text(
+                "${stepIcon(last.tool)} ${last.preview.ifBlank { last.tool }}",
+                style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 160.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                steps.forEachIndexed { i, s ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = if (i == 0) 2.dp else 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "${stepIcon(s.tool)} ${s.tool}",
+                            style = MaterialTheme.typography.caption3.scaled(),
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                s.error -> Color(0xFFFF8A80)
+                                s.running -> Color(0xFFF5C518)
+                                else -> MaterialTheme.colors.onBackground
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            when {
+                                s.running -> "▸"
+                                s.error -> "⚠"
+                                s.durS > 0 -> "%.1fs".format(s.durS)
+                                else -> "✓"
+                            },
+                            style = MaterialTheme.typography.caption3.scaled(),
+                            color = if (s.error) Color(0xFFFF8A80) else MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+                        )
+                    }
+                    if (s.preview.isNotBlank()) Text(
+                        s.preview,
+                        style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
+                        color = MaterialTheme.colors.onBackground.copy(alpha = 0.8f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (s.result.isNotBlank()) Text(
+                        s.result,
+                        style = MaterialTheme.typography.caption3.copy(fontFamily = FontFamily.Monospace).scaled(),
+                        color = if (s.error) Color(0xFFFF8A80) else MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Tool → one-glyph family (monochrome: survives any watch font; mirrors the desktop's </>-style tag). */
+internal fun stepIcon(tool: String): String = when {
+    tool.contains("terminal") || tool.contains("shell") || tool.contains("exec") -> "⌨"
+    tool.contains("edit") || tool.contains("write") || tool.contains("patch") -> "✎"
+    tool.contains("read") || tool.contains("list") || tool.contains("glob") -> "≡"
+    tool.contains("search") || tool.contains("grep") || tool.contains("browser") || tool.contains("web") -> "⌕"
+    tool.contains("delegate") || tool.contains("agent") -> "⇢"
+    else -> "⚙"
+}
+
+@Composable
+private fun CodeCard(lang: String, code: String, blockKey: Any, modifier: Modifier) {    var expanded by remember(blockKey) { mutableStateOf(false) }
     val label = lang.ifBlank { "code" }
     Column(
         modifier = modifier
@@ -310,6 +429,66 @@ private fun MermaidBlockView(code: String, blockKey: Any, modifier: Modifier) {
 }
 
 /**
+ * MEDIA EPIC inline card (owner 2026-11-02: "small, inline, you could click play — video
+ * fullscreen on tap, hardware back returns to the session"). Videos show the watchkit
+ * poster frame (ffmpeg one-JPEG grab) when one can be made, else a 🎬 glyph card; audio is
+ * always the 🎵 glyph card. Tap opens [MediaPlayDialog] — a Dialog, so the transcript stays
+ * composed underneath and back lands exactly where the finger was. Poster fetch re-keys on
+ * watchkit config + media prefs like ImageBlock re-keys on config, so pushed tokens and
+ * Settings ▸ Media changes refresh cards live.
+ */
+@Composable
+private fun MediaBlock(block: MdBlock.Media, blockKey: Any, modifier: Modifier) {
+    val cfg by Watchkit.config.collectAsState()
+    val prefs by Watchkit.mediaPrefs.collectAsState()
+    val local = Watchkit.mediaNeedsAuth(block.target)
+    var poster by remember(block.target, cfg, prefs) { mutableStateOf<ImageBitmap?>(null) }
+    var play by remember(blockKey) { mutableStateOf(false) }
+    LaunchedEffect(block.target, cfg, prefs) {
+        poster = if (block.video && local) try { Watchkit.fetchPoster(block.target) } catch (e: Exception) { null } else null
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
+            .clickable(onClickLabel = if (block.video) "play video" else "play audio") { play = true }
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val bmp = poster
+        if (bmp != null) {
+            Box(contentAlignment = Alignment.Center) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = block.label.ifBlank { "video" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.widthIn(max = 220.dp).clip(RoundedCornerShape(8.dp)),
+                )
+                Text("▶", style = MaterialTheme.typography.title1, color = Color.White)
+            }
+        } else {
+            Text(if (block.video) "🎬" else "🎵", style = MaterialTheme.typography.title2)
+        }
+        Text(
+            block.label.ifBlank { if (block.video) "video" else "audio" },
+            style = MaterialTheme.typography.caption2.scaled(),
+            color = MaterialTheme.colors.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            if (block.video) "tap to play · fullscreen" else "tap to listen",
+            style = MaterialTheme.typography.caption3.scaled(),
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+        )
+    }
+    if (play) MediaPlayDialog(block.target, block.video, block.label, onDismiss = { play = false })
+}
+
+/**
  * F6 inline image (OWNER BATCH 2 — FULL RES): the target is fetched ONCE at full resolution
  * (watchkit /img serves original bytes), then scaled ON THE WATCH: the card gets a bitmap decoded
  * down to ~512 px via BitmapFactory inSampleSize (crisp-but-small), while a tap opens the
@@ -339,6 +518,18 @@ private fun ImageBlock(alt: String, target: String, blockKey: Any, modifier: Mod
         // bitmap from the shared bytes (the card bitmap shows while it loads, then swaps —
         // deep zoom stays sharp because the pixels are the original ones).
         var zoomed by remember(blockKey) { mutableStateOf(false) }
+        // GIF EPIC (owner 2026-11-02: "animated GIFs are not rendering"): the original container
+        // is fetched from the SAME cache the card used (no extra bytes on the wire) and sniffed:
+        // an animated GIF/WebP renders through AnimatedDrawablePainter — inline AND in the viewer,
+        // playing, stopped when scrolled away. Stills keep the sampled card bitmap (that's the
+        // inSampleSize memory story; a full-size Drawable inline would defeat it).
+        var bytes by remember(target, cfg) { mutableStateOf<ByteArray?>(null) }
+        LaunchedEffect(target, cfg) {
+            bytes = runCatching { Watchkit.fetchImageSourceBytes(target) }.getOrNull()
+        }
+        val rawBytes = bytes
+        val animated = rawBytes != null && looksAnimated(rawBytes)
+        val frame = if (animated) rememberAnimatedImage(rawBytes) else AnimatedImage(null, false)
         Box(
             modifier = modifier
                 .fillMaxWidth()
@@ -348,17 +539,45 @@ private fun ImageBlock(alt: String, target: String, blockKey: Any, modifier: Mod
                 .clickable(onClickLabel = "zoom image") { zoomed = true },
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = alt.ifBlank { "image" },
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.widthIn(max = 440.dp),
+            if (frame.painter != null)
+                Image(
+                    painter = frame.painter,
+                    contentDescription = alt.ifBlank { "image" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.widthIn(max = 440.dp),
+                )
+            else
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = alt.ifBlank { "image" },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.widthIn(max = 440.dp),
+                )
+            if (animated) Text(
+                "GIF",
+                style = MaterialTheme.typography.caption3,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
             )
         }
         if (zoomed) {
+            // Full-res viewer from the same bytes: the animated painter when there is a film,
+            // the BitmapFactory full decode otherwise (identical sharpness to the old path).
             var full by remember(blockKey) { mutableStateOf<ImageBitmap?>(null) }
-            LaunchedEffect(Unit) { full = try { Watchkit.fetchImageFull(target) } catch (e: Exception) { null } }
-            ZoomableMediaViewer(full ?: bitmap, caption = alt, onDismiss = { zoomed = false })
+            LaunchedEffect(Unit) {
+                if (!animated) full = try { Watchkit.fetchImageFull(target) } catch (e: Exception) { null }
+            }
+            val viewerPainter = if (frame.painter != null) frame.painter
+                else full?.let { androidx.compose.ui.graphics.painter.BitmapPainter(it) }
+            ZoomableMediaViewer(
+                viewerPainter ?: androidx.compose.ui.graphics.painter.BitmapPainter(bitmap),
+                caption = alt, onDismiss = { zoomed = false },
+            )
         }
         return
     }

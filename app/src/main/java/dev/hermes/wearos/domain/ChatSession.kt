@@ -46,6 +46,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val live: String = "",            // streaming buffer for the answer in flight
     val status: String = "",          // one-line "what the agent is doing"
+    val steps: List<ToolStep> = emptyList(), // tool-activity ledger for the run in flight (CollapsibleActivity)
     val approval: ApprovalInfo? = null,
     val busy: Boolean = false,
     val gen: Long = 0L,               // bumped on chat switch: transcript reloads must not re-speak
@@ -74,6 +75,7 @@ class ChatSession(
     private val http = okhttp3.OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)   // events stream: server keepalive is every 10 s
+        .proxySelector(dev.hermes.wearos.net.TailnetRoute.SELECTOR)   // SPEC §11.4: SSE rides the tunnel
         .build()
 
     private var askJob: Job? = null
@@ -205,9 +207,63 @@ class ChatSession(
      *
      * Everything else keeps its own message — no lying about real errors.
      */
+    /** Why the last promote attempt didn't land (SPEC §12.13); consumed by [explain] on the 409. */
+    @Volatile
+    private var handoffNote = ""
+
+    /**
+     * The §12.13 hand-off door: promote the adopted session's `source` row through watchkit and
+     * resubmit the SAME run under the SAME Idempotency-Key. Returns the accepted run, or null
+     * with `handoffNote` set to the honest reason — the caller then surfaces the original 409.
+     * A flip that the gateway still refuses (desktop holds the session live in memory) is
+     * REVERTED, so the desktop's own list never drifts: the chat stays exactly where it was
+     * until it's closed there and asked from the wrist once more.
+     */
+    private suspend fun handoffPromote(
+        api: HermesApi, input: String, session: String, idem: String, model: String, profile: String,
+    ): HermesApi.RunAccepted? {
+        val prof = profile.ifBlank { settings.profileSync() }
+        val res = runCatching { Watchkit.promoteSession(prof, session) }
+            .getOrElse {
+                handoffNote = "watchkit is down — desktop chats stay read-only until it's back"
+                return null
+            }
+        Log.i(TAG, "handoff promote session=$session was=${res.was} changed=${res.changed} reason=${res.reason}")
+        if (!res.ok) { handoffNote = "promote refused: ${res.reason.ifBlank { res.was }}"; return null }
+        if (!res.changed) { // row already api_server → the 409 came from the LIVE desktop hold
+            handoffNote = if (res.was == "api_server")
+                "that chat is open on the desktop right now — close it there, then ask from the watch"
+            else "promote refused: ${res.reason.ifBlank { res.was }}"
+            return null
+        }
+        return try {
+            api.submitRun(input, session, idem, model).also { handoffNote = "promoted:$res.was" }
+        } catch (e: Exception) {
+            runCatching { Watchkit.promoteSession(prof, session, revertTo = res.was) } // undo OUR flip
+            if (e is ApiException && e.code == 409)
+                handoffNote = "that chat is live on the desktop — close it there, then ask from the watch"
+            else handoffNote = "promoted, but the retry failed: ${e.message ?: "network"}"
+            null
+        }
+    }
+
     private fun explain(e: Throwable): String {
         val code = (e as? ApiException)?.code
         if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
+        // 409 permission_denied on submit = the session-binding doctrine (gateway session_api.py):
+        // a session whose stored source is the desktop CLI (`local`/`desktop`/…) refuses an
+        // API-lane run until the §12.13 hand-off promotes it. The promote attempt (ask's submit
+        // path) leaves the exact reason in `handoffNote`; without it (no watchkit at all) the
+        // read-only line stays honest. The watch NEVER forks (owner 2026-11-02: "an auto-fork
+        // makes a mess; a desktop session continues in the desktop AND on the watch").
+        if (code == 409 && (e.message ?: "").contains("permission_denied")) {
+            val note = handoffNote
+            handoffNote = ""
+            if (note.isNotEmpty()) return note
+            val s = store.get(activeId)?.sessionTitle?.take(20) ?: "this chat"
+            return "read-only on the wrist: $s was made by the desktop CLI — the gateway only lets " +
+                "the API lane run API-created chats. Ask from the desktop, or start a watch chat."
+        }
         val tried = runCatching {
             if (WearApp.Graph.hasEndpoints()) WearApp.Graph.endpoints.status.value.apiResults else emptyMap()
         }.getOrDefault(emptyMap())
@@ -292,17 +348,32 @@ class ChatSession(
      * "OPEN SESSION" from a notification (owner: *"go straight to that session, not just open
      * the app — it may need to switch agents from wherever the app currently is"*). Same-agent
      * ids take the plain path; cross-agent ids switch first, then land on THAT chat.
+     *
+     * The away-watch (BATCH-6 #25) notifications carry a GATEWAY SESSION id, not a local chat
+     * id — those resolve through the adoption registry (an already-adopted desktop session
+     * opens its own chat), and when not adopted yet they ADOPT via [resumeGatewaySession] on
+     * [profileHint]'s agent (owner bug 2026-11-02: the tap silently no-opped).
      */
-    fun openFromNotification(id: String) {
+    fun openFromNotification(id: String, profileHint: String = "") {
         scope.launch {
             store.loadIfNeeded()
-            val meta = store.get(id)
-            val (route, agent) = NotificationDeepLink.plan(settings.profileSync(), meta?.profile ?: "", meta != null)
+            val meta = store.get(id) ?: store.chats.value.firstOrNull { it.sessionTitle == id }
+            Notifs.cancelChat(app, id, id) // the tapped notification is keyed by the id it carries
+            if (meta == null) {
+                if (profileHint.isNotEmpty()) {
+                    Log.i("HermesWear", "deep link: session $id lives on '$profileHint' — adopting there")
+                    if (profileHint != settings.profileSync())
+                        switchAgent(profileHint) { _, _, _ -> resumeGatewaySession(id, "", profileHint) }
+                    else resumeGatewaySession(id, "", profileHint)
+                } else openChat(id) // unknown/local-only id: plain open (no-op if gone)
+                return@launch
+            }
+            val (route, agent) = NotificationDeepLink.plan(settings.profileSync(), meta.profile, true)
             if (route == NotificationDeepLink.Route.SWITCH_THEN_OPEN) {
                 Log.i("HermesWear", "deep link: chat $id lives on '$agent' — switching first")
-                switchAgent(agent) { _, _, _ -> openChat(id) }
+                switchAgent(agent) { _, _, _ -> openChat(meta.id) }
             } else {
-                openChat(id)
+                openChat(meta.id)
             }
         }
     }
@@ -404,7 +475,7 @@ class ChatSession(
         stoppedRunId = ""
         deltaCount = 0L
         addMessage(ChatMessage.Role.User, trimmed)
-        _state.value = _state.value.copy(busy = true, live = "", status = "sending…")
+        _state.value = _state.value.copy(busy = true, live = "", status = "sending…", steps = emptyList())
         // W8: a chat may consume body tools (MCP) — refresh the watchkit snapshot first
         // (fire-and-forget, rate-limited inside; no-op when all tools are off).
         try { WearApp.Graph.pusher.refreshOnAsk() } catch (e: Exception) { /* Graph not ready */ }
@@ -434,9 +505,24 @@ class ChatSession(
                     // the gateway's next endpoint BEFORE retrying; the Idempotency-Key makes the
                     // retry a replay, never a double-run, whichever endpoint lands the request.
                     Log.w(TAG, "submit failed (${e.message}) — endpoint failover check")
+                    handoffNote = ""
                     val nextBase = advanceEndpoint(a.baseUrl)
                     val retryApi = nextBase?.let { apiTo(it) } ?: run { delay(1_500); a }
-                    retryApi.submitRun(trimmed, session, idem, modelSel)
+                    try {
+                        retryApi.submitRun(trimmed, session, idem, modelSel)
+                    } catch (e2: Exception) {
+                        // FLAWLESS HAND-OFF (SPEC §12.13): a desktop-CLI chat refuses the API lane
+                        // (409 permission_denied — gateway binding doctrine). ONE explicit promote
+                        // attempt: flip the same row's source via watchkit and resubmit under the
+                        // SAME Idempotency-Key (nothing was ever accepted, so no double-run is
+                        // possible). Same session id forever after — NEVER an auto-fork.
+                        if (e2 is ApiException && e2.code == 409 &&
+                            (e2.message ?: "").contains("permission_denied") && session.isNotEmpty()
+                        ) {
+                            handoffPromote(retryApi, trimmed, session, idem, modelSel, metaNow.profile)
+                                ?: throw e2
+                        } else throw e2
+                    }
                 }
                 store.update(activeId) { it.copy(lastRunId = accepted.runId, updatedAt = System.currentTimeMillis()) }
                 settings.setLastRun(accepted.runId) // legacy key: pre-registry resume path (migration source)
@@ -502,8 +588,29 @@ class ChatSession(
             "message.interim" -> if (obj["already_streamed"]?.toString() != "true") obj.str("text")?.let { t ->
                 _state.value = _state.value.copy(live = _state.value.live + t)
             }
-            "tool.started" -> _state.value = _state.value.copy(status = "🔧 ${obj.str("tool") ?: "tool"}…")
-            "tool.completed" -> _state.value = _state.value.copy(status = "")
+            "tool.started" -> {
+                val tool = obj.str("tool") ?: "tool"
+                _state.value = _state.value.copy(
+                    status = "🔧 $tool…",
+                    // THE ACTIVITY LEDGER (owner 2026-11-02: "I feel like I'm missing what's
+                    // actually going on"): every tool call becomes a card row the instant it
+                    // starts — command/path ride in `preview`.
+                    steps = _state.value.steps + ToolStep(obj.str("tool_call_id") ?: "", tool, obj.str("preview") ?: ""),
+                )
+            }
+            "tool.completed" -> {
+                val callId = obj.str("tool_call_id")
+                val tool = obj.str("tool") ?: "tool"
+                val steps = _state.value.steps.toMutableList()
+                val at = steps.indexOfLast { s -> !s.done && (callId != null && s.callId == callId || s.tool == tool) }
+                val fin = ToolStep(
+                    callId ?: "", tool, steps.getOrNull(at)?.preview ?: "",
+                    done = true, error = obj.flag("error"), durS = obj.num("duration"),
+                    result = obj.str("preview") ?: "", // bounded result text on NEWER gateways; "" today
+                )
+                if (at >= 0) steps[at] = fin else steps += fin // started missed (mid-run resume): the completed row still counts
+                _state.value = _state.value.copy(status = "", steps = steps)
+            }
             "approval.request" -> {
                 val q = obj.str("command") ?: obj.str("question") ?: obj.str("message") ?: "Approve this action?"
                 onApprovalArrived(ApprovalInfo(runId, obj.str("request_id") ?: obj.str("id"), q, obj.choiceNames()))
@@ -549,7 +656,7 @@ class ChatSession(
     private fun onApprovalArrived(info: ApprovalInfo) {
         Log.i(TAG, "approval arrived run=${info.runId} req=${info.requestId} active=$activeId choices=${info.choices}")
         _state.value = _state.value.copy(approval = info)
-        // PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode, SPEC §12.8): this chat's
+        // PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode, SPEC §12.9): this chat's
         // persisted pick answers for itself — Off always, Smart only while the human is away.
         // Dedup by request id: the status poll re-reports a pending approval every 3 s.
         val mode = ApprovalMode.fromId(store.get(activeId)?.approvalMode)
@@ -1100,6 +1207,25 @@ class ChatSession(
     private fun backfillHistory(meta: ChatMeta, localTranscriptSize: Int, profileHint: String) {
         if (!SessionHistory.shouldBackfill(meta.sessionTitle, localTranscriptSize)) return
         scope.launch {
+            // GATEWAY FIRST (SPEC §12.13): GET {lane}/api/sessions/{id}/messages rides the SAME
+            // bearer as an ask, so a watchkit outage can no longer sink the backfill — the whole
+            // "history unavailable — continuing live" wave of 2026-11-02 was one dead sidecar
+            // taking history down with it. watchkit's keyless read stays the fallback for
+            // profiles the watch can't sign for (§12.2) and lanes that 404 the id.
+            val gw = scope.async(Dispatchers.IO) {
+                SessionHistory.parseGateway(
+                    api().sessionMessagesJson(meta.sessionTitle, SessionHistory.MAX_MESSAGES))
+            }
+            val gatewayMsgs = try {
+                withTimeoutOrNull(historyFetchTimeoutMs) { gw.await() }
+            } catch (e: Exception) {
+                Log.i(TAG, "gateway history probe failed: ${e.message}"); null
+            }
+            gw.cancel()
+            if (!gatewayMsgs.isNullOrEmpty()) {
+                stamp(meta, gatewayMsgs, settings.profileSync())
+                return@launch
+            }
             for (p in SessionHistory.profileProbes(profileHint.ifBlank { meta.profile })) {
                 // async on the CHAT scope (not withContext children — those would have to finish
                 // before the timeout could return): the await below is what the leash controls.
@@ -1113,18 +1239,7 @@ class ChatSession(
                 }
                 probe.cancel()
                 if (msgs.isNullOrEmpty()) continue
-                val stamped = ArrayList<ChatMessage>(msgs.size + 1)
-                stamped += ChatMessage(nextId(), ChatMessage.Role.System, SessionHistory.captionLine(msgs.size, p))
-                msgs.forEach { stamped += ChatMessage(nextId(), it.role, it.text) }
-                if (activeId == meta.id) {
-                    stamped += messageLog // messages the user sent during the fetch stay newest/bottom
-                    messageLog = stamped
-                    _state.value = _state.value.copy(messages = messageLog.toList())
-                    store.saveTranscript(meta.id, messageLog)
-                } else if (store.loadTranscript(meta.id).isEmpty()) {
-                    store.saveTranscript(meta.id, stamped) // navigated away mid-fetch: next open has it
-                }
-                Log.i(TAG, "history backfill n=${msgs.size} chat=${meta.id} session=${meta.sessionTitle} profile=$p")
+                stamp(meta, msgs, p)
                 return@launch
             }
             Log.i(TAG, "history backfill unavailable chat=${meta.id} session=${meta.sessionTitle}")
@@ -1132,6 +1247,22 @@ class ChatSession(
                 android.widget.Toast.makeText(app, "history unavailable — continuing live", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** Prepend caption + history under whatever the user already typed; navigated-away chats get it on disk. */
+    private fun stamp(meta: ChatMeta, msgs: List<ChatMessage>, profile: String) {
+        val stamped = ArrayList<ChatMessage>(msgs.size + 1)
+        stamped += ChatMessage(nextId(), ChatMessage.Role.System, SessionHistory.captionLine(msgs.size, profile))
+        msgs.forEach { stamped += ChatMessage(nextId(), it.role, it.text) }
+        if (activeId == meta.id) {
+            stamped += messageLog // messages the user sent during the fetch stay newest/bottom
+            messageLog = stamped
+            _state.value = _state.value.copy(messages = messageLog.toList())
+            store.saveTranscript(meta.id, messageLog)
+        } else if (store.loadTranscript(meta.id).isEmpty()) {
+            store.saveTranscript(meta.id, stamped) // navigated away mid-fetch: next open has it
+        }
+        Log.i(TAG, "history backfill n=${msgs.size} chat=${meta.id} session=${meta.sessionTitle} profile=$profile")
     }
 
     /**
@@ -1262,14 +1393,21 @@ class ChatSession(
         eventSource?.cancel()
         RunWakeLock.release("settle run=$currentRunId")
         if (currentRunId.isNotEmpty()) Notifs.cancelApproval(app, currentRunId)
+        // THE FOLD (owner 2026-11-02: "verbosity … when done … collapsable box like desktop"):
+        // the run's tool ledger settles INTO the transcript as a fence-block before the answer —
+        // collapsed by default after settle, one tap from the full theatre, and reload-stable.
+        val stepsNow = _state.value.steps
+        if (stepsNow.isNotEmpty()) addMessage(ChatMessage.Role.Hermes, StepsFence.encode(stepsNow))
         addMessage(if (error) ChatMessage.Role.System else ChatMessage.Role.Hermes, text)
-        _state.value = _state.value.copy(live = "", status = "", busy = false, approval = null)
+        // The live card hands over to the persisted fence card — keeping both would double up.
+        _state.value = _state.value.copy(live = "", status = "", busy = false, approval = null, steps = emptyList())
         val chatId = activeId
         store.update(chatId) { it.copy(lastRunId = "", updatedAt = System.currentTimeMillis()) }
         scope.launch { settings.setLastRun("") }
         store.saveTranscript(chatId, messageLog)
         // First answer settled: pull the gateway's session title into the list label (§3 titles).
-        if (!error && messageLog.count { it.role == ChatMessage.Role.Hermes } == 1) enrichLabel(chatId)
+        // (the activity fence is a Hermes message too — only real answers count)
+        if (!error && messageLog.count { it.role == ChatMessage.Role.Hermes && !it.text.startsWith("```" + StepsFence.LANG) } == 1) enrichLabel(chatId)
         // M5 + owner rule 2026-10-29: a settle goes to Wear OS notifications unless THIS chat is
         // the front screen (see Graph.viewingChatId) — another chat open, another surface, or
         // screen-off all notify; only the chat you're literally watching renders inline instead.
@@ -1310,3 +1448,11 @@ class ChatSession(
         }
     }
 }
+
+// SSE number/boolean getters to match HermesApi.str: kotlinx primitives must be read via
+// .content — JsonPrimitive.toString() is the JSON form ("0.21" with quotes, true bare).
+private fun kotlinx.serialization.json.JsonObject.num(key: String): Double =
+    (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull() ?: 0.0
+
+private fun kotlinx.serialization.json.JsonObject.flag(key: String): Boolean =
+    (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() == true

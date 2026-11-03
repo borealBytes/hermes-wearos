@@ -163,7 +163,7 @@ class NetworkWatchTest {
         // The Wear emulator is the counter-example that forced this shape: no tunnel, no Tailscale
         // resolver in its own LinkProperties, yet .ts.net resolves because slirp forwards the HOST's
         // on-tailnet resolver. "Can't resolve" would have been a lie there; a dead probe never is.
-        val tailnetUrl = "http://hermes.tailb12aa5.ts.net:8642"
+        val tailnetUrl = "http://hermes.tailca7ee1.ts.net:8642"
         val lanUrl = "http://192.168.1.50:8642"
         assertEquals(
             "wifi(wlan0) · validated — tailnet entries unreachable from here",
@@ -187,7 +187,7 @@ class NetworkWatchTest {
         // The second tier exists because a LAN-FIRST endpoint list never probes the tailnet entry at
         // all (a round stops at the first 2xx), so an evidence-only clause would stay silent forever
         // on the owner's watch — where the claim is true anyway.
-        val tailnetUrl = "http://hermes.tailb12aa5.ts.net:8642"
+        val tailnetUrl = "http://hermes.tailca7ee1.ts.net:8642"
         assertEquals(
             "wifi(wlan0) · validated — no tailnet route on this device",
             NetworkWatch.describe(wifi, listOf(tailnetUrl), emptyMap()),

@@ -255,4 +255,49 @@ class WatchMarkdownTest {
         assertEquals(1, blocks.size)
         assertEquals(text, WatchMarkdown.parse(text).let { (it[0] as MdBlock.Paragraph).spans.joinToString("") { s -> (s as MdSpan.Plain).text } })
     }
+
+    // ---- MEDIA EPIC: video/audio routes to Media blocks, images keep F6 Image ----
+
+    @Test fun mediaLineWithVideoExtensionBecomesVideoCard() {
+        val b = WatchMarkdown.parse("MEDIA:/home/user/comfy/out/clip.mp4")[0]
+        assertEquals(MdBlock.Media(video = true, target = "/home/user/comfy/out/clip.mp4", label = "clip.mp4"), b)
+    }
+
+    @Test fun mediaLineWithAudioExtensionBecomesAudioCard() {
+        val b = WatchMarkdown.parse("MEDIA: /srv/podcast/ep7.m4a")[0]
+        assertEquals(MdBlock.Media(video = false, target = "/srv/podcast/ep7.m4a", label = "ep7.m4a"), b)
+    }
+
+    @Test fun imageSyntaxWithVideoExtensionRoutesToVideoCard() {
+        val b = WatchMarkdown.parse("![demo](/p/out/demo-vertical-v0.6.0-song-d.mp4)")[0]
+        assertEquals(MdBlock.Media(video = true, target = "/p/out/demo-vertical-v0.6.0-song-d.mp4", label = "demo"), b)
+    }
+
+    @Test fun imageSyntaxWithImageExtensionStaysImageBlock() {
+        assertTrue(WatchMarkdown.parse("![x](/a/b.png)")[0] is MdBlock.Image)
+    }
+
+    @Test fun bareWholeLineMediaPathBecomesCard() {
+        val b = WatchMarkdown.parse("/data/out/renders/song-d.mp4")[0]
+        assertEquals(MdBlock.Media(video = true, target = "/data/out/renders/song-d.mp4", label = "song-d.mp4"), b)
+    }
+
+    @Test fun backtickedBareMediaLineBecomesCard() {
+        assertTrue(WatchMarkdown.parse("`/data/x/clip.mp4`")[0] is MdBlock.Media)
+    }
+
+    @Test fun mediaPathInsideProseStaysParagraph() {
+        // Only whole-line paths become cards — mid-sentence mentions stay text.
+        assertTrue(WatchMarkdown.parse("rendered at /data/x/clip.mp4 yesterday")[0] is MdBlock.Paragraph)
+    }
+
+    @Test fun remoteMediaUrlBecomesDirectCard() {
+        val b = WatchMarkdown.parse("https://example.com/media/talk.mp3")[0]
+        assertEquals(MdBlock.Media(video = false, target = "https://example.com/media/talk.mp3", label = "talk.mp3"), b)
+    }
+
+    @Test fun partialBareMediaLineMidStreamStaysParagraph() {
+        // Stream-safety: the extension has not fully arrived, so nothing is a card yet.
+        assertTrue(WatchMarkdown.parse("/data/out/renders/song-d.mp")[0] is MdBlock.Paragraph)
+    }
 }

@@ -1,6 +1,7 @@
 package dev.hermes.wearos
 
 import android.app.Application
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import dev.hermes.wearos.data.AgentsRepo
@@ -19,6 +20,9 @@ import dev.hermes.wearos.notify.Notifs
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.EndpointResolver
 import dev.hermes.wearos.net.NetworkMonitor
+import dev.hermes.wearos.net.TailnetEngine
+import dev.hermes.wearos.domain.TailnetLogic
+import dev.hermes.wearos.domain.TailnetPhase
 import dev.hermes.wearos.net.SnapshotPusher
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
@@ -126,6 +130,13 @@ class WearApp : Application() {
          * viewer).
          */
         val devViewerScale = MutableStateFlow<Float?>(null)
+
+        /**
+         * Dev hook (`-e media_zoom <s|reset>`): drives the VIDEO player's pinch lane from adb —
+         * one-pointer `adb input` can't pinch, so this fires the same `animateScale` a double-tap
+         * uses (scale clamped like the gesture). Screenshot-capture aid for the pinch feature.
+         */
+        val devMediaZoom = MutableStateFlow<Float?>(null)
 
         /**
          * Dev hook `-e dial_preview`: pins the DIAL RING open (armed, no finger) so a screenshot
@@ -305,6 +316,22 @@ class WearApp : Application() {
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
                 scope.launch { settings.loadIntroVideo() } // Display ▸ launch video (SplashIntro gate)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
+                scope.launch {
+                    // Media epic: load the A/V scaling knobs and keep Watchkit's mirror current —
+                    // Settings ▸ Media changes re-shape every card/player URL without a restart.
+                    settings.loadMediaPrefs()
+                    fun push() = Watchkit.setMediaPrefs(
+                        Watchkit.MediaPrefs(
+                            settings.mediaQuality.value,
+                            mono = !settings.mediaStereo.value,
+                            audioKbps = settings.mediaAudioKbps.value,
+                        ),
+                    )
+                    push()
+                    launch { settings.mediaQuality.collect { push() } }
+                    launch { settings.mediaStereo.collect { push() } }
+                    launch { settings.mediaAudioKbps.collect { push() } }
+                }
                 scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
                 scope.launch { settings.loadAgentKeys() } // per-agent gateway keys (SPEC §12.2)
                 scope.launch { settings.loadCommandUsage() } // slash-overlay recents (SPEC §12.3)
@@ -365,6 +392,40 @@ class WearApp : Application() {
                 network.start() // LAST: its hook reaches into every other Graph member
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).
                 scope.launch { store.chats.collect { chats -> Attention.publish(app, chats.any { it.pendingAttention }) } }
+                // TUNNEL KEEPER (SPEC §11.4 "tailnet only, always"): start the embedded node NOW
+                // so the tunnel predates the first ask; no-op when disabled/keyless (the service
+                // reads prefs and stops itself). The boot receiver covers cold boots.
+                scope.launch {
+                    if (settings.tailnetEnabled() && settings.tailnetKey().isNotEmpty()) {
+                        androidx.core.content.ContextCompat.startForegroundService(
+                            app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
+                        )
+                    }
+                }
+                // THE TUNNEL GATES THE TRUTH (SPEC §11.4): the boot probe below races node
+                // enrollment and can legitimately fail every .ts.net entry BEFORE the node is
+                // up — lastKnownGood keeps that harmless, but the moment the tunnel goes ACTIVE
+                // the probe verdicts are stale by definition. Forced re-probe on the edge into
+                // ACTIVE (and back on DEGRADED, where the old winner may again be the right one).
+                scope.launch {
+                    var last: TailnetPhase? = null
+                    TailnetEngine.status.collect { st ->
+                        val phase = TailnetLogic.phase(
+                            st,
+                            enabled = settings.tailnetEnabled(),
+                            gatewayHost = runCatching { android.net.Uri.parse(settings.baseUrl()).host.orEmpty() }.getOrDefault(""),
+                        )
+                        if (phase != last && (phase == TailnetPhase.ACTIVE || last == TailnetPhase.ACTIVE)) {
+                            last = phase
+                            if (hasEndpoints()) {
+                                val api = endpoints.ensure(force = true)
+                                Log.i(TAG, "tailnet ${phase.name.lowercase()} — endpoints re-picked: ${api.ifEmpty { "none" }}")
+                            }
+                        } else {
+                            last = phase
+                        }
+                    }
+                }
             }
         }
 
@@ -386,11 +447,11 @@ class WearApp : Application() {
                 when (a.kind) {
                     AwayWatch.Kind.Approval -> {
                         Log.i(TAG, "away-watch: approval parked ${a.profile}/${a.chatId} ${a.tool}")
-                        Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments)
+                        Notifs.approvalRemote(app, a.chatId, a.title, a.tool, a.arguments, a.profile)
                     }
                     AwayWatch.Kind.Finished -> {
                         Log.i(TAG, "away-watch: answer finished ${a.profile}/${a.chatId} msgs=${a.messageCount}")
-                        Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false)
+                        Notifs.settle(app, a.chatId, a.title, "Answer ready on the desktop \u00b7 open to read", false, a.profile)
                     }
                 }
             }
@@ -551,6 +612,60 @@ class WearApp : Application() {
                 Log.i(TAG, "gw_probe done api=$api winner=${endpoints.status.value.apiWinner} wk=${endpoints.status.value.watchkitWinner}")
             }
         }
+
+        /** Dev-only (adb `-e tailnet_status`): tunnel truth + engine log tail (SPEC §11.4). */
+        fun devTailnetStatus() {
+            scope.launch {
+                val st = TailnetEngine.status.value
+                val gwHost = runCatching { android.net.Uri.parse(settings.baseUrl()).host.orEmpty() }.getOrDefault("")
+                val phase = TailnetLogic.phase(st, settings.tailnetEnabled(), gwHost)
+                Log.i(TAG, "tailnet_status phase=$phase ${TailnetLogic.describe(phase, st, gwHost)} socks=${st.socksPort} self=${st.self?.dnsName}")
+                TailnetEngine.engineLogs().lines().takeLast(12).forEach { Log.i(TAG, "tailnet_log | $it") }
+            }
+        }
+
+        /** Dev-only (adb `-e set_tailnet_key <key>`): store + (re)start the keeper (SPEC §11.4). */
+        fun devSetTailnetKey(key: String) = scope.launch {
+            settings.setTailnetKey(key)
+            tailnetStart()
+            Log.i(TAG, "set_tailnet_key stored (${key.length} chars) — keeper started")
+        }
+
+        // ── TAILNET keeper API (SPEC §11.4) — shared by Settings ▸ Tailnet and the dev hooks ──
+
+        /** The tunnel truth as the UI reads it (engine status, parsed). */
+        val tailnetStatus: kotlinx.coroutines.flow.StateFlow<dev.hermes.wearos.domain.TailnetStatus>
+            get() = TailnetEngine.status
+
+        /** (Re)start the keeper per stored prefs (idempotent; START_STICKY covers death). */
+        fun tailnetStart() = androidx.core.content.ContextCompat.startForegroundService(
+            app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
+        )
+
+        /** Enable/disable the tunnel (off = the dev escape hatch back to plain sockets). */
+        fun tailnetSetEnabled(on: Boolean) = scope.launch {
+            settings.setTailnetEnabled(on)
+            if (on) tailnetStart()
+            else {
+                val i = Intent(app, dev.hermes.wearos.notify.TailnetService::class.java)
+                i.action = dev.hermes.wearos.notify.TailnetService.ACTION_STOP
+                app.startService(i)
+            }
+            Log.i(TAG, "tailnet enabled=$on")
+        }
+
+        /** Store + re-enroll: wipes node identity, enrolls fresh with the stored key. */
+        fun tailnetReenroll() = scope.launch {
+            TailnetEngine.reEnroll(app, settings.tailnetHostname(), settings.tailnetKey())
+            Log.i(TAG, "tailnet reenroll kicked (old node stays in admin until pruned)")
+        }
+
+        /** Dev-only (adb `-e tailnet_on on|off`): the escape hatch — off = plain sockets (dev). */
+        fun devTailnetOn(v: String) =
+            tailnetSetEnabled(!v.trim().matches(Regex("(?i)(off|false|0|no)")))
+
+        /** Dev-only (adb `-e tailnet_reenroll`). */
+        fun devTailnetReenroll() = tailnetReenroll()
 
         fun setWatchkitBase(url: String) {
             scope.launch {

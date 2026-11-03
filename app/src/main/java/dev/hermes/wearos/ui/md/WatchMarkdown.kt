@@ -40,6 +40,38 @@ sealed interface MdBlock {
     data class Image(val alt: String, val target: String) : MdBlock
 
     /**
+     * MEDIA EPIC (owner 2026-11-02: "the desktop shows generated video/audio — so should the
+     * watch, small inline with play, fullscreen on tap"): same three source conventions as
+     * [Image] (`![]()`, `MEDIA:`, bare whole-line paths/URLs), routed by extension. [video]
+     * splits the two kinds; [label] is the alt (or the file name for MEDIA:/bare lines).
+     * Remote http(s) targets play DIRECT through the watch's own net; gateway-host absolute
+     * paths stream through watchkit /media (ffmpeg pre-shrink, owner: "no big-ass video over
+     * the wire") — see Watchkit.mediaUrl.
+     */
+    data class Media(val video: Boolean, val target: String, val label: String) : MdBlock
+
+    /**
+     * TOOL ACTIVITY (owner 2026-11-02: "more verbosity for code edits and terminal outputs,
+     * running and when done, in a collapsable box like hermes desktop"). One card per run:
+     * a header line that expands to the per-step rows. Produced from the ```hermes-steps fence
+     * ChatSession writes when a run settles — and fed DIRECTLY (no fence) to the same card
+     * while the run streams.
+     */
+    data class ActivityRun(val steps: List<ActStep>) : MdBlock
+
+    /** One tool-call row: name, seconds, failure flag, the start preview (command/path), and
+     *  the bounded result preview when the gateway carries one (newer gateway builds only).
+     *  [running] = the call is mid-flight (live ledger only — a settled fence never runs). */
+    data class ActStep(
+        val tool: String,
+        val durS: Double,
+        val error: Boolean,
+        val preview: String,
+        val result: String,
+        val running: Boolean = false,
+    )
+
+    /**
      * Markdown tables degrade to pre-formatted "· col: cell" caption lines — the watch is too
      * narrow for a wide grid, so each non-blank cell becomes its own labelled line (F3 note).
      * Structured [header]/[rows] ride along: when the table is exactly two labelled columns
@@ -84,9 +116,34 @@ object WatchMarkdown {
     // (gateway paths are plain absolute paths); anything fancier stays literal paragraph text.
     private val IMAGE_LINE = Regex("^\\s*!\\[([^\\]]*)\\]\\(\\s*([^()\\s]+)(?:\\s+[\"'][^\"']*[\"'])?\\s*\\)\\s*$")
 
-    /** `MEDIA:/abs/path` — the gateway/skill attachment line convention (aurora/weather charts).
-     *  Only fires once the extension is fully on screen, so a mid-stream partial stays text. */
-    private val MEDIA_LINE = Regex("^\\s*MEDIA:\\s*(\\S+\\.(?:png|jpe?g|webp|gif))\\s*$", RegexOption.IGNORE_CASE)
+    // MEDIA EPIC extension sets. The watch never DECODES these containers itself except the
+    // ExoPlayer path; watchkit re-muxes to mp4/m4a before anything hits the wire.
+    internal const val IMG_EXT = "png|jpe?g|webp|gif|bmp"
+    internal const val VID_EXT = "mp4|mov|m4v|mkv|webm|avi|3gp|ts"
+    internal const val AUD_EXT = "mp3|m4a|aac|wav|ogg|opus|flac|wma|amr"
+
+    /** `MEDIA:/abs/path` — the gateway/skill attachment line convention (aurora/weather charts,
+     *  comfy video/audio renders). Only fires once the extension is fully on screen, so a
+     *  mid-stream partial stays text. Routes image/video/audio by extension. */
+    private val MEDIA_LINE = Regex(
+        "^\\s*MEDIA:\\s*(\\S+\\.(?:$IMG_EXT|$VID_EXT|$AUD_EXT))\\s*$", RegexOption.IGNORE_CASE,
+    )
+
+    /** A WHOLE line that is just one absolute path / http(s) URL ending in a media extension
+     *  (optionally backticked) — how desktop transcripts often carry generated clips. Mid-prose
+     *  paths stay literal: one path per line is the contract, same discipline as IMAGE_LINE. */
+    private val BARE_MEDIA_LINE = Regex(
+        "^\\s*`?\\s*((?:https?://|/)[^`\\s|]+?\\.(?:$VID_EXT|$AUD_EXT))\\s*`?\\s*$", RegexOption.IGNORE_CASE,
+    )
+
+    /** Route a media target to the right block by extension (image stays F6 Image). */
+    private fun mediaBlock(label: String, target: String): MdBlock {
+        val t = target.substringBefore('#').lowercase()
+        val v = Regex("\\.($VID_EXT)$").containsMatchIn(t)
+        val a = !v && Regex("\\.($AUD_EXT)$").containsMatchIn(t)
+        return if (v || a) MdBlock.Media(video = v, target = target, label = label)
+        else MdBlock.Image(label, target)
+    }
 
     fun parse(text: String): List<MdBlock> {
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').replace("\t", "    ").split('\n')
@@ -126,8 +183,13 @@ object WatchMarkdown {
                     code.appendLine(lines[j]); j++
                 }
                 val body = code.toString().removeSuffix("\n")
-                out += if (info.lowercase().startsWith("mermaid")) MdBlock.MermaidFence(body)
-                else MdBlock.CodeBlock(info, body)
+                out += when {
+                    info.lowercase().startsWith("mermaid") -> MdBlock.MermaidFence(body)
+                    // Tool-activity fence written by ChatSession on settle (domain.StepsFence —
+                    // format lives there; parse is here). Junk rows skip, never storm.
+                    info.lowercase().startsWith("hermes-steps") -> MdBlock.ActivityRun(parseStepsFence(body))
+                    else -> MdBlock.CodeBlock(info, body)
+                }
                 i = if (closed) j + 1 else j
                 continue
             }
@@ -196,20 +258,31 @@ object WatchMarkdown {
             // Image-only line → dedicated block (F6). Checked late so fences/headings/bullets
             // win first; mixed `text ![alt](x)` lines fall through to paragraphs on purpose
             // (see MdBlock.Image) and a stream-partial `![a](/pat` stays plain text too.
+            // Media epics: `![t](clip.mp4)` routes to a Media card, not a bitmap fetch.
             val im = IMAGE_LINE.matchEntire(line)
             if (im != null) {
                 flushPara()
-                out += MdBlock.Image(im.groupValues[1].trim(), im.groupValues[2].trim())
+                out += mediaBlock(im.groupValues[1].trim(), im.groupValues[2].trim())
                 i++; continue
             }
 
             // Gateway attachment convention: a bare `MEDIA:/abs/path` line from a skill (the
-            // aurora/weather renders speak this). Same card as ![](), alt = file name.
+            // aurora/weather renders speak this). Same card family as ![](), label = file name.
             val med = MEDIA_LINE.matchEntire(line)
             if (med != null) {
                 flushPara()
                 val p = med.groupValues[1]
-                out += MdBlock.Image(p.substringAfterLast('/'), p)
+                out += mediaBlock(p.substringAfterLast('/'), p)
+                i++; continue
+            }
+
+            // Bare whole-line media path/URL (comfy video drops arrive this way in desktop
+            // transcripts). Deliberately AFTER the other two so MEDIA:/md syntax wins.
+            val bare = BARE_MEDIA_LINE.matchEntire(line)
+            if (bare != null) {
+                flushPara()
+                val p = bare.groupValues[1]
+                out += mediaBlock(p.substringAfterLast('/').substringBefore('?'), p)
                 i++; continue
             }
 
@@ -232,6 +305,23 @@ object WatchMarkdown {
 
     private fun cellsOf(line: String): List<String> =
         line.trim().trimStart('|').trimEnd('|').split('|').map { it.trim() }
+
+    /** ```hermes-steps body → step rows (written by domain.StepsFence — encode lives there).
+     *  `tool|durS|status|preview|result`; short rows fill from the right so a truncated line
+     *  still names its tool; a garbage durS is 0, never a throw. */
+    internal fun parseStepsFence(body: String): List<MdBlock.ActStep> =
+        body.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.map { ln ->
+            val f = ln.split('|').map { it.trim() }
+            val status = f.getOrElse(2) { "" }
+            MdBlock.ActStep(
+                tool = f.getOrElse(0) { "?" },
+                durS = f.getOrElse(1) { "" }.toDoubleOrNull() ?: 0.0,
+                error = status == "err",
+                preview = f.getOrElse(3) { "" },
+                result = f.getOrElse(4) { "" },
+                running = status == "run",
+            )
+        }.toList()
 
     // ---- inline pass: **bold**, *italic*, `code`, [label](url), bare https://…; unterminated stays literal ----
 

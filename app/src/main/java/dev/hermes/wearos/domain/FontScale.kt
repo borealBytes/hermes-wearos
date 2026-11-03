@@ -6,11 +6,17 @@ import kotlin.math.roundToInt
 /**
  * PINCH FONT-SCALE math (owner ask: two-finger pinch in the message area scales TEXT/MARKDOWN
  * type, NOT a visual zoom — image/mermaid cards keep their footprint). Pure clamp+quantize on a
- * 0.05 grid between 0.75× and 1.6×; the gesture feeds raw `calculateZoom()` deltas multiplicatively.
+ * 0.05 grid between 0.55× and 1.6×; the gesture feeds raw `calculateZoom()` deltas multiplicatively.
  * Values persist through AppSettings; NaN/garbage always land on a valid step. No compose imports.
+ *
+ * THE FLOOR (owner 2026-11-02: "I can read very small text — let me zoom out more"): the Watch
+ * Ultra is 480×480 @ ~340 dpi → 1 sp ≈ 1 physical px. Transcript body type is ~14 sp, so 0.55×
+ * lands at ≈7.7 px — the same bottom the pinch IMAGE viewer already uses (MediaZoom), and the
+ * point where letter x-heights (~4 px) stop being legible at wrist distance. Below this it is
+ * texture, not text.
  */
 object FontScale {
-    const val MIN = 0.75f
+    const val MIN = 0.55f
     const val MAX = 1.6f
     const val STEP = 0.05f
     const val DEFAULT = 1f

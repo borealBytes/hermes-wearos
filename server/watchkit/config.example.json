@@ -1,6 +1,6 @@
 {
   "host": "0.0.0.0",
-  "port": 8651,
+  "port": 42651,
   "token": "REPLACE-with: openssl rand -hex 32",
   "img_roots": ["/home/USER/.hermes", "/home/USER/dev", "/tmp", "/var/tmp"]
 }

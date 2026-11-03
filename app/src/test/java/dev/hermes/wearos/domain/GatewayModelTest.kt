@@ -23,7 +23,7 @@ class GatewayModelTest {
             g.apiEndpoints,
         )
         assertEquals(
-            listOf("http://hermes.tailnet.ts.net:8651", "http://192.168.1.50:8651"),
+            listOf("http://hermes.tailnet.ts.net:42651", "http://192.168.1.50:42651"),
             g.watchkitEndpoints,
         )
         assertEquals("tok", g.token)
@@ -68,7 +68,7 @@ class GatewayModelTest {
 
     @Test
     fun `migrate stock default base url keeps tailnet-first order and migrates token`() {
-        val (list, selected) = GatewayModel.migrate("http://hermes.tailnet.ts.net:8642/p/wear", "SECRET", "http://hermes.tailnet.ts.net:8651")
+        val (list, selected) = GatewayModel.migrate("http://hermes.tailnet.ts.net:8642/p/wear", "SECRET", "http://hermes.tailnet.ts.net:42651")
         assertEquals(GatewayModel.SEED_ID, selected)
         val g = list.single()
         assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, g.apiEndpoints) // tailnet FIRST, LAN second
@@ -114,7 +114,7 @@ class GatewayModelTest {
             listOf("http://vps.example.com:8642", GatewayModel.TAILNET_API, GatewayModel.LAN_API),
             g.apiEndpoints,
         )
-        assertTrue(g.watchkitEndpoints.first().startsWith("http://vps.example.com:8651"))
+        assertTrue(g.watchkitEndpoints.first().startsWith("http://vps.example.com:42651"))
         assertEquals("VK", g.token)
     }
 
@@ -200,9 +200,9 @@ class GatewayModelTest {
 
     @Test
     fun `derivedWatchkit and hostId handle ports hosts and junk`() {
-        assertEquals("http://a.b:8651", GatewayModel.derivedWatchkit("http://a.b:8642"))
-        assertEquals("http://a.b:8651", GatewayModel.derivedWatchkit("http://a.b:8642/p/wear"))
-        assertEquals("http://10.0.0.9:8651", GatewayModel.derivedWatchkit("http://10.0.0.9"))
+        assertEquals("http://a.b:42651", GatewayModel.derivedWatchkit("http://a.b:8642"))
+        assertEquals("http://a.b:42651", GatewayModel.derivedWatchkit("http://a.b:8642/p/wear"))
+        assertEquals("http://10.0.0.9:42651", GatewayModel.derivedWatchkit("http://10.0.0.9"))
         assertEquals("", GatewayModel.derivedWatchkit("nonsense"))
         assertEquals("vps-example-com", GatewayModel.hostId("http://vps.example.com:8642/p/wear"))
         assertEquals("gateway", GatewayModel.hostId("://"))

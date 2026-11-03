@@ -35,6 +35,9 @@ object Notifs {
     const val EXTRA_ACTION = "action"
     const val EXTRA_RUN = "run"
     const val EXTRA_OPEN_CHAT = "open_chat"
+    /** Agent (profile) a deep-link chat belongs to — set for gateway-session ids, whose owning
+     *  agent is NOT inferable from the local store (the chat may not be adopted yet). */
+    const val EXTRA_OPEN_PROFILE = "open_profile"
 
     private const val TAG = "HermesWear"
     private const val SNIPPET = 120
@@ -52,11 +55,11 @@ object Notifs {
     }
 
     /** Background-settle notification: tap deep-links into the chat's transcript. */
-    fun settle(app: Context, chatId: String, label: String, answer: String, error: Boolean) {
+    fun settle(app: Context, chatId: String, label: String, answer: String, error: Boolean, profile: String = "") {
         val text = if (error) "⚠ failed" else answer.replace('\n', ' ').trim().take(SNIPPET)
         val n = base(app, CHANNEL_SETTLE, titleFor(label), text)
-            .setContentIntent(openChatIntent(app, chatId))
-            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
+            .setContentIntent(openChatIntent(app, chatId, profile))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId, profile))
             .build()
         notify(app, settleId(chatId), n)
     }
@@ -77,13 +80,13 @@ object Notifs {
      * OPEN (adopt & read the session); watch-started runs keep inline Approve/Deny. Same
      * channel as a watch approval, so it arrives with the same attention buzz.
      */
-    fun approvalRemote(app: Context, chatId: String, title: String, tool: String, arguments: String) {
+    fun approvalRemote(app: Context, chatId: String, title: String, tool: String, arguments: String, profile: String = "") {
         val what = listOf(tool, arguments).filter { it.isNotBlank() }.joinToString(" ")
         val text = ("waiting for approval · " + what.ifBlank { "a tool call" })
             .replace('\n', ' ').take(SNIPPET)
         val b = base(app, CHANNEL_APPROVAL, "\u26a0 " + titleFor(title.ifBlank { chatId }), text)
-            .setContentIntent(openChatIntent(app, chatId))
-            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
+            .setContentIntent(openChatIntent(app, chatId, profile))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId, profile))
         notify(app, approvalId(chatId), b.build())
     }
 
@@ -106,10 +109,11 @@ object Notifs {
     private fun settleId(chatId: String) = ("s" + chatId).hashCode()
     private fun approvalId(runId: String) = ("a" + runId).hashCode()
 
-    private fun openChatIntent(app: Context, chatId: String) = PendingIntent.getActivity(
-        app, chatId.hashCode(),
+    private fun openChatIntent(app: Context, chatId: String, profile: String = "") = PendingIntent.getActivity(
+        app, (chatId + "|" + profile).hashCode(),
         Intent(app, MainActivity::class.java)
             .putExtra(EXTRA_OPEN_CHAT, chatId)
+            .putExtra(EXTRA_OPEN_PROFILE, profile)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )

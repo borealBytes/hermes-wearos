@@ -7,7 +7,7 @@ import org.junit.Test
 
 /**
  * Routing failures translated for a wrist (SPEC §11.5). The strings are the product here: the
- * owner saw OkHttp's `Unable to resolve host "tuxdesktop.tailb12aa5.ts.net" …` on the watch and
+ * owner saw OkHttp's `Unable to resolve host "labhost.tailca7ee1.ts.net" …` on the watch and
  * concluded the TAILNET was broken, when the truth was that the watch is not in the tailnet (no
  * MagicDNS, no route to the 100.64/10 range) and the endpoint list simply had no address its
  * current Wi-Fi could route to. These tests pin the translation, including the parts that must NOT
@@ -16,7 +16,7 @@ import org.junit.Test
  */
 class RouteReportTest {
 
-    private val tailnetHost = "tuxdesktop.tailb12aa5.ts.net"
+    private val tailnetHost = "labhost.tailca7ee1.ts.net"
     private val dnsOnTailnet = java.net.UnknownHostException(
         "Unable to resolve host \"$tailnetHost\": No address associated with hostname",
     )
@@ -29,7 +29,7 @@ class RouteReportTest {
     fun `MagicDNS names and tailnet CGNAT addresses are tailnet-only`() {
         assertTrue(RouteReport.isTailnetUrl("http://$tailnetHost:8642"))
         assertTrue(RouteReport.isTailnetUrl("hermes.ts.net"))
-        assertTrue(RouteReport.isTailnetUrl("http://100.69.144.33:8642")) // 100.64.0.0/10
+        assertTrue(RouteReport.isTailnetUrl("http://100.99.1.42:8642")) // 100.64.0.0/10
         assertTrue(RouteReport.isTailnetUrl("http://100.127.9.9:8651"))
     }
 

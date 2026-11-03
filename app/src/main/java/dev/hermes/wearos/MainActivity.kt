@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -74,6 +75,7 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.SwipeToDismissBox
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
+import dev.hermes.wearos.domain.RotaryVolume
 import dev.hermes.wearos.ui.AgentPickerDialog
 import dev.hermes.wearos.ui.ApprovalModeDialog
 import dev.hermes.wearos.ui.ModelPickerDialog
@@ -132,7 +134,7 @@ import kotlin.math.roundToInt
 enum class Screen { Chat, Chats, Settings, Sessions }
 
 /** Deep-link targets (M5): notification tap (open_chat), tile tap (talk), adb parity. */
-private data class DeepLink(val openChat: String? = null, val talk: Boolean = false, val nonce: Long = 0L)
+private data class DeepLink(val openChat: String? = null, val openProfile: String = "", val talk: Boolean = false, val nonce: Long = 0L)
 
 class MainActivity : ComponentActivity() {
     private companion object { const val TAG = "HermesWear" }
@@ -143,6 +145,37 @@ class MainActivity : ComponentActivity() {
     /** M5 U1: POST_NOTIFICATIONS ask on first launch (API 33+). Denied is fine: app still works. */
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) Log.w(TAG, "notifs denied")
+    }
+
+    /**
+     * BEZEL VOLUME (SPEC §12.14): the rotating bezel arrives as KEYCODE_VOLUME_UP/DOWN; while a
+     * player sheet owns the screen [RotaryVolume] steers the PLAYER and the key is consumed —
+     * no system HUD, no system stream move. With no player bound this Activity never touches
+     * volume keys: the bezel is plain old system volume. (The dev hook `-e volume <±n>` fires the
+     * same path for the bezel-less emulator.)
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val steps = when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> 1
+            KeyEvent.KEYCODE_VOLUME_DOWN -> -1
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        if (RotaryVolume.rotate(steps)) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            RotaryVolume.active
+        ) return true
+        return super.onKeyUp(keyCode, event)
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            RotaryVolume.active
+        ) return true
+        return super.onKeyLongPress(keyCode, event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -381,7 +414,7 @@ class MainActivity : ComponentActivity() {
                 val link by deepLink.collectAsState()
                 LaunchedEffect(link) {
                     val l = link ?: return@LaunchedEffect
-                    l.openChat?.let { session.openFromNotification(it); screen = Screen.Chat }
+                    l.openChat?.let { session.openFromNotification(it, l.openProfile); screen = Screen.Chat }
                     if (l.talk) {
                         draft = ""; composing = false; speak.stop()
                         if (micGranted.value) startListening(true) else composing = true
@@ -1078,6 +1111,7 @@ class MainActivity : ComponentActivity() {
 
     private fun parseDeepLink(intent: Intent?) {
         val openChat = intent?.getStringExtra(dev.hermes.wearos.notify.Notifs.EXTRA_OPEN_CHAT)
+        val openProfile = intent?.getStringExtra(dev.hermes.wearos.notify.Notifs.EXTRA_OPEN_PROFILE).orEmpty()
         val talk = if (intent?.hasExtra("talk") == true) try {
             intent.getBooleanExtra("talk", false)
         } catch (e: Exception) { // adb --es talk true arrives as a String
@@ -1085,7 +1119,7 @@ class MainActivity : ComponentActivity() {
         } else false
         if (openChat != null || talk) {
             navNonce++
-            deepLink.value = DeepLink(openChat, talk, navNonce)
+            deepLink.value = DeepLink(openChat, openProfile, talk, navNonce)
         }
     }
 }

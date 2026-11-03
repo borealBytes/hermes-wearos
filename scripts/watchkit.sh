@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# watchkit — mermaid render + whisper STT helper daemon (tailnet :8651).
+# watchkit — mermaid render + whisper STT helper daemon (tailnet :42651).
 # Usage: scripts/watchkit.sh setup|run|start|stop|status|logs
 # Standalone on purpose: no env.sh — the daemon is plain node + a folder-local venv.
 set -euo pipefail
@@ -16,7 +16,7 @@ import json,sys; print(json.load(open(sys.argv[1])).get("host","127.0.0.1"))
 EOF
 )
 HOST="${HOST:-127.0.0.1}"
-PORT=8651
+PORT=42651
 URL="http://$HOST:$PORT"
 # keep npx + chromium downloads folder-local (same dirs watchkit.mjs uses)
 export PUPPETEER_CACHE_DIR="$WK/.cache/puppeteer"
@@ -37,7 +37,7 @@ case "${1:-}" in
       umask 077
       python3 - "$CONFIG" <<'EOF'
 import json, secrets, sys
-json.dump({"host": "0.0.0.0", "port": 8651, "token": secrets.token_hex(32)}, open(sys.argv[1], "w"))
+json.dump({"host": "0.0.0.0", "port": 42651, "token": secrets.token_hex(32)}, open(sys.argv[1], "w"))
 EOF
       chmod 600 "$CONFIG"
       echo "created $CONFIG (chmod 600, random token)"
@@ -64,7 +64,11 @@ EOF
     if pid=$(running_pid); then echo "already running (pid $pid) — scripts/watchkit.sh stop first"; exit 1; fi
     [ -f "$CONFIG" ] || { echo "no $CONFIG — run scripts/watchkit.sh setup"; exit 1; }
     mkdir -p "$(dirname "$LOGFILE")"
-    nohup node "$WK/watchkit.mjs" >>"$LOGFILE" 2>&1 &
+    # setsid, not just nohup: nohup only ignores HUP — a process-GROUP kill (an agent harness
+    # tearing down its tool-shell group on restart, a desktop session logout) SIGTERMs the group
+    # and takes the daemon with it; watchkit dying is exactly what the watch reports as
+    # "history unavailable — continuing live" on every reopened desktop session (2026-11-02).
+    setsid nohup node "$WK/watchkit.mjs" </dev/null >>"$LOGFILE" 2>&1 &
     echo $! >"$PIDFILE"
     sleep 1
     if running_pid >/dev/null; then echo "started pid $(cat "$PIDFILE") → $URL (log: $LOGFILE)"; else echo "died on start — see $LOGFILE"; rm -f "$PIDFILE"; exit 1; fi

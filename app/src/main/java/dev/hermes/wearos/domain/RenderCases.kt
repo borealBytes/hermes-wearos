@@ -79,6 +79,31 @@ enum class RenderCase(val id: String, val markdown: String) {
             "```mermaid\ngraph LR\n  A[dial] --> B[lane]\n```\n\n" +
             "See [the spec](docs/SPEC.md) §13 for the rest.\n",
     ),
+    /**
+     * MEDIA EPIC fixture (owner 2026-11-02): real files that exist on the gateway box during
+     * development — one generated video (watchkit /media posters + transcodes it) and one audio
+     * clip (wav → m4a). `-e render av` + a tap each = the whole lane in one screenshot.
+     */
+    Av(
+        "av",
+        "The comfy render is ready, and the sting is mixed:\n\n" +
+            "MEDIA:/run/media/user/Data/comfy/projects/hermes-wear-demo/outputs/muxed/demo-vertical-v0.6.0-song-d.mp4\n\n" +
+            "MEDIA:/tmp/medtest.wav\n\n" +
+            "Tap a card for fullscreen; back returns here.\n",
+    ),
+    Steps(
+        "steps",
+        "Fixed the maturity maps — here's the run trace (tap the ⚙ box to collapse/expand):\n\n" +
+            "```hermes-steps\n" +
+            "terminal|1.24|ok|python render_maturity_maps.py --year 2023|\n" +
+            "read_file|0.03|ok|research/figures/corn_rm_us_canada_2019_2023_mean.png|\n" +
+            "edit_file|0.05|ok|render_maturity_maps.py|+6 -2 (colorbar label fix)\n" +
+            "terminal|0.41|err|pytest -q tests/test_maps.py|2 failed, 41 passed ⏎ AssertionError: cmap length\n" +
+            "edit_file|0.04|ok|render_maturity_maps.py|tick rounding moved below colorbar\n" +
+            "terminal|2.10|ok|pytest -q tests/test_maps.py|43 passed in 1.9s\n" +
+            "```\n\n" +
+            "All green now.\n",
+    ),
     All(
         "all",
         Tables.markdown + "\n" + Wide.markdown + "\n" + Mermaid.markdown + "\n" +

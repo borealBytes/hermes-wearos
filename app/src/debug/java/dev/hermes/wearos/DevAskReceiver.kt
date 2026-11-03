@@ -22,6 +22,8 @@ import kotlinx.coroutines.launch
  *  touches, so this is how demo scripts reach Settings and the Chats list),
  *  -e ptt_demo <partial|off> (forces the PTT overlay for screenshots; NEVER -ez — see handler),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
+ *  -e volume <±N> (fire the bezel-volume lane N detents — player volume, SPEC §12.14),
+ *  -e media_zoom <2.2|reset> (drive the video player's pinch lane — animateScale, capture aid),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
  *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
@@ -36,7 +38,9 @@ import kotlinx.coroutines.launch
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
  *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags),
- *  -e set_agent_key <agent>=<key> / -e agent_keys (per-profile gateway keys, SPEC §12.2). */
+ *  -e set_agent_key <agent>=<key> / -e agent_keys (per-profile gateway keys, SPEC §12.2).
+ *  Tailnet-epic additions (SPEC §11.4): -e set_tailnet_key <tskey-auth-…>, -e tailnet_status,
+ *  -e tailnet_on on|off (dev escape hatch to plain sockets), -e tailnet_reenroll. */
 class DevAskReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         val token = intent?.getStringExtra("set_token")
@@ -96,6 +100,15 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
+        // TAILNET (SPEC §11.4): `-e set_tailnet_key tskey-…` stores the enrollment key and
+        // starts the keeper (the watch can't type 60 chars comfortably — this is the front
+        // door); `-e tailnet_status` dumps phase + engine log tail to logcat; `-e tailnet_on
+        // off` is the dev escape hatch back to plain sockets; `-e tailnet_reenroll` wipes
+        // node identity and re-enrolls with the stored key.
+        intent?.getStringExtra("set_tailnet_key")?.let { WearApp.Graph.devSetTailnetKey(it); return }
+        if (intent?.hasExtra("tailnet_status") == true) { WearApp.Graph.devTailnetStatus(); return }
+        intent?.getStringExtra("tailnet_on")?.let { WearApp.Graph.devTailnetOn(it); return }
+        if (intent?.hasExtra("tailnet_reenroll") == true) { WearApp.Graph.devTailnetReenroll(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
         intent?.getStringExtra("del_gw")?.let { WearApp.Graph.devGwDelete(it); return }
         // -e add_gw "label|https?://api|https?://watchkit" → upsert a gateway reusing the current
@@ -159,6 +172,22 @@ class DevAskReceiver : BroadcastReceiver() {
         intent?.getStringExtra("fontscale")?.let {
             // -e fontscale 1.4 → persist+apply; non-numeric ("reset") → back to 1.0.
             WearApp.Graph.devSetFontScale(it)
+            return
+        }
+        intent?.getStringExtra("volume")?.let {
+            // -e volume 3 / -e volume -2 → fire the BEZEL VOLUME lane (SPEC §12.14) the exact way
+            // a detent does; the emulator has no bezel, this is the only proof of that wire.
+            val steps = it.trim().toIntOrNull() ?: 1
+            val took = dev.hermes.wearos.domain.RotaryVolume.rotate(steps)
+            Log.i("HermesWear", "volume hook steps=$steps taken=$took")
+            return
+        }
+        intent?.getStringExtra("media_zoom")?.let {
+            // -e media_zoom 2.2 → drive the VIDEO player's pinch lane (animateScale, the double-
+            // tap's own door); 0/false/reset clears. Capture aid: adb can't inject two fingers.
+            val arg = it.trim()
+            WearApp.Graph.devMediaZoom.value = arg.toFloatOrNull()?.takeIf { f -> f > 0f }
+            Log.i("HermesWear", "media_zoom set to ${WearApp.Graph.devMediaZoom.value ?: "reset"}")
             return
         }
         if (intent?.hasExtra("viewer_demo") == true) {
@@ -314,7 +343,7 @@ class DevAskReceiver : BroadcastReceiver() {
         }
         intent?.getStringExtra("speak")?.let { WearApp.Graph.speak.speakFinal(it); return }
         // -e approval_mode <off|smart|manual|inherit> → the ACTIVE chat's per-chat approval mode
-        // (SPEC §12.8); capture-rig escape hatch for the once-approval treadmill.
+        // (SPEC §12.9); capture-rig escape hatch for the once-approval treadmill.
         intent?.getStringExtra("approval_mode")?.let {
             WearApp.Graph.session.setChatApprovalMode(dev.hermes.wearos.domain.ApprovalMode.fromId(it))
             return

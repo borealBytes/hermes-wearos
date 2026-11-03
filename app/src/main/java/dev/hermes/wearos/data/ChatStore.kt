@@ -45,7 +45,7 @@ data class ChatMeta(
     /**
      * PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode): persisted pick for how much
      * the wrist engages with this chat's approvals — `""` = inherit the agent's default. Watch-side
-     * enforced at approval arrival (the gateway's own lever is profile-scoped; SPEC §12.8).
+     * enforced at approval arrival (the gateway's own lever is profile-scoped; SPEC §12.9).
      */
     val approvalMode: String = "",
 )
