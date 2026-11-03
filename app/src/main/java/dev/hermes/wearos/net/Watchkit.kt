@@ -400,7 +400,7 @@ object Watchkit {
         }
 
     /**
-     * SESSION PROMOTE (SPEC §12.9, the hand-off door): flip a desktop chat's `source` column to
+     * SESSION PROMOTE (SPEC §12.13, the hand-off door): flip a desktop chat's `source` column to
      * `api_server` so the SAME row — same id, same transcript — runs from the wrist. watchkit
      * writes state.db directly (the gateway PATCH has no `source` field yet, §13.5 #4). `revertTo`
      * undoes exactly our own flip when the gateway still refuses (desktop holds the session live).

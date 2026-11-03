@@ -60,7 +60,7 @@ object SessionHistory {
     }
 
     /**
-     * GATEWAY transcript shape (SPEC §12.9): `GET {lane}/api/sessions/{id}/messages?limit=&order=latest`
+     * GATEWAY transcript shape (SPEC §12.13): `GET {lane}/api/sessions/{id}/messages?limit=&order=latest`
      * → `{object:"list", data:[{role,content,display_kind,…}]}`, the NEWEST page in ascending order
      * (verified live). Same role mapping/noise rules as [parse]; the gateway route has no
      * summary column, so `_compressed_summary` rows arrive as ordinary users and are dropped by

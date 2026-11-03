@@ -34,7 +34,7 @@ import dev.hermes.wearos.domain.ApprovalMode
  * want"*). Four rows — inherit (the agent's default, the safe rest state), manual, smart, off —
  * each stating what it DOES, because the wrist decides from this sentence alone. ● marks the
  * chat's current pick; a tap persists it to this chat and closes (domain/ApprovalMode owns the
- * semantics, SPEC §12.8). Same round-safe dialog shape as the model picker.
+ * semantics, SPEC §12.9). Same round-safe dialog shape as the model picker.
  */
 @Composable
 fun ApprovalModeDialog(

@@ -207,12 +207,12 @@ class ChatSession(
      *
      * Everything else keeps its own message — no lying about real errors.
      */
-    /** Why the last promote attempt didn't land (SPEC §12.9); consumed by [explain] on the 409. */
+    /** Why the last promote attempt didn't land (SPEC §12.13); consumed by [explain] on the 409. */
     @Volatile
     private var handoffNote = ""
 
     /**
-     * The §12.9 hand-off door: promote the adopted session's `source` row through watchkit and
+     * The §12.13 hand-off door: promote the adopted session's `source` row through watchkit and
      * resubmit the SAME run under the SAME Idempotency-Key. Returns the accepted run, or null
      * with `handoffNote` set to the honest reason — the caller then surfaces the original 409.
      * A flip that the gateway still refuses (desktop holds the session live in memory) is
@@ -252,7 +252,7 @@ class ChatSession(
         if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
         // 409 permission_denied on submit = the session-binding doctrine (gateway session_api.py):
         // a session whose stored source is the desktop CLI (`local`/`desktop`/…) refuses an
-        // API-lane run until the §12.9 hand-off promotes it. The promote attempt (ask's submit
+        // API-lane run until the §12.13 hand-off promotes it. The promote attempt (ask's submit
         // path) leaves the exact reason in `handoffNote`; without it (no watchkit at all) the
         // read-only line stays honest. The watch NEVER forks (owner 2026-11-02: "an auto-fork
         // makes a mess; a desktop session continues in the desktop AND on the watch").
@@ -511,7 +511,7 @@ class ChatSession(
                     try {
                         retryApi.submitRun(trimmed, session, idem, modelSel)
                     } catch (e2: Exception) {
-                        // FLAWLESS HAND-OFF (SPEC §12.9): a desktop-CLI chat refuses the API lane
+                        // FLAWLESS HAND-OFF (SPEC §12.13): a desktop-CLI chat refuses the API lane
                         // (409 permission_denied — gateway binding doctrine). ONE explicit promote
                         // attempt: flip the same row's source via watchkit and resubmit under the
                         // SAME Idempotency-Key (nothing was ever accepted, so no double-run is
@@ -656,7 +656,7 @@ class ChatSession(
     private fun onApprovalArrived(info: ApprovalInfo) {
         Log.i(TAG, "approval arrived run=${info.runId} req=${info.requestId} active=$activeId choices=${info.choices}")
         _state.value = _state.value.copy(approval = info)
-        // PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode, SPEC §12.8): this chat's
+        // PER-CHAT APPROVAL MODE (owner 2026-10-29, domain/ApprovalMode, SPEC §12.9): this chat's
         // persisted pick answers for itself — Off always, Smart only while the human is away.
         // Dedup by request id: the status poll re-reports a pending approval every 3 s.
         val mode = ApprovalMode.fromId(store.get(activeId)?.approvalMode)
@@ -1207,7 +1207,7 @@ class ChatSession(
     private fun backfillHistory(meta: ChatMeta, localTranscriptSize: Int, profileHint: String) {
         if (!SessionHistory.shouldBackfill(meta.sessionTitle, localTranscriptSize)) return
         scope.launch {
-            // GATEWAY FIRST (SPEC §12.9): GET {lane}/api/sessions/{id}/messages rides the SAME
+            // GATEWAY FIRST (SPEC §12.13): GET {lane}/api/sessions/{id}/messages rides the SAME
             // bearer as an ask, so a watchkit outage can no longer sink the backfill — the whole
             // "history unavailable — continuing live" wave of 2026-11-02 was one dead sidecar
             // taking history down with it. watchkit's keyless read stays the fallback for

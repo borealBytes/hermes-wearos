@@ -148,7 +148,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * BEZEL VOLUME (SPEC §12.10): the rotating bezel arrives as KEYCODE_VOLUME_UP/DOWN; while a
+     * BEZEL VOLUME (SPEC §12.14): the rotating bezel arrives as KEYCODE_VOLUME_UP/DOWN; while a
      * player sheet owns the screen [RotaryVolume] steers the PLAYER and the key is consumed —
      * no system HUD, no system stream move. With no player bound this Activity never touches
      * volume keys: the bezel is plain old system volume. (The dev hook `-e volume <±n>` fires the

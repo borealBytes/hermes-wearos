@@ -147,7 +147,7 @@ class SessionHistoryTest {
         assertNull(SessionHistory.catchUpPlan(listOf(user("q")), emptyList()))
     }
 
-    // ── gateway messages route (SPEC §12.9, verified live 2026-11-02 against /p/default) ──
+    // ── gateway messages route (SPEC §12.13, verified live 2026-11-02 against /p/default) ──
 
     private val gwSample = """
         {"object":"list","session_id":"local-abc","data":[

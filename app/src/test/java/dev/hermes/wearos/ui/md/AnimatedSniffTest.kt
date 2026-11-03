@@ -5,7 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The container sniff (SPEC §12.10 GIF epic): "does it move?" answered from BYTES ONLY, because
+ * The container sniff (SPEC §12.14 GIF epic): "does it move?" answered from BYTES ONLY, because
  * deciding it the old way (decode → inspect) would allocate a full-size Bitmap for every still
  * photo on the wrist just to learn it was a JPEG.
  */

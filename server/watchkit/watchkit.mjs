@@ -16,7 +16,7 @@
  *        Same state.db, `messages` table: user/assistant + active + non-empty content, compression
  *        summary rows surfacing as role:"summary", noise display_kinds dropped, NEWEST [limit] rows
  *        returned oldest-first, per-message content capped at 2KB. Empty list for unknown ids (200).
- *   POST /session_promote → one-column lane flip so a desktop chat runs from the wrist (SPEC §12.9)
+ *   POST /session_promote → one-column lane flip so a desktop chat runs from the wrist (SPEC §12.13)
  *        {profile, session_id, revert_to?} → {object, id, profile, was, changed}; owner surfaces only
  *        (desktop/tui/webui/cli/local); SAME row/id/transcript — never a fork; revert undoes our flip.
  *   POST /health/snapshot → {ok:true}   body = watch body-tools snapshot JSON (W1-W8, bearer)
@@ -556,7 +556,7 @@ async function handleSessionArchive(req, res, ip, body) {
   }
 }
 
-// ── /session_promote — the hand-off door, client side (SPEC §12.9) ──────────
+// ── /session_promote — the hand-off door, client side (SPEC §12.13) ──────────
 // The gateway's API lane runs only sessions whose stored `source` is `api_server`
 // (gateway/session_api.py::bind_api_steps — a desktop-CLI chat answers 409
 // permission_denied). PROMOTING is a one-column UPDATE: the SAME row, id and transcript
@@ -839,7 +839,7 @@ const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 // Full-res passthrough (owner batch 2: "images should be in full res to the watch; scaling should
 // happen on the watch"): originals are byte-identical for these types — bmp falls back to the
 // legacy scaler (mode conversion genuinely needs Pillow). GIF joined in 2026-11-02 (GIF epic,
-// SPEC §12.10): the Pillow flatten to static WebP DESTROYED the animation before the watch ever
+// SPEC §12.14): the Pillow flatten to static WebP DESTROYED the animation before the watch ever
 // saw the bytes; the watch now decodes the container itself (ImageDecoder → AnimatedImageDrawable)
 // and samples the card with inSampleSize like every other type — scaling still happens on the watch.
 const IMG_FULL_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };

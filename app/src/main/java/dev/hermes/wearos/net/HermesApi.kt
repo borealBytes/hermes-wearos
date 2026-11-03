@@ -139,7 +139,7 @@ class HermesApi(
     }
 
     /**
-     * Gateway transcript route (SPEC §12.9): GET /api/sessions/{id}/messages?limit=&order=latest
+     * Gateway transcript route (SPEC §12.13): GET /api/sessions/{id}/messages?limit=&order=latest
      * → `{object:"list", data:[{role,content,…}]}` — bearer-authed, cross-source (answers for a
      * desktop row too, unlike /v1/runs). Raw JSON out; SessionHistory.parseGateway maps it. Throws
      * ApiException (401 = no key for this profile, 404 = not this lane) — the caller falls back

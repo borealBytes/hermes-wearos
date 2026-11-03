@@ -853,7 +853,7 @@ thing instead of just above the orb".
   ask rests above the orb from the thinking state on; long lists tail-pin unchanged; a swipe-back
   mid-stream holds through 6 s of deltas.
 
-### 12.8 The tool-activity card (verbosity, desktop-style) — `domain/ToolActivity.kt` + `ui/md/MdText.kt`
+### 12.12 The tool-activity card (verbosity, desktop-style) — `domain/ToolActivity.kt` + `ui/md/MdText.kt`
 
 Owner 2026-11-02: *“things go straight to the answers and I feel like I'm missing what's actually
 going on — code edits and terminal outputs, running and when done, in a collapsable box like
@@ -888,7 +888,7 @@ makes a **desktop-CLI** session (`source='local'`) API-readable but API-RUN-REFU
 `permission_denied`. The watch surfaces that as a one-line read-only explanation and does NOT
 auto-fork (owner: “an auto-fork makes a fucking mess”). Gateway ask below (§13.5 #4).
 
-### 12.9 Flawless hand-off — the same chat from either place (`domain/ChatSession.kt` + watchkit `/session_promote`)
+### 12.13 Flawless hand-off — the same chat from either place (`domain/ChatSession.kt` + watchkit `/session_promote`)
 
 Owner 2026-11-02: *"I want to pick up a chat from the desktop on my watch, and a chat from the
 watch on the desktop, and continue it from **either** place — same chat. WatchKit is just there to
@@ -919,6 +919,16 @@ render images/video/audio for the wrist; that should not be what blocks hand-off
   close it on the desktop first — the flip is always reversible, so the desktop's own view never
   drifts. Owner surfaces only (`desktop/tui/webui/cli/local`); cron/subagent rows are machine-owned
   and refuse.
+- **The gate has TWO checks, and promote only answers the persisted one** (curl-proven 2026-11-03:
+  row hand-flipped to `api_server`, pure gateway-side `POST /p/<p>/v1/runs` → still 409).
+  `bind_api_steps` first refuses on the gateway's **live in-memory map**: `session_id in
+  authority.sessions` with `source.platform != API_SERVER` — and the desktop app HYDRATES a chat
+  into that map by having it open, run or no run. So a desktop chat that is NOT currently open on
+  the desktop promotes and runs from the wrist on the spot (proven: a seeded desktop-starter
+  session, adopted, promoted `local`→`api_server`, answered from its own history — one row, zero
+  forks); a chat OPEN on the desktop needs “close it there” first, which is exactly what the
+  watch's revert message says. Entries leave the map when the desktop closes the chat, the app
+  exits, or the gateway restarts. Real relief is §13.5 #4.
 - **`-e resume_session <id>` + a real desktop session, proven both ways:** a fresh desktop session
   adopted-and-asked from the wrist promoted `local`→`api_server` and ran (interleaved user/
   assistant, count 4→6, zero new rows, source `api_server` after). A session the watch ALREADY owns
@@ -927,7 +937,7 @@ render images/video/audio for the wrist; that should not be what blocks hand-off
   `POST /api/sessions/{id}/continue` CHAIN) would retire the watch-side flip; the watch is
   client-ready — adoption binds the same id today and only needs the 409 to become a 200.
 
-### 12.10 The media lane — animated GIFs, pinch video, bezel volume (`ui/md/AnimatedImage.kt`,
+### 12.14 The media lane — animated GIFs, pinch video, bezel volume (`ui/md/AnimatedImage.kt`,
 `PinchPlayerView.kt`, `domain/RotaryVolume.kt`)
 
 Owner 2026-11-02, three asks on the media surface, all rendered by the watch (gateway never
@@ -1076,7 +1086,14 @@ before the final JSONL leaves stdout — cleanup then cut it; it awaits `close` 
    `continued_api_session` already does across API generations). The watch is client-ready:
    adoption binds the same id today and simply needs the 409 to become a 200. (Interim shipped:
    the watch promotes the row itself — one reversible `source` UPDATE through watchkit
-   `/session_promote`, §12.9 — and would retire that flip the day this door lands.)
+   `/session_promote`, §12.13 — and would retire that flip the day this door lands.
+   2026-11-03 precision for whoever picks this up: `bind_api_session` refuses on EITHER check —
+   `session_id in authority.sessions` with in-memory `platform != API_SERVER` runs FIRST, and the
+   desktop app hydrates an OPEN chat into that map without any active run; the persisted-source
+   re-check in the write step only gets a vote when the map is clear. A hand-flipped row + pure
+   gateway-side `POST /v1/runs` → still 409 (curl-proven). The ask narrows to: admit when the
+   in-memory entry is IDLE (no active execution/lease — FIFO-door precedent again), because that
+   is the case the watch's flip visibly cannot fix.)
 
 
 ## 14. Owner batch 4 (2026-10-29/30 night): circle-meat geometry, orb-flanking approvals, STT backends, edge scroll

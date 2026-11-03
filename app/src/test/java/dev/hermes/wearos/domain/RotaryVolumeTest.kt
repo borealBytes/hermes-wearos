@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The bezel-volume bus (SPEC §12.10): the player binds, the bezel steers the PLAYER; nobody
+ * The bezel-volume bus (SPEC §12.14): the player binds, the bezel steers the PLAYER; nobody
  * bound, the keys pass through to the system. Math on DialVolume's 5 % grid.
  */
 class RotaryVolumeTest {
