@@ -27,13 +27,15 @@
  *        15MB cap + img_roots allowlist always apply. X-Cache key = realpath|mtime|width ("full").
  *   POST /img             → same, JSON body {path[,width]}
  *   GET  /media           → scaled A/V stream (bearer, HTTP Range). ?path=…[&q=0..100&mono=1&ab=64]
- *        → mp4 (H.264/AAC faststart) for video extensions, m4a (AAC) for audio; ffmpeg pre-shrinks
+ *        → mp4 (H.264/AAC faststart) for video extensions, Ogg/Opus for audio (AAC m4a where the
+ *        box's ffmpeg lacks libopus); ffmpeg pre-shrinks
  *        to watch-size presets and caches per realpath|mtime|params (.cache/media). &poster=1 → one
  *        JPEG frame for the inline card; &probe=1 → {duration_s,width,height,kind}. img_roots apply.
  *   POST /render/mermaid  → image/png  {code, width, format?}  (mmdc, .cache/ renders)
  *   POST /stt/whisper     → {text}     multipart "audio" wav/webm ≤10MB     (faster-whisper CPU)
- *   WS   /stt/stream      ← BINARY 16 kHz mono PCM16 mic frames from the watch, TEXT {"end":true}
- *        (bearer)          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
+ *   WS   /stt/stream      ← BINARY mic audio from the watch (Ogg/Opus · ADTS AAC · legacy PCM —
+ *        (bearer)            format sniffed from the first bytes), TEXT {"end":true}
+ *                          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
  *        Engine default from config.json `stt_stream_engine`: "whisper" (buffered — final only)
  *        | "parakeet" (transcribe.cpp GGUF — partials WHILE talking). The watch may override per
  *        session via ?engine=<id>; GET /health reports stt:{engine,ready,missing,engines[]}.
@@ -877,7 +879,8 @@ async function handleImg(req, res, ip, params) {
 // ── /media ─────────────────────────────────────────────────────────────────
 // A/V streaming (owner 2026-11-02: "the desktop shows generated video/audio — the wrist should
 // too, but there's no reason for a big-ass video over the wire"). ffmpeg pre-shrinks to a watch
-// shape (H.264 mp4 +faststart / AAC m4a), cached by realpath|mtime|params, served with HTTP
+// shape (H.264 mp4 +faststart / Ogg-Opus audio — AAC m4a only where libopus is missing), cached
+// by realpath|mtime|params, served with HTTP
 // Range so ExoPlayer can seek. The WATCH picks the shape: q=0..100 quality slider,
 // mono=1 (watch speaker default; BT headphones ⇒ stereo), ab=audio kbit/s.
 // Modes: play (default) → mp4/m4a · poster=1 → one JPEG frame for the inline card ·
@@ -921,12 +924,26 @@ async function runMediaFfmpeg(args, timeout) {
   return r;
 }
 
+// Audio derivative codec (owner 2026-11-02: "the best current one"): Opus beats AAC at every
+// bitrate the watch ships (32–128k), so standalone audio becomes Ogg/Opus whenever this box's
+// ffmpeg carries libopus — probed ONCE, cached forever; boxes without it keep the AAC/m4a lane.
+let audioOpusFlag = null;
+async function audioIsOpus() {
+  if (audioOpusFlag !== null) return audioOpusFlag;
+  const r = await runChild(FFMPEG, ['-hide_banner', '-encoders'], { timeout: 15_000 }).catch(() => null);
+  audioOpusFlag = !!r && /\blibopus\b/.test(r.out || '');
+  return audioOpusFlag;
+}
+
 /** Build (or join) the cached derivative. Throws {status,msg} for HTTP mapping. */
 async function mediaDerivative(real, stKey, mode, q, mono, ab) {
+  const isVideo = mode === 'play' && VIDEO_EXT.has(path.extname(real).toLowerCase());
+  const opus = mode === 'play' && !isVideo && await audioIsOpus();
   const key = sha256(`${real}|${stKey}|${mode}|${mode === 'play' ? q : '-'}|${mode === 'play' ? mono : '-'}|${mode === 'play' ? ab : '-'}`);
-  const extOut = mode === 'poster' ? '.jpg' : VIDEO_EXT.has(path.extname(real).toLowerCase()) ? '.mp4' : '.m4a';
+  const extOut = mode === 'poster' ? '.jpg' : isVideo ? '.mp4' : opus ? '.ogg' : '.m4a';
+  const mime = mode === 'poster' ? 'image/jpeg' : isVideo ? 'video/mp4' : opus ? 'audio/ogg' : 'audio/mp4';
   const file = path.join(MEDIA_DIR, key + extOut);
-  if (fs.existsSync(file)) return { file, type: mode === 'poster' ? 'image/jpeg' : extOut === '.mp4' ? 'video/mp4' : 'audio/mp4', cached: true };
+  if (fs.existsSync(file)) return { file, type: mime, cached: true };
   if (mediaInflight.has(key)) return mediaInflight.get(key);
 
   const job = (async () => {
@@ -941,7 +958,7 @@ async function mediaDerivative(real, stKey, mode, q, mono, ab) {
           '-vf', 'scale=240:-2', '-q:v', '5', '-y', tmp], POSTER_TIMEOUT_MS);
         if (r.code !== 0 && at > 0) r = await runMediaFfmpeg(['-i', real, '-frames:v', '1',
           '-vf', 'scale=240:-2', '-q:v', '5', '-y', tmp], POSTER_TIMEOUT_MS);
-      } else if (VIDEO_EXT.has(path.extname(real).toLowerCase())) {
+      } else if (isVideo) {
         const p = videoPreset(q);
         r = await runMediaFfmpeg(['-i', real,
           '-vf', `scale='min(${p.max},iw)':'min(${p.max},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=${p.fps}`,
@@ -950,12 +967,15 @@ async function mediaDerivative(real, stKey, mode, q, mono, ab) {
           '-c:a', 'aac', '-b:a', `${ab}k`, '-ac', String(mono ? 1 : 2),
           '-movflags', '+faststart', '-y', tmp], MEDIA_TIMEOUT_MS);
       } else {
-        r = await runMediaFfmpeg(['-i', real, '-vn', '-c:a', 'aac', '-b:a', `${ab}k`, '-ac', String(mono ? 1 : 2), '-y', tmp], MEDIA_TIMEOUT_MS);
+        // Video keeps AAC audio in the mp4 (hardware decode + faststart); standalone audio goes
+        // to the better codec.
+        r = await runMediaFfmpeg(['-i', real, '-vn', '-c:a', opus ? 'libopus' : 'aac',
+          '-b:a', `${ab}k`, '-ac', String(mono ? 1 : 2), '-y', tmp], MEDIA_TIMEOUT_MS);
       }
       if (r.killed) throw { status: 504, msg: `${mode} timeout — ${mode === 'poster' ? '30s' : '300s'}` };
       if (r.code !== 0) throw { status: 500, msg: ('ffmpeg failed: ' + (r.err || '')).slice(-600) };
       await fsp.rename(tmp, file); // same fs (.cache) — atomic
-      return { file, type: mode === 'poster' ? 'image/jpeg' : extOut === '.mp4' ? 'video/mp4' : 'audio/mp4', cached: false };
+      return { file, type: mime, cached: false };
     } finally {
       fs.rmSync(tmp, { force: true });
       mediaInflight.delete(key);
@@ -1506,6 +1526,7 @@ if (MCP_MODE) {
   // BATCH-4 #9: streamed mic sessions ride the same socket authority as every endpoint.
   attachSttStream(server, {
     cfg, venvPy: VENV_PY, wkDir: WK_DIR, TOKEN, CHILD_ENV, logLine,
+    ffmpeg: FFMPEG, // mic lanes arrive as Ogg/Opus or ADTS AAC → ffmpeg demuxes to engine PCM
     timingSafe: (a, b) => timingSafeEqual(a, b),
   });
   server.listen(PORT, HOST, () => {
