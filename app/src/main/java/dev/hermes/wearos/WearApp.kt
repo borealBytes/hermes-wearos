@@ -132,6 +132,13 @@ class WearApp : Application() {
         val devViewerScale = MutableStateFlow<Float?>(null)
 
         /**
+         * Dev hook (`-e media_zoom <s|reset>`): drives the VIDEO player's pinch lane from adb —
+         * one-pointer `adb input` can't pinch, so this fires the same `animateScale` a double-tap
+         * uses (scale clamped like the gesture). Screenshot-capture aid for the pinch feature.
+         */
+        val devMediaZoom = MutableStateFlow<Float?>(null)
+
+        /**
          * Dev hook `-e dial_preview`: pins the DIAL RING open (armed, no finger) so a screenshot
          * can show the 8 slots — `adb input swipe` injects one interpolated MOVE at stroke END,
          * so an adb-driven drag never keeps the ring up long enough to capture (a real finger

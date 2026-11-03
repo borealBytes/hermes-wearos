@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
  *  -e ptt_demo <partial|off> (forces the PTT overlay for screenshots; NEVER -ez — see handler),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e volume <±N> (fire the bezel-volume lane N detents — player volume, SPEC §12.14),
+ *  -e media_zoom <2.2|reset> (drive the video player's pinch lane — animateScale, capture aid),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
  *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
@@ -179,6 +180,14 @@ class DevAskReceiver : BroadcastReceiver() {
             val steps = it.trim().toIntOrNull() ?: 1
             val took = dev.hermes.wearos.domain.RotaryVolume.rotate(steps)
             Log.i("HermesWear", "volume hook steps=$steps taken=$took")
+            return
+        }
+        intent?.getStringExtra("media_zoom")?.let {
+            // -e media_zoom 2.2 → drive the VIDEO player's pinch lane (animateScale, the double-
+            // tap's own door); 0/false/reset clears. Capture aid: adb can't inject two fingers.
+            val arg = it.trim()
+            WearApp.Graph.devMediaZoom.value = arg.toFloatOrNull()?.takeIf { f -> f > 0f }
+            Log.i("HermesWear", "media_zoom set to ${WearApp.Graph.devMediaZoom.value ?: "reset"}")
             return
         }
         if (intent?.hasExtra("viewer_demo") == true) {

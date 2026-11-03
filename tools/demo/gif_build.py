@@ -3,8 +3,10 @@
 
 Owner pacing rules (2026-11-01 batch): stills linger ~1.5 s (hero/end ~2.5 s) so they can
 actually be read, and motion is shown ONLY where it's real — the splash beat plays frames cut
-from the SHIPPED intro asset (circle-cropped, transparent bg). Canvas, fonts, caption pills and
-the `v<VER> · wear-demo` bug reuse the film's design system (see canvas_build.py + docs/DEMO.md §5).
+from the SHIPPED intro asset (circle-cropped, transparent bg), and since batch 9 an animated
+`docs/screens` GIF artifact plays its own recorded frames the same way. Canvas, fonts, caption
+pills and the `v<VER> · wear-demo` bug reuse the film's design system (see canvas_build.py +
+docs/DEMO.md §5).
 
 Run:  python3 tools/demo/gif_build.py     (writes to /tmp then into docs/demo/)
 """
@@ -152,10 +154,14 @@ BEAT_SHOTS = [
     ("SPLASH MODES - BUILT-IN FILM - YOUR OWN", ["36-splash-picker.png"]),
     ("ORB DIAL - DRAG EIGHT WAYS", ["01-orb-cluster.png"]),
     ("PUSH TO TALK - SPEECH-TO-TEXT ON THE WRIST", ["06-ptt-overlay.png"]),
-    ("STREAMED ANSWERS + LIVE TOOL CALLS", ["02-chat-markdown.png"]),
+    ("STREAMED ANSWERS + LIVE TOOL CALLS", ["02-chat-markdown.png", "54-tool-activity.png"]),
     ("STOP ANY RUN MID-FLIGHT", ["07-stop-running.png"]),
     ("TABLES - MERMAID - IMAGES - INLINE", ["02b-chat-table.png", "05-mermaid.png", "03-image-card.png"]),
     ("TAP A CARD - ZOOM - PAN - FOLLOW LINKS", ["04-viewer-zoom.png", "28-browser-opened.png"]),
+    ("GENERATED VIDEO AND AUDIO ON THE WRIST", ["48-media-cards.png", "49-video-player.png", "52-audio-player.png"]),
+    ("ANIMATED GIFS - DECODED AND PLAYING ON THE WRIST", ["50-gif-card.gif"]),
+    ("PINCH TO ZOOM - EVEN THE PLAYER", ["51-video-pinched.png"]),
+    ("ONE CONVERSATION - EITHER DEVICE", ["08-sessions.png", "53-handoff-adopted.png"]),
     ("SWAP MODELS PER CHAT", ["25-model-picker.png", "26-model-picked.png"]),
     ("GATED COMMANDS APPROVE ON THE WRIST", ["32-notify-approval.png", "33-approval-card.png"]),
     ("APPROVED - THE RUN RESUMES", ["34-approval-approved.png"]),
@@ -169,7 +175,7 @@ BEAT_SHOTS = [
     ("FONT SCALE - YOUR EYES YOUR SIZE", ["14a-fontscale-min.png", "14b-fontscale-max.png"]),
     ("EDGE-CIRCLE SCROLL - LIST AT THE TOP", ["41-edge-circle-pair.png#0"]),
     ("ONE DRAG ON THE RIM - A FULL SCREEN MOVED", ["41-edge-circle-pair.png#1"]),
-    ("YOUR GATEWAYS - SAVE - SELECT - FAIL OVER", ["42-gateways-multi.png", "47-about-screen.png"]),
+    ("YOUR GATEWAYS - SAVE - SELECT - FAIL OVER", ["42-gateways-multi.png", "55-tailnet-status.png", "47-about-screen.png"]),
 ]
 HOLD_STILL_MS = 1500
 HOLD_HERO_MS = 2500
@@ -207,10 +213,22 @@ for p in sorted(os.listdir(intro_dir)):
     ov.alpha_composite(chrome)
     emit(ov, int(1000 / FPS))
 
-# feature beats
+# feature beats — a `.gif` shot is an ANIMATED artifact (a real screen recording, circle-masked
+# frame by frame in docs/screens): it plays inside the circle at its own cadence, the splash-film
+# precedent — motion in the walkthrough only ever comes from captured pixels, never fakery.
 for cap, shots in BEAT_SHOTS:
     for png in shots:
-        emit(pill(place_still(base, png), cap), HOLD_STILL_MS)
+        if png.endswith(".gif"):
+            bg = pill(base, cap)
+            anim = Image.open(os.path.join(SCREENS, png))
+            for i in range(anim.n_frames):
+                anim.seek(i)
+                ov = bg.copy()
+                ov.alpha_composite(anim.convert("RGBA").resize((D - 6, D - 6), Image.LANCZOS), (CX + 3, CY + 3))
+                ov.alpha_composite(chrome)
+                emit(ov, max(80, anim.info.get("duration", 100)))
+        else:
+            emit(pill(place_still(base, png), cap), HOLD_STILL_MS)
 
 # END: wordmark over the film's closing frame — the circle never goes dark.
 fin = wordmark(base, "HERMES-WEAROS - OPEN SOURCE")

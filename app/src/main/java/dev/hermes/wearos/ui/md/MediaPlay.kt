@@ -38,6 +38,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import dev.hermes.wearos.WearApp
 import dev.hermes.wearos.domain.DialVolume
 import dev.hermes.wearos.domain.RotaryVolume
 import dev.hermes.wearos.net.TailnetRoute
@@ -143,6 +144,11 @@ fun MediaPlayDialog(target: String, video: Boolean, label: String, onDismiss: ()
         LaunchedEffect(volPct) {
             if (volPct >= 0) { delay(1_100); volPct = -1 }
         }
+        // PINCH PROOF HOOK (`-e media_zoom <s|reset>`): one-pointer adb input can't pinch, so the
+        // dev hook fires the SAME animateScale a double-tap uses — capture aid only.
+        val devZoom by WearApp.Graph.devMediaZoom.collectAsState()
+        val pinRef = remember { arrayOfNulls<PinchPlayerView>(1) }
+        LaunchedEffect(devZoom) { devZoom?.let { pinRef[0]?.animateScale(it) } }
         Box(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             contentAlignment = Alignment.Center,
@@ -154,6 +160,7 @@ fun MediaPlayDialog(target: String, video: Boolean, label: String, onDismiss: ()
                         controllerShowTimeoutMs = 3_500
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        pinRef[0] = this
                     }
                 },
                 modifier = Modifier.fillMaxSize(),

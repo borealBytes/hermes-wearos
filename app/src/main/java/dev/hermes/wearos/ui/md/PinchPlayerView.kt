@@ -126,7 +126,8 @@ class PinchPlayerView(context: Context) : PlayerView(context) {
         translationY = translationY.coerceIn(-reachY, reachY)
     }
 
-    private fun animateScale(to: Float) {
+    /** Public for the `-e media_zoom` dev hook (same door a double-tap uses). */
+    internal fun animateScale(to: Float) {
         val s = to.coerceIn(FIT, maxZoom)
         animate().scaleX(s).scaleY(s).setDuration(140).withEndAction {
             if (s <= FIT + 0.01f) { translationX = 0f; translationY = 0f } else clampOverflow()
