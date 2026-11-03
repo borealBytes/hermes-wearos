@@ -125,7 +125,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 28 | Settings ▸ Home | `18-settings-home.png` | S19 | shot ✓ |
 | 29 | Settings ▸ Display | `19-settings-display.png` | S13→S14 | shot ✓ |
 | 30 | ~~Settings ▸ Connection~~ — **merged into Gateways (row 26)** in the v0.6 registry work; legacy `20-settings-connection.png` retired (it leaked the raw token) | — | — | n/a |
-| 31 | Settings ▸ tail (about) | `15-settings-tail.png` | S15 | shot ✓ |
+| 31 | Settings ▸ tail (about) | `15-settings-tail.png` | S15 · batch-9 re-shot (the About row stamps `v0.7.0` — same rationale as row 49) | shot ✓ |
 | 32 | Font scale min / max (both ends) | `14a-fontscale-min.png`, `14b-fontscale-max.png` | S14 (both) | shot ✓ |
 | 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | shot ✓ |
 | 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | shot ✓ |
@@ -457,7 +457,9 @@ Branch keeps exactly ONE generation of every tracked media path.
   60 % bezel-readout frame, hand-off adopted-with-history (53), tool-activity card (54), and the
   Tailnet status page the owner asked to show (55, FQDN + peer IP pixelated on the square before
   masking). RE-SHOT (changed surfaces): 08 (💻 computer chip), 11/42 (transport row + pixelated
-  hostname; harbor-lab restaged and deleted after), 47 (v0.7.0 line). RETIRED wording everywhere:
+  hostname; harbor-lab restaged and deleted after), 47 (v0.7.0 line), 15 (v0.7.0 stamp on the
+  About row). Vision gate re-run across every changed claim: 61/61 PASS (two claim-wording
+  fixes fell out of it: the transport chips are plain skip chips; reply text is white). RETIRED wording everywhere:
   "LAN or Tailscale" is dead — the embedded node IS the transport (§11.4); weights re-measured
   (106 MB incl. the 44 MB gomobile node across ABIs); voice table says the mic rides as Opus.
   Captured on the Wear OS 5 emulator (the physical watch's port slept mid-round — honest note in
