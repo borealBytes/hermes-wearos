@@ -36,9 +36,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * captures … partials streamed back WHILE talking … auto-fallback to local"*).
  *
  * One session = one WebSocket to watchkit `/stt/stream` (bearer like every watchkit call):
- * the mic (same 16 kHz mono PCM16 the Vosk path uses) rides out as ~100 ms binary frames;
- * the engine answers JSONL — `{"partial"}` while talking (parakeet engine) and `{"final"}`
- * after the wearer's stop sends `{"end":true}`.
+ * the mic (same 16 kHz mono capture the Vosk path uses) rides out ENCODED — Opus in Ogg pages
+ * when the watch has an Opus encoder, AAC/ADTS otherwise, raw PCM only when neither exists
+ * ([MicCodec] picks; watchkit sniffs the format from the first bytes) — ~24–32 kbit/s instead
+ * of the 256 kbit/s raw wave the first version pushed. The engine answers JSONL — `{"partial"}`
+ * while talking (parakeet engine) and `{"final"}` after the wearer's stop sends `{"end":true}`.
  *
  * AUTO-FALLBACK is the point of the design, not an error path: frames are BUFFERED from the
  * first read, and if the socket is not OPEN within [FALLBACK_GRACE_MS] — or dies, or answers
@@ -65,6 +67,8 @@ class GatewayStt(
         private const val FINAL_WAIT_MS = 12_000L
         /** Replay ring: 20 s max (≈640 KB) — a longer press talks to whisper anyway. */
         private const val BUFFER_MAX_BYTES = 20 * SAMPLE_RATE * 2
+        /** Encoded-frame hold queue before socket open (Opus needs its header page first). */
+        private const val WIRE_MAX_BYTES = 256 * 1024
 
         /** http→ws / https→wss, watchkit base minus its trailing slash. Pure + tested.
          *  [engine] ( wearer's Settings ▸ Voice in pick) rides as `?engine=` — the bearer stays
@@ -96,6 +100,14 @@ class GatewayStt(
         val cfg = Watchkit.config.value
         val buffer = ArrayDeque<ByteArray>()
         var bufferBytes = 0
+        // WIRE side (Opus/AAC/PCM per MicCodec): frames encoded from the FIRST chunk are queued
+        // here until the socket opens, then flushed IN ORDER — an Ogg stream whose header page
+        // was dropped is undecodable, so the queue is not optional. PCM keeps riding its own
+        // ring below for the local-Vosk replay.
+        var codec = MicCodec.create()
+        val wire = ArrayDeque<ByteArray>()
+        var wireBytes = 0
+        var flushed = false
         val live = Channel<ByteArray>(Channel.UNLIMITED)
         val open = AtomicBoolean(false)
         val dead = AtomicBoolean(false)
@@ -190,9 +202,25 @@ class GatewayStt(
                 while (bufferBytes > BUFFER_MAX_BYTES && buffer.size > 1) {
                     bufferBytes -= buffer.removeFirst().size
                 }
+                // Encode first (cheap), then route: fallback replays PCM into Vosk; the gateway
+                // lane gets wire frames in strict order. A dead encoder degrades to raw PCM —
+                // never to silence (the server sniffs the format from the first bytes anyway).
+                val frames = runCatching { codec?.encode(chunk) ?: listOf(chunk) }.getOrElse {
+                    Log.w(TAG, "mic codec failed mid-stream — raw PCM from here: ${it.message}")
+                    codec?.release(); codec = null; listOf(chunk)
+                }
                 if (fallback.get()) live.send(chunk)
-                else if (open.get()) ws.send(chunk.toByteString())
-                // pre-open and not (yet) falling back: the buffer IS the send queue
+                else if (open.get()) {
+                    if (!flushed) {
+                        flushed = true
+                        while (wire.isNotEmpty()) ws.send(wire.removeFirst().toByteString())
+                    }
+                    frames.forEach { ws.send(it.toByteString()) }
+                } else {
+                    frames.forEach { wire.addLast(it); wireBytes += it.size }
+                    while (wireBytes > WIRE_MAX_BYTES && wire.size > 1) wireBytes -= wire.removeFirst().size
+                }
+                // pre-open and not (yet) falling back: `wire` IS the send queue
             }
         } finally {
             try { record.stop() } catch (_: Exception) { }
@@ -202,6 +230,7 @@ class GatewayStt(
         live.close()
 
         if (!fallback.get() && open.get() && !dead.get()) {
+            codec?.flush()?.forEach { ws.send(it.toByteString()) } // tail of the stream, then end
             ws.send("""{"end":true}""")
             withTimeoutOrNull(FINAL_WAIT_MS) { while (!finalSeen.get() && !dead.get()) delay(80) }
             if (!finalSeen.get()) {
@@ -210,6 +239,7 @@ class GatewayStt(
             }
         }
         if (fallback.get()) withTimeoutOrNull(FINAL_WAIT_MS * 2) { settled.await() }
+        codec?.release()
         runCatching { ws.close(1000, "bye") }
     }.flowOn(Dispatchers.IO)
 
