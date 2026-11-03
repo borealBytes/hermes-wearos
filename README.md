@@ -20,7 +20,9 @@ that is exactly what the owner's Galaxy Watch shows. Under the mask the app rend
 480×480 Wear OS framebuffer; the round glass simply never shows those corners. On a square Wear OS
 screen those corner pixels are real pixels you'll actually get — you see *more* than these
 screenshots, never less — while the layout was designed for the circle from the first pass, so
-nothing important ever lived in a corner anyway. This app is built and tuned on Galaxy Watch
+nothing important ever lived in a corner anyway; round, square or rectangular, any Wear OS
+screen face should take it, the corners being the only difference. This app is built and tuned
+on Galaxy Watch
 (Wear OS 5, min SDK 30): everything in it travels to other Wear OS watches except the optional
 body-sensor tools, which ride Health Services — a capability Samsung watches provide and others
 don't; elsewhere the app reports "health services: unavailable" on its own diagnostics screen and
@@ -434,8 +436,9 @@ scripts/doctor.sh                          # toolchain + link health report
 - `app/src/debug/.../DevAskReceiver.kt` — adb-broadcast harness (`-e text '...'`, `-e ptt_demo`,
   `-e fontscale`, `-e agent …`): scriptable end-to-end demos, which is exactly how every screenshot
   in this README was captured.
-- Target: Wear OS 5+ (API 33+), round. Physical-verified on a Galaxy Watch Ultra (Wear OS 6,
-  480×480, 32-bit userspace → `armeabi-v7a`).
+- Target: Wear OS 5+ (API 33+); round hardware is the design target, square faces render with
+  the corner bonus (see the round-first note up top). Physical-verified on a Galaxy Watch Ultra
+  (Wear OS 6, 480×480, 32-bit userspace → `armeabi-v7a`).
 
 ## Limitations & roadmap
 
