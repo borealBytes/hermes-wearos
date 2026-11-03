@@ -853,6 +853,41 @@ thing instead of just above the orb".
   ask rests above the orb from the thinking state on; long lists tail-pin unchanged; a swipe-back
   mid-stream holds through 6 s of deltas.
 
+### 12.8 The tool-activity card (verbosity, desktop-style) — `domain/ToolActivity.kt` + `ui/md/MdText.kt`
+
+Owner 2026-11-02: *“things go straight to the answers and I feel like I'm missing what's actually
+going on — code edits and terminal outputs, running and when done, in a collapsable box like
+hermes desktop.”* The wire already carried it: `tool.started {tool, preview, tool_call_id}`
+(preview = the command / file path / “cmd + N more”) and `tool.completed {duration, error,
+tool_call_id}` — the watch dropped it into a transient `🔧 terminal…` line. Now:
+
+- **Live:** `ChatSession` keeps a `steps: List<ToolStep>` ledger (correlated by `tool_call_id`,
+  falling back to tool-name + first-unmatched), and `ChatScreen` renders `ActivityRunCard`
+  **while the run streams** — in the transcript list and in the FOCUS-HOLD layout (a long
+  terminal command streams no deltas; that is exactly when the box matters). Header
+  `⚙ N steps · running…`, amber current row, per-step monospace preview, tap = collapse.
+- **Settled:** `finishWith` folds the ledger into the transcript as a ` ```hermes-steps ` fence
+  (one `tool|durS|run|ok|err|preview|result` line per step, pipes/newlines sanitized) placed
+  BEFORE the answer, and the live card clears so the card never doubles. The fence persists in
+  the transcript file, parses back via `WatchMarkdown.parseStepsFence` → `MdBlock.ActivityRun`,
+  and re-renders collapsed — reload-stable. `StepsFenceTest` round-trips encode→parse.
+- **Result previews:** today's gateway sends `tool.completed.preview = ""`; the newer source
+  (`api_server_runs.py::_tool_completed_preview`, 500 chars, redacted) fills it — the watch
+  parser takes it with zero protocol change (row shows up to 4 result lines on expand).
+- Dev fixture: `-e render steps`. Proof (emulator, wear-demo ask “du -sh /usr”): live card
+  appeared 3 s in showing the running command; on settle one collapsed card
+  `⚙ 1 step · 1 failed ‹expand›` (the ⚠ came from the gateway's OWN `_detect_tool_failure` on
+  du's permission-denied partial — the card is honest, not decorative).
+
+**Watch ⇄ desktop session continuity (same owner, same day).** Adoption is never a fork:
+`resumeGatewaySession` binds the next asks to the SAME gateway session id — proven live both
+ways (an `/v1/runs`-created session asked from desktop-API then from the watch shows one
+session row, interleaved transcript, zero new rows). The gateway's session-binding doctrine
+(`gateway/session_api.py`: stored `source` must be `api_server` to run from the API lane)
+makes a **desktop-CLI** session (`source='local'`) API-readable but API-RUN-REFUSED → 409
+`permission_denied`. The watch surfaces that as a one-line read-only explanation and does NOT
+auto-fork (owner: “an auto-fork makes a fucking mess”). Gateway ask below (§13.5 #4).
+
 ## 13. Next steps — branch 2 (media + voice quality), scoped 2026-10-26
 
 Agreed split: dial + agent switching + search land first and get a wrist review; everything below
@@ -958,6 +993,17 @@ before the final JSONL leaves stdout — cleanup then cut it; it awaits `close` 
    fork-per-edit workaround in F16.
 3. Consider one `API_SERVER_KEY` per profile in the install docs — the fail-closed 401 with an
    open `/v1/health` is a trap for every client, not just the watch (§12.2).
+4. **Cross-platform session continuation** (owner 2026-11-02: "a desktop session must continue on
+   the watch AND the desktop — the watch must NOT auto-fork, that makes a mess"): today
+   `gateway/session_api.py::bind_api_session` refuses any run whose target session's stored
+   `source` isn't `api_server` — a desktop-CLI session (`source='local'`) is API-RUN-REFUSED with
+   a bare 409 `permission_denied`. The watch adopted-and-asked live: 409, no fork (correct per
+   owner doctrine). Ask: admit an API turn onto a `local` session when no live writer holds it
+   (the Bot-Chat FIFO door in `api_server_bot_chat.py` is precedent for exactly this hand-off),
+   or expose `POST /api/sessions/{id}/continue {from:<session_id>}` that CHAINS (not forks:
+   `parent_session_id` lineage, transcript carried, one conversation in both UIs — what
+   `continued_api_session` already does across API generations). The watch is client-ready:
+   adoption binds the same id today and simply needs the 409 to become a 200.
 
 
 ## 14. Owner batch 4 (2026-10-29/30 night): circle-meat geometry, orb-flanking approvals, STT backends, edge scroll
