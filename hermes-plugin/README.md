@@ -18,15 +18,33 @@ version, an `enabled` chip, the description, and Disable / Remove controls.
 
 ![The wearos card on the Hermes dashboard Plugins page](../docs/screens/60-plugin-card.png)
 
-The card is a management tile, not the config surface ("No dashboard tab" is the core
-UI saying this plugin doesn't ship a dashboard page of its own — the Wear Kit's read-only
-page lives in the **Desktop workspace** instead: paired devices + the readiness checklist
-lights, from `watch_status`; run `hermes webapp` to open it).
+The card is a management tile ("No dashboard tab" is the core UI saying this plugin
+doesn't ship a *web-dashboard* page — the Wear Kit's read-only page lives in the
+Desktop workspace: paired devices + readiness lights, from `watch_status`).
 
-**Settings** live in the gateway's `config.yaml`, under the plugin's entry:
+**The config editor is in the Desktop app: Settings ▸ Plugins ▸ wearos.** The form is
+generated from `config_schema` below, descriptions included. Three things about that
+page that read confusingly until you know core's model:
+
+- **"Applies to" chips = profiles.** On a multiplexing gateway every profile is its own
+  agent with its own `plugins.enabled` list, settings block, and `.env`. The chip row
+  picks which profile you're editing; a profile where the plugin isn't enabled shows
+  *"No plugin has settings yet"* — enable it there first (the toggle on the plugin's
+  card, or the `plugins:` block in that profile's `config.yaml`). One plugin instance
+  pairs every watch for the whole gateway, so enable it wherever you want `watch_*`
+  tools and `/pair` to answer — enabling it for *all* profiles is fine and normal.
+- **Secret fields render blank even when set** — they are never echoed back
+  ("leave blank to keep the current value"). `type: secret` values live in the active
+  profile's `.env` and are read through Hermes's `get_secret`; they never appear in
+  config.yaml or logs. `hermes watch setup` seeds them under the raw schema key names.
+- **`tailnet` may stay empty.** The handle arrives inside the watch's claim request and
+  is validated live against the Tailscale API before anything is minted; the wizard
+  (`--fix credential`) prints the discovered handle if you want it pinned in settings.
+
+Under the hood, settings land in the profile's `config.yaml`:
 
 ```yaml
-# ~/.hermes/config.yaml
+# ~/.hermes/config.yaml  (or profiles/<name>/config.yaml)
 plugins:
   enabled: [wearos]
   entries:
@@ -35,10 +53,11 @@ plugins:
         gateway_profile: wear-demo
 ```
 
-Edit them by hand, with `hermes plugins config wearos`, or with `hermes watch setup` —
-the wizard reads the same block and live-validates every credential before it green-lights
-pairing. Secrets (`type: secret` below) are stored in the profile's `.env` and read back
-through Hermes's `get_secret`; they never appear in the config file or logs.
+If the plugin shows an **"Agent + Desktop"** badge, it ships two halves: the agent half
+(this Python package, per profile, as above) and the desktop half (`desktop/plugin.js`,
+the Wear Kit page, copied into the app itself — profile-independent). A desktop row
+stuck on *"copying…"* is core's pending-sync state: hit **Rescan** on that page (or
+restart the app) and the pane lands.
 
 ### Config options (`plugin.yaml` → `config_schema`)
 
@@ -75,8 +94,9 @@ The Wear OS APK is **not bundled here**: it ships as a CI-built GitHub Release
   disclosed at run time) → `tailscale up` → rerun the wizard.
 - Tailscale API credential: an **OAuth client** (recommended; restrict it to the
   `auth_keys` + `devices:core` scopes and to the watch tag) **or** an Owner/Admin API
-  token. Both are entered as plugin config secrets (`hermes plugins config wearos` or
-  `plugins.entries.wearos.settings` in config.yaml).
+  token. Both are entered as plugin config secrets (Desktop app: Settings ▸ Plugins ▸
+  wearos; or `plugins.entries.wearos.settings` + the profile's `.env`) and
+  live-validated by `hermes watch setup --fix credential`.
 - MagicDNS on (wizard checks and links the console). Funnel used only for the pairing
   door: the gateway node's MagicDNS name (e.g. `box.tailb12aa5.ts.net`) serving `/pair/*`
   — `hermes watch setup --fix serve` prints the exact line to type on the watch.
@@ -154,7 +174,8 @@ ephemeral claim door). Host modules resolve from `~/.hermes/hermes-agent` or
   profile-scoped JSON file at `~/.hermes/plugin-data/agent-plugin-wearos-<scope>/state.json`,
   mode 0600 (verified on a live install, dashboard v0.23.0).
 - **Background processes:** the plugin starts ONE in-process daemon thread — the loopback
-  claim door (`127.0.0.1:claim_port`, opened at `gateway:startup`, closed on plugin
+  claim door (`127.0.0.1:claim_port`, opened at plugin *load* — hermes-agent 0.23 has no
+  gateway-startup plugin hook; closed on plugin
   unload; `hermes watch pair` re-opens it if nothing is answering). No subprocesses are
   *run* by pairing; `--fix serve` reads `tailscale serve status` and PRINTS commands, it
   never executes system changes. It *uses* your existing tailscaled; at setup time you

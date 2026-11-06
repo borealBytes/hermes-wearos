@@ -34,6 +34,7 @@ import os
 import re
 import secrets
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -797,15 +798,16 @@ def _watch_cli_run(args) -> None:
               " credential|funnel|serve [--yes]`.")
 
 
-def _on_gateway_startup(**kw) -> None:
+def _startup_readiness_pass() -> None:
     """Open the claim door (the funnel's only tenant) and take a readiness first pass so
-    `watch_status` and the Desktop page have fresh lights; never block the pipeline
-    (hook errors are caught by the host, but we stay cheap)."""
+    `watch_status` and the Desktop page have fresh lights. Runs on its own daemon thread
+    at LOAD (see register): hermes-agent 0.23 removed the `gateway:startup` plugin hook,
+    and a hook that never fires means the door's silent-failure guard never runs."""
     try:
         ensure_door()
-        logger.info("wearos: gateway startup readiness: %s", tailnet_state())
+        logger.info("wearos: load-time readiness: %s", tailnet_state())
     except Exception:
-        logger.debug("wearos: readiness probe failed at startup", exc_info=True)
+        logger.debug("wearos: readiness probe failed at load", exc_info=True)
 
 
 def register(ctx) -> None:
@@ -822,13 +824,12 @@ def register(ctx) -> None:
         setup_fn=_watch_cli_setup, handler_fn=_watch_cli_run,
         description="One-command Wear OS watch pairing over your own tailnet.",
     )
-    ctx.register_hook("gateway:startup", _on_gateway_startup)
     ctx.on_unload(claim_server.stop_server)
-    # Door comes up at LOAD, not only at gateway:startup — a hot-reloaded plugin never
-    # sees the startup hook, and a down door is a SILENT pairing failure. Idempotent
-    # (defers to any door already answering); a daemon thread; harmless in one-shot
-    # CLI processes and validation probes (they exit; on_unload stops it where loaded).
-    try:
-        ensure_door()
-    except Exception:
-        logger.debug("wearos: door bring-up at load failed", exc_info=True)
+    # Door + readiness first pass come up at LOAD, not on a lifecycle hook: 0.23's
+    # VALID_HOOKS has no gateway-scoped startup event (registering one logs
+    # "registered unknown hook" on every load and never fires), and a down door is a
+    # SILENT pairing failure. Idempotent (defers to any door already answering); one
+    # daemon thread off the load path; harmless in one-shot CLI processes and
+    # validation probes (they exit; on_unload stops the door where loaded).
+    threading.Thread(target=_startup_readiness_pass, daemon=True,
+                     name="wearos-readiness").start()
