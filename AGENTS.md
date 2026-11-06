@@ -136,6 +136,12 @@ The tailnet AAR is a COMMITTED artifact — rebuild only when `tailnet/go` chang
 `armeabi-v7a`+`x86_64`; `-tags=version_android` is NOT optional — without it tsnet dies at
 Start with `netlinkrib: permission denied`, Android SELinux forbids app netlink route reads).
 
+**Plugin tests (python, pytest):** `python3 -m pytest hermes-plugin/tests/` — stdlib + pytest
+only (plugin rule 10), no device, no network: the suite sandboxes `HERMES_HOME` into a tmp
+dir, fakes the Tailscale API, and speaks real HTTP to an ephemeral claim door. Hermes host
+modules resolve from `~/.hermes/hermes-agent` or `$HERMES_AGENT_ROOT`. Keep green alongside
+the Gradle tests; admission re-check: `hermes plugins validate hermes-plugin/ --install-deps`.
+
 Setup pushes config via the **debug-only** `DevAskReceiver` (extras: `set_token`, `set_base`,
 `set_watchkit_base`, `set_watchkit`, `set_tailnet_key`, `tailnet_status`, `tailnet_on`,
 `tailnet_reenroll`) — chain `set_base` LAST-endpoint-first so the DEFAULT entry

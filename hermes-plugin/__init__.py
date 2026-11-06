@@ -2,26 +2,27 @@
 
 Doctrine (docs/SPEC.md §11.4, handoff §2.5): the watch enrolls ONLY into the user's own
 tailnet with its own embedded tsnet node — no LAN transport, no phone relay, ever. The
-funnel claim door below is the single pre-enrollment network exchange; after enrollment
-every byte rides the tunnel.
+funnel claim door (claim_server.py) is the single pre-enrollment network exchange; after
+enrollment every byte rides the tunnel.
 
 Flow (handoff §4):
   1. The watch cold-starts and shows a 6-digit PIN (5-min TTL, single-claim). The same
      PIN can also be minted from the plugin side (``watch_pair`` tool / ``hermes watch
      pair --show``) for the Desktop "show PIN" verb.
-  2. The watch POSTs {pin, tailnet} to the claim endpoint (behind Funnel:
-     https://pair.<tailnet>.ts.net/pair/claim) — Mode B — or the user speaks/types the
-     PIN to Hermes anywhere (``/pair 429183``).
+  2. The watch POSTs {pin, tailnet, hostname} to the claim endpoint (behind Funnel:
+      https://pair.<tailnet>.ts.net/pair/claim) — Mode B — or the user speaks/types the
+      PIN to Hermes anywhere (``/pair 429183``).
   3. On the FIRST match of a queued claim + a spoken PIN, the plugin mints a single-use,
-     pre-authorized, tagged auth key (tailscale.py), assembles the enrollment packet
-     (authkey, tailnet, gateway ts.net FQDN :8642, watchkit :42651, profile binding,
-     gateway API key) and releases it to the watch. The authkey is zeroed after use.
+      pre-authorized, tagged auth key (tailscale.py) and assembles the enrollment packet
+      — {"authkey","tailnet","gateway_fqdn","gateway_port","watchkit_port","profile",
+      "api_key","watchkit_token"} — onto the PIN record. The watch's polling
+      GET /pair/claim?pin=… collects it ONCE; the authkey is zeroed right after.
   4. Registry lives in profile-scoped plugin state (ctx.state → HERMES_HOME/plugin-data/
-     wearos/state.json): key ``devices``.
+      wearos/state.json): key ``devices``, keyed by the hostname THE WATCH SENT.
 
-Waves: claim HTTP endpoint + funnel serve + wizard fix-verbs land in the next commits
-(TODO(pairing-impl), TODO(wizard)); the Node sidecar stays the documented media fallback
-until media.py finishes its port (handoff cut line).
+Wave status: claim HTTP door + delivery + wizard fix-verbs are LIVE here; the Node
+sidecar stays the documented media fallback until media.py finishes its port (handoff
+cut line).
 """
 
 from __future__ import annotations
@@ -29,22 +30,37 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
+import re
 import secrets
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import tailscale
+try:
+    from . import claim_server, tailscale
+except ImportError:  # flat loader outside a package context (see tests/conftest.py)
+    import claim_server  # type: ignore[no-redef]
+    import tailscale  # type: ignore[no-redef]
 
 logger = logging.getLogger("hermes_wearkit")
 
 STATE_DEVICES = "devices"        # ctx.state key: {hostname: device-record}
 STATE_PINS = "pins"              # ctx.state key: {pin-hash: pin-record}
+STATE_CLAIM_RATE = "claim_rate"  # ctx.state key: global miss streak + cooldown window
 PIN_TTL_SECONDS = 300            # SPEC §4: 5-minute TTL, single-claim
 CLAIM_RATE_LIMIT = 10            # failed claim attempts per window before cooldown
+CLAIM_MISS_WINDOW = 60           # seconds the global miss streak accumulates over
+CLAIM_COOLDOWN_SECONDS = 60      # how long the door slams (429) once the streak trips
+PACKET_TTL_SECONDS = 900         # how long a claimed packet waits for the watch to poll
+MAX_LIVE_PINS = 500              # ledger bound: random-PIN POST floods die on the cap, not the disk
 WATCHKIT_PORT = 42651            # fixed by SPEC §11.4
 GATEWAY_PORT = 8642              # Hermes API (per-profile /p/<profile>)
+DEFAULT_CLAIM_PORT = 42653       # loopback listener behind tailscale serve/funnel
+CLAIM_WAIT_SECONDS = 30          # `hermes watch pair <PIN>` waits this long for pickup
+
+_PIN_RE = re.compile(r"[1-9][0-9]{5}")  # 6 digits, no leading zero (mint format)
+_HOSTNAME_ALLOWED = re.compile(r"[^a-z0-9._-]+")
 
 _CTX: Any = None                 # module singleton for handlers wired at register()
 _secrets: Callable[[str], Optional[str]] | None = None
@@ -98,19 +114,68 @@ def _hash_pin(pin: str) -> str:
     return hashlib.sha256(pin.encode()).hexdigest()[:16]
 
 
+def _now() -> float:
+    return time.time()
+
+
 def _pins() -> dict:
     return dict(_CTX.state.get(STATE_PINS) or {})
+
+
+def _prune_pins(pins: dict, now: float) -> dict:
+    """Drop records past their horizon. A plugin-minted PIN that expired WITHOUT ever
+    knocking survives as an ``expired`` tombstone for one more TTL, so the watch's late
+    knock hears the truth (410 expired) instead of silently re-adopting a dead code."""
+    for key, rec in list(pins.items()):
+        if not isinstance(rec, dict) or rec.get("expires", 0) > now:
+            continue
+        tombstoned = rec.get("expired") or (rec.get("origin") == "plugin" and not rec.get("claims"))
+        if tombstoned and rec.get("created", now) + 2 * PIN_TTL_SECONDS > now:
+            rec["expired"] = True
+            pins[key] = rec
+        else:
+            del pins[key]
+    return pins
+
+
+def _rate_hot(now: float) -> bool:
+    meta = _CTX.state.get(STATE_CLAIM_RATE) or {}
+    try:
+        return float(meta.get("cooldown_until", 0)) > now
+    except (TypeError, ValueError):
+        return False
+
+
+def _note_miss(now: float) -> None:
+    """Count a door miss (unknown/consumed PIN, per-PIN cap hit). CLAIM_RATE_LIMIT
+    misses inside CLAIM_MISS_WINDOW trip a global cooldown — 429 for everyone."""
+    meta = dict(_CTX.state.get(STATE_CLAIM_RATE) or {})
+    if now - float(meta.get("window_start") or 0) > CLAIM_MISS_WINDOW:
+        meta = {"window_start": now, "misses": 0}
+    meta["misses"] = int(meta.get("misses", 0)) + 1
+    if meta["misses"] >= CLAIM_RATE_LIMIT:
+        meta["cooldown_until"] = now + CLAIM_COOLDOWN_SECONDS
+        meta["misses"] = 0
+    _CTX.state.set(STATE_CLAIM_RATE, meta)
+
+
+def _clear_misses() -> None:
+    _CTX.state.set(STATE_CLAIM_RATE, {})
 
 
 def mint_pin() -> str:
     """Create a plugin-side PIN (Desktop 'show PIN' / watch_pair). 6 digits, no leading
     zeros, TTL PIN_TTL_SECONDS, single-claim."""
-    pin = str(secrets.randbelow(900_000) + 100_000)
     pins = _pins()
-    pins = {k: v for k, v in pins.items() if v.get("expires", 0) > time.time()}
+    pins = _prune_pins(pins, _now())
+    pin = ""
+    for _ in range(8):
+        pin = str(secrets.randbelow(900_000) + 100_000)
+        if _hash_pin(pin) not in pins:
+            break
     pins[_hash_pin(pin)] = {
-        "created": time.time(),
-        "expires": time.time() + PIN_TTL_SECONDS,
+        "created": _now(),
+        "expires": _now() + PIN_TTL_SECONDS,
         "claims": 0,
         "origin": "plugin",
     }
@@ -118,80 +183,205 @@ def mint_pin() -> str:
     return pin
 
 
-def queue_claim(pin: str, tailnet_hint: str = "") -> bool:
-    """A watch knocked on the claim door with its PIN: remember the pending claim.
-    Returns False when the rate limit window is hot (caller answers 429)."""
-    pins = _pins()
-    now = time.time()
-    pins = {k: v for k, v in pins.items() if v.get("expires", 0) > now}
+def queue_claim(pin: str, tailnet_hint: str = "", hostname: str = "") -> str:
+    """A watch knocked on the claim door with its PIN: remember the pending claim
+    (adopting watch-minted PINs on first knock). Returns the outcome the door maps to
+    HTTP: 'queued' (202) | 'hot' (429) | 'expired'/'consumed' (410) | 'malformed' (400)."""
+    if not isinstance(pin, str) or not _PIN_RE.fullmatch(pin):
+        return "malformed"
+    now = _now()
+    if _rate_hot(now):
+        return "hot"
+    pins = _prune_pins(_pins(), now)
     rec = pins.get(_hash_pin(pin))
     if rec is None:
         # Watch-minted PIN arriving first: adopt it as pending with a fresh TTL window.
+        if len(pins) >= MAX_LIVE_PINS:
+            _note_miss(now)  # random-PIN flood creating ledger records faster than TTLs die
+            return "hot"
         rec = {"created": now, "expires": now + PIN_TTL_SECONDS, "claims": 0, "origin": "watch"}
+    if rec.get("expired"):
+        _note_miss(now)
+        return "expired"
+    if rec.get("delivered"):
+        _note_miss(now)
+        return "consumed"
     rec["claims"] = int(rec.get("claims", 0)) + 1
     if rec["claims"] > CLAIM_RATE_LIMIT:
-        return False
-    rec["pending_claim"] = {"at": now, "tailnet_hint": tailnet_hint}
+        _note_miss(now)
+        return "hot"
+    prev = rec.get("pending_claim") or {}
+    rec["pending_claim"] = {
+        "at": now,
+        "tailnet_hint": tailnet_hint or prev.get("tailnet_hint", ""),
+        "hostname": hostname or prev.get("hostname", ""),
+    }
     pins[_hash_pin(pin)] = rec
     _CTX.state.set(STATE_PINS, pins)
-    return True
+    return "queued"
 
 
 def claim_pin(pin: str) -> dict:
     """Match a spoken/typed PIN against a pending watch claim, enroll, return the
-    device record (the packet is delivered to the watch's waiting POST)."""
-    pins = _pins()
-    key = _hash_pin(pin)
-    rec = pins.get(key)
-    if rec is None or rec.get("expires", 0) <= time.time():
+    device record. The packet rides along on the PIN record until the watch's polling
+    GET collects it (poll_packet)."""
+    if not isinstance(pin, str) or not _PIN_RE.fullmatch(pin):
+        raise ValueError("pairing code must be 6 digits, 100000-999999")
+    now = _now()
+    pins = _prune_pins(_pins(), now)
+    rec = pins.get(_hash_pin(pin))
+    if rec is None or rec.get("expired") or rec.get("expires", 0) <= now:
         raise ValueError("pairing code expired or unknown — show it again on the watch")
+    if rec.get("packet") or rec.get("delivered"):
+        raise ValueError("that pairing code was already claimed")
     pending = rec.get("pending_claim")
     if pending is None:
         raise ValueError("that watch hasn't knocked yet — make sure the PIN is on screen")
     packet = _build_packet()
-    device = _register_device(packet)
-    pins.pop(key, None)  # single-claim
+    device = _register_device(packet, hostname=str(pending.get("hostname", "")),
+                              tailnet_hint=str(pending.get("tailnet_hint", "")))
+    rec.pop("pending_claim", None)
+    rec["packet"] = packet
+    rec["claimed_at"] = now
+    rec["expires"] = now + PACKET_TTL_SECONDS
+    pins[_hash_pin(pin)] = rec
     _CTX.state.set(STATE_PINS, pins)
-    _deliver(packet, pending)  # TODO(pairing-impl): release to the waiting claim POST
+    _clear_misses()  # a successful pairing clears the door's suspicion
     return device
+
+
+def poll_packet(pin: str) -> tuple[str, Optional[dict]]:
+    """The watch's polling GET. ('pending', None) while the user hasn't claimed yet;
+    ('ready', packet) ONCE — the stored authkey is zeroed on pickup; ('gone', None) for
+    unknown/expired/consumed; ('hot', None) during the global cooldown."""
+    if not isinstance(pin, str) or not _PIN_RE.fullmatch(pin):
+        return "gone", None
+    now = _now()
+    if _rate_hot(now):
+        return "hot", None
+    pins = _prune_pins(_pins(), now)
+    rec = pins.get(_hash_pin(pin))
+    if rec is None or rec.get("expired") or rec.get("delivered") or rec.get("expires", 0) <= now:
+        _note_miss(now)
+        return "gone", None
+    packet = rec.get("packet")
+    if packet is None:
+        return "pending", None  # knocked, awaiting the user's claim — a 204, not a miss
+    rec = dict(rec)
+    packet = dict(packet)
+    rec.pop("packet", None)
+    rec["delivered"] = True
+    pins[_hash_pin(pin)] = rec
+    _CTX.state.set(STATE_PINS, pins)
+    return "ready", packet  # the ledger copy is already packet-less above — zeroed
 
 
 def _build_packet() -> dict:
     """Single-use, pre-authorized, tagged key + everything the watch needs to skip the
-    console entirely (SPEC §4, handoff §4)."""
+    console entirely (SPEC §4, handoff §4). Shape is the claim API contract — the watch
+    client is built against EXACTLY these keys; adding or nesting breaks the lane."""
     tag = str(_cfg("watch_tag", "tag:hermes-watch"))
     expiry = str(_cfg("key_expiry", "24h"))
+    profile = str(_cfg("gateway_profile", "wear"))
     client = _client()
     authkey = client.mint_enrollment_key(tag=tag, expiry=expiry)
     return {
-        "authkey": authkey,                    # zero after use (tailscale.py)
+        "authkey": authkey,                       # zeroed after pickup (poll_packet)
         "tailnet": client.tailnet,
-        "gateway": {"fqdn": gateway_fqdn(), "port": GATEWAY_PORT},
-        "watchkit_port": WATCHKIT_PORT,        # present only when the sidecar is detected
-        "profile": str(_cfg("gateway_profile", "wear")),
-        "tag": tag,
+        "gateway_fqdn": gateway_fqdn(),
+        "gateway_port": GATEWAY_PORT,
+        "watchkit_port": WATCHKIT_PORT,           # present only when the sidecar is detected
+        "profile": profile,
+        "api_key": _gateway_api_key(profile),
+        "watchkit_token": _get_secret("watchkit_token"),  # nullable by contract
     }
 
 
-def _register_device(packet: dict) -> dict:
+def _sanitize_hostname(name: str) -> str:
+    clean = _HOSTNAME_ALLOWED.sub("-", str(name or "").strip().lower()).strip("-.")
+    return clean[:64]
+
+
+def _register_device(packet: dict, hostname: str = "", tailnet_hint: str = "") -> dict:
+    """Registry entry under the hostname THE WATCH SENT (falling back to
+    <profile>-watch when the knock carried none). Re-pairing the same watch updates the
+    record in place and notes re_enrolled_at; first_seen never moves."""
     devices = dict(_CTX.state.get(STATE_DEVICES) or {})
-    hostname = f"{str(_cfg('gateway_profile', 'wear'))}-watch"  # TODO(pairing-impl): watch sends its hostname
+    name = _sanitize_hostname(hostname) or f"{packet['profile']}-watch"
+    now = _now()
+    prev = devices.get(name) or {}
     record = {
-        "hostname": hostname,
-        "tag": packet["tag"],
-        "enrolled_at": time.time(),
-        "gateway_fqdn": packet["gateway"]["fqdn"],
+        "hostname": name,
+        "tag": str(_cfg("watch_tag", "tag:hermes-watch")),
         "tailnet": packet["tailnet"],
+        "gateway_fqdn": packet["gateway_fqdn"],
+        "profile": packet["profile"],
+        "first_seen": prev.get("first_seen") or prev.get("enrolled_at") or now,
+        "enrolled_at": now,
     }
-    devices[hostname] = record
+    if prev:
+        record["re_enrolled_at"] = now
+    if tailnet_hint:
+        record["tailnet_hint"] = tailnet_hint
+    devices[name] = record
     _CTX.state.set(STATE_DEVICES, devices)
     return record
 
 
-def _deliver(packet: dict, pending: dict) -> None:
-    """TODO(pairing-impl): hand the packet to the claim endpoint's waiting response and
-    zero packet['authkey'] once acknowledged."""
-    packet["authkey"] = ""  # fail-safe: never leak past one use even before delivery lands
+def _gateway_api_key(profile: str) -> Optional[str]:
+    """Resolve the gateway profile's API_SERVER_KEY for the packet.
+
+    Measured against hermes-agent v0.22.5 (agent/secret_scope.py):
+      get_secret(name: str, default: Optional[str] = None) -> Optional[str]
+    reads a CONTEXTVAR-bound per-task scope — there is NO profile argument. Our claim
+    server answers on its own threads, where no scope is bound: with multiplexing
+    active a bare read RAISES UnscopedSecretError (fail-closed), and in a CLI process
+    it silently falls through to os.environ — the LAUNCH profile's value, which can be
+    the wrong profile's key. So we bind the configured profile's own scope explicitly
+    (build_profile_secret_scope is a pure filesystem read — thread-safe), and only
+    then fall back: ambient read → declared gateway_api_key secret (README).
+    """
+    try:  # tier 1: the configured profile's own scope, on any thread
+        scope_home = _profile_home(profile)
+        if scope_home is not None:
+            from agent.secret_scope import (build_profile_secret_scope, get_secret,
+                                            reset_secret_scope, set_secret_scope)
+            token = set_secret_scope(build_profile_secret_scope(scope_home),
+                                     profile_home=str(scope_home))
+            try:
+                key = get_secret("API_SERVER_KEY")
+            finally:
+                reset_secret_scope(token)
+            if key:
+                return key
+    except Exception:
+        logger.debug("wearos: profile-scoped API_SERVER_KEY read failed", exc_info=True)
+    try:  # tier 2: ambient scope / single-profile os.environ pass-through
+        from agent.secret_scope import get_secret as _gs
+        key = _gs("API_SERVER_KEY")
+        if key:
+            return key
+    except Exception:  # UnscopedSecretError under multiplex on a server thread: expected
+        pass
+    return _get_secret("gateway_api_key")  # tier 3: declared fallback (config_schema)
+
+
+def _profile_home(profile: str) -> Optional[Path]:
+    """Named profile's HERMES_HOME via the public host constants: ``<root>/profiles/<name>``
+    (PROFILE_ID_RE is THE canonical id gate — same regex hermes_cli.profiles enforces,
+    and it refuses traversal). ``hermes_cli.profiles.get_profile_dir`` would be the
+    authority but is a private module per validate rule 9; the layout is stable contract."""
+    profile = str(profile or "default").strip().lower()
+    try:
+        from hermes_constants import PROFILE_ID_RE, get_default_hermes_root
+        root = Path(get_default_hermes_root())
+        if profile == "default":
+            return root
+        if PROFILE_ID_RE.fullmatch(profile):
+            return root / "profiles" / profile
+    except Exception:
+        pass
+    return None
 
 
 def gateway_fqdn() -> str:
@@ -225,6 +415,21 @@ def tailnet_state() -> dict:
         except tailscale.TailnetAPIError as exc:
             checks["magicdns"] = {"ok": False, "detail": str(exc)}
         try:
+            funnel_pref = str(client.funnel_pref().get("funnelNodeAttr", ""))
+            # Measured (probe 2026-11-06): tailnet-level toggle is a separate gate from
+            # the ACL attr. attr_required is the RECOMMENDED state: funnel on, each node
+            # opted in by its ACL attribute — which is exactly our two-step grant.
+            checks["funnel_toggle"] = {
+                "ok": funnel_pref in ("enabled", "attr_required"),
+                "detail": {"enabled": "enabled (all nodes)",
+                           "attr_required": "enabled, per-node ACL attribute required (recommended)",
+                           "disabled": "disabled tailnet-wide"}.get(funnel_pref, funnel_pref or "unreadable"),
+                "fix": "console: https://login.tailscale.com/admin/settings/networking (Funnel ▸ enable) — free on Personal",
+            }
+        except tailscale.TailnetAPIError as exc:
+            checks["funnel_toggle"] = {"ok": False, "detail": str(exc),
+                                       "fix": "hermes watch setup --fix funnel"}
+        try:
             funnel_ok, detail = client.funnel_attr_present()
             checks["funnel_attr"] = {"ok": funnel_ok, "detail": detail,
                                      "fix": "hermes watch setup --fix funnel"}
@@ -233,12 +438,168 @@ def tailnet_state() -> dict:
     except tailscale.CredentialMissing as exc:
         checks["credential"] = {"ok": False, "detail": str(exc),
                                 "fix": "hermes watch setup — walks you through it (account → install → token)"}
+    port = _claim_port()
+    checks["claim_door"] = {
+        "ok": claim_server.door_alive(port) if _CTX is not None else False,
+        "detail": f"127.0.0.1:{port} — front it with: tailscale serve --bg --https=443 --funnel /pair/*",
+        "fix": "hermes watch setup --fix serve",
+    }
     devices = _CTX.state.get(STATE_DEVICES) or {} if _CTX else {}
     checks["devices_online"] = {
         "ok": bool(devices),
         "detail": f"{len(devices)} paired",
     }
     return checks
+
+
+# ── claim door lifecycle ──────────────────────────────────────────────────────
+def _claim_port() -> int:
+    try:
+        return int(_cfg("claim_port", DEFAULT_CLAIM_PORT))
+    except (TypeError, ValueError):
+        return DEFAULT_CLAIM_PORT
+
+
+def _door_listening() -> bool:
+    if claim_server.actual_port() > 0:
+        return True  # ours, in-process (gateway hook / earlier CLI start)
+    return claim_server.door_alive(_claim_port())
+
+
+def ensure_door() -> bool:
+    """Start the claim door if nothing is answering on the configured port (the
+    gateway's hook usually beat us here). Returns True when a door answers."""
+    port = _claim_port()
+    if _door_listening():
+        return True
+    try:
+        claim_server.start_server(port, claim_server.ClaimBackend.from_module())
+        return True
+    except OSError:
+        return claim_server.door_alive(port)  # raced with another starter: fine
+
+
+def _await_pickup(pin: str, timeout: float) -> str:
+    """Poll the ledger until the watch collects the packet. 'delivered' | 'waiting'."""
+    deadline = _now() + timeout
+    while _now() < deadline:
+        rec = _pins().get(_hash_pin(pin)) or {}
+        if rec.get("delivered"):
+            return "delivered"
+        if rec.get("expired") or (rec and rec.get("expires", 0) <= _now()):
+            return "pruned"
+        time.sleep(1.0)
+    return "waiting"
+
+
+# ── wizard fix-verbs (hermes watch setup --fix …) ─────────────────────────────
+def _wizard_fix(verb: str, yes: bool = False) -> None:
+    if verb == "credential":
+        _fix_credential()
+    elif verb == "funnel":
+        _fix_funnel(yes=yes)
+    elif verb == "serve":
+        _fix_serve()
+    else:
+        print(f"unknown --fix {verb!r} — try credential | funnel | serve")
+
+
+def _fix_credential() -> None:
+    print("· validating the Tailscale credential (GET /tailnet/-/devices)…")
+    try:
+        client = _client()
+    except tailscale.CredentialMissing as exc:
+        print(f"  ✗ {exc}")
+        print("  set one: hermes plugins configure wearos — prefer the OAuth pair")
+        print("  (tailscale_oauth_client_id + tailscale_oauth_client_secret, scoped to")
+        print("  auth_keys + the watch tag) or the tailscale_api_token secret.")
+        return
+    try:
+        data = client.validate()
+    except tailscale.TailnetAPIError as exc:
+        hint = {401: "token revoked or wrong — mint a fresh one in the admin console",
+                403: "role too low — Owner/Admin (or an OAuth client with auth_keys)",
+                0: "cannot reach api.tailscale.com — DNS/firewall?"}.get(exc.status, "")
+        print(f"  ✗ {exc}")
+        if hint:
+            print(f"  why: {hint}")
+        return
+    print(f"  ✓ {client.describe_credential()}")
+    print(f"  tailnet seen: {client.tailnet} · {len(data.get('devices', []))} devices visible")
+    if not str(_cfg("tailnet", "") or ""):
+        print(f"  set it: plugins.entries.wearos.settings.tailnet: {client.tailnet}")
+
+
+def _fix_funnel(yes: bool) -> None:
+    try:
+        client = _client()
+    except tailscale.CredentialMissing as exc:
+        print(f"  ✗ {exc}")
+        print("  run `hermes watch setup --fix credential` first.")
+        return
+    # Two independent gates, measured in order (probe 2026-11-06): the TAILNET TOGGLE
+    # first — an ACL grant does nothing while funnel is disabled network-wide.
+    try:
+        pref = str(client.funnel_pref().get("funnelNodeAttr", ""))
+    except tailscale.TailnetAPIError as exc:
+        pref = ""
+        print(f"  ! funnel toggle state unreadable: {exc}")
+    if pref == "disabled" or pref == "":
+        print("  ✗ funnel is DISABLED tailnet-wide (measured). Enable it (free, Personal plan ok):")
+        print("        https://login.tailscale.com/admin/settings/networking  (Funnel ▸ enable)")
+        if not yes:
+            return
+    try:
+        ok, detail = client.funnel_attr_present()
+    except tailscale.TailnetAPIError as exc:  # CredentialMissing included: it's the base
+        print(f"  ✗ cannot read the tailnet ACL: {exc}")
+        print("  run `hermes watch setup --fix credential` first.")
+        return
+    if ok:
+        print(f"  ✓ funnel attribute already granted — {detail}")
+        return
+    print(f"  ✗ {detail}")
+    tag = str(_cfg("watch_tag", "tag:hermes-watch"))
+    print('  one-rule diff (add to the policy file\'s "nodeAttrs"):')
+    print(json.dumps({"nodeAttrs": {tailscale.funnel_rule_key(tag): {"attr": ["funnel"], "hosts": [tag]}}},
+                     indent=2).replace("\n", "\n        "))
+    print("        console: https://login.tailscale.com/admin/acls/file")
+    if not yes:
+        print("  re-run with --yes to apply this preview (replaces the tailnet policy file, If-Match guarded).")
+        return
+    print("  · preview approved (--yes) — replacing the ACL (etag-guarded)…")
+    try:
+        client.add_funnel_attr(tag)
+    except tailscale.TailnetAPIError as exc:
+        print(f"  ✗ replace refused: {exc}")
+        print("    (conflict = someone edited the ACL meanwhile; apply the diff above in the console)")
+        return
+    ok, detail = client.funnel_attr_present()
+    print(f"  {'✓' if ok else '✗'} funnel_attr: {detail}")
+
+
+def _fix_serve() -> None:
+    cmd = "tailscale serve --bg --https=443 --funnel /pair/*"
+    try:
+        out = subprocess.run(["tailscale", "serve", "status"],
+                             capture_output=True, text=True, timeout=10)
+        text = (out.stdout or "") + (out.stderr or "")
+    except FileNotFoundError:
+        print("  ✗ tailscale CLI not found — install tailscaled first (see README).")
+        return
+    except subprocess.SubprocessError as exc:
+        print(f"  ✗ could not read `tailscale serve status`: {exc}")
+        return
+    lower = text.lower()
+    if out.returncode != 0 and "no serve config" in lower:
+        print("  · no serve config yet — the funnel door does not exist.")
+    elif "/pair" in text:
+        print("  ✓ /pair/* already served — nothing to do.")
+        print(f"    (serve status: {text.strip().splitlines()[0]})")
+        return
+    else:
+        print("  · serve config exists but no /pair/ path — add the funnel route.")
+    print(f"  run it yourself (the wizard never executes system commands):\n    {cmd}")
 
 
 # ── tools ─────────────────────────────────────────────────────────────────────
@@ -249,7 +610,17 @@ def _tool_watch_status(args: dict, **kw) -> str:
 
 def _tool_watch_pair(args: dict, **kw) -> str:
     if args.get("code"):
-        return json.dumps({"paired": claim_pin(str(args["code"]))}, indent=2)
+        try:
+            device = claim_pin(str(args["code"]))
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        return json.dumps({"paired": device,
+                           "claim_door": _door_listening(),
+                           "note": "the watch collects the packet on its next poll (≤3 s)"
+                                   if _door_listening()
+                                   else "claim door not answering — the packet waits in the "
+                                        "ledger; run `hermes watch pair` once the gateway is up"},
+                          indent=2)
     return json.dumps({"pin": mint_pin(),
                        "ttl_seconds": PIN_TTL_SECONDS,
                        "say": "type or say this PIN to Hermes on any surface: /pair <PIN>"}, indent=2)
@@ -283,40 +654,83 @@ def _cmd_pair(raw_args: str) -> str:
     if not pin:
         return f"usage: /pair <6-digit PIN from the watch>  (or /pair show to mint one)"
     if pin.lower() == "show":
+        ensure_door()
         return f"pair with this PIN (valid {PIN_TTL_SECONDS // 60} min): {mint_pin()}"
     try:
         device = claim_pin(pin)
-        return f"watch enrolled on the tailnet → {device['hostname']} ({device['gateway_fqdn']})"
     except ValueError as exc:
         return f"pairing failed: {exc}"
+    tail = ("the watch collects it on its next poll (≤3 s)"
+            if _door_listening() else
+            "packet queued — start the door with `hermes watch pair` if the watch stalls")
+    return f"watch enrolled on the tailnet → {device['hostname']} ({device['gateway_fqdn']}) — {tail}"
 
 
 # ── hermes watch CLI ──────────────────────────────────────────────────────────
 def _watch_cli_setup(sub) -> None:
-    sub.add_subparsers(dest="watch_command")
-    p = sub.add_parser("pair", help="show or claim a pairing PIN")
+    watch_sub = sub.add_subparsers(dest="watch_command")
+    p = watch_sub.add_parser("pair", help="claim the watch's PIN (or mint one with --show)")
     p.add_argument("code", nargs="?", help="6-digit PIN from the watch")
-    sub.add_parser("status", help="tailnet readiness checklist + devices")
-    s = sub.add_parser("setup", help="wizard: tailscaled → credential → MagicDNS → funnel → serve")
+    p.add_argument("--show", action="store_true", help="mint a plugin-side PIN instead of claiming")
+    watch_sub.add_parser("status", help="tailnet readiness checklist + devices")
+    s = watch_sub.add_parser("setup", help="wizard: tailscaled → credential → MagicDNS → funnel → serve")
     s.add_argument("--fix", choices=["credential", "funnel", "serve"], default=None)
-    sub.add_parser("devices", help="paired watch records")
+    s.add_argument("--yes", action="store_true",
+                   help="approve the printed preview (currently: --fix funnel PATCHes the ACL)")
+    watch_sub.add_parser("devices", help="paired watch records")
+
+
+def _cli_pair(args) -> None:
+    code = str(getattr(args, "code", "") or "")
+    if code and not getattr(args, "show", False):
+        ensure_door()
+        try:
+            device = claim_pin(code)
+        except ValueError as exc:
+            print(f"pairing failed: {exc}")
+            raise SystemExit(1)
+        print(json.dumps({"paired": device}, indent=2))
+        if not _door_listening():
+            print("⚠ claim door not answering — the gateway must serve it (hermes watch setup --fix serve).")
+            return
+        status = _await_pickup(code, CLAIM_WAIT_SECONDS)
+        if status == "delivered":
+            print("✓ the watch collected its enrollment packet")
+        elif status == "pruned":
+            print("⚠ the packet aged out before the watch polled it — re-pair")
+        else:
+            print(f"packet queued — the watch polls every ~3 s, still in the ledger after {CLAIM_WAIT_SECONDS}s")
+        return
+    ensure_door()
+    print(json.dumps({"pin": mint_pin(),
+                      "ttl_seconds": PIN_TTL_SECONDS,
+                      "claim_door_listening": _door_listening(),
+                      "say": "type or say this PIN to Hermes on any surface: /pair <PIN>"}, indent=2))
 
 
 def _watch_cli_run(args) -> None:
     cmd = getattr(args, "watch_command", None) or "status"
     if cmd == "pair":
-        print(_tool_watch_pair({"code": getattr(args, "code", None)}))
-    elif cmd == "devices":
+        _cli_pair(args)
+        return
+    if cmd == "devices":
         print(json.dumps(_CTX.state.get(STATE_DEVICES) or {}, indent=2))
-    else:  # status / setup
-        print(json.dumps({"checks": tailnet_state()}, indent=2))
-    # TODO(wizard): --fix verbs land with the funnel/serve automation (handoff §3.5).
+        return
+    if cmd == "setup" and getattr(args, "fix", None):
+        _wizard_fix(args.fix, yes=bool(getattr(args, "yes", False)))
+        return
+    print(json.dumps({"checks": tailnet_state()}, indent=2))
+    if cmd == "setup":
+        print("red light? each check carries its own `fix` — `hermes watch setup --fix"
+              " credential|funnel|serve [--yes]`.")
 
 
 def _on_gateway_startup(**kw) -> None:
-    """Readiness first pass so `watch_status` and the Desktop page have fresh lights;
-    never block the pipeline (hook errors are caught by the host, but we stay cheap)."""
+    """Open the claim door (the funnel's only tenant) and take a readiness first pass so
+    `watch_status` and the Desktop page have fresh lights; never block the pipeline
+    (hook errors are caught by the host, but we stay cheap)."""
     try:
+        ensure_door()
         logger.info("wearos: gateway startup readiness: %s", tailnet_state())
     except Exception:
         logger.debug("wearos: readiness probe failed at startup", exc_info=True)
@@ -337,3 +751,4 @@ def register(ctx) -> None:
         description="One-command Wear OS watch pairing over your own tailnet.",
     )
     ctx.register_hook("gateway:startup", _on_gateway_startup)
+    ctx.on_unload(claim_server.stop_server)

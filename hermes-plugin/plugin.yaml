@@ -69,6 +69,23 @@ config_schema:
     type: str
     default: "wear"
     description: Hermes profile the watch binds to (its /p/<profile> lane + API key).
+  gateway_api_key:
+    type: secret
+    description: >-
+      Fallback for the packet's api_key. The plugin first reads the gateway profile's own
+      API_SERVER_KEY by binding that profile's secret scope (agent.secret_scope); when the
+      profile home is unresolvable it tries the ambient scope, and finally this secret.
+  watchkit_token:
+    type: secret
+    description: >-
+      Optional watchkit helper bearer handed to the watch in the enrollment packet
+      (nullable field "watchkit_token"); leave unset if watchkit isn't deployed.
+  claim_port:
+    type: int
+    default: 42653
+    description: >-
+      Loopback port of the funnel-facing claim door (127.0.0.1 only; tailscale serve
+      --funnel /pair/* fronts it). Change both together if 42653 is taken.
   apk_release_url:
     type: str
     default: "https://github.com/borealBytes/hermes-wearos/releases/latest"
