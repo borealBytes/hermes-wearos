@@ -721,7 +721,7 @@ class WearApp : Application() {
             settings.saveGateway(gw, select = true)
             if (wk.isNotEmpty()) {
                 settings.setMermaidBaseUrl(wk)
-                if (p.watchkitToken.isNotBlank()) settings.setWatchkitToken(p.watchkitToken)
+                p.watchkitToken?.takeIf { it.isNotBlank() }?.let { settings.setWatchkitToken(it) }
                 Watchkit.setConfig(wk, settings.watchkitToken())
             }
             endpoints.rebind(gw)
@@ -734,7 +734,7 @@ class WearApp : Application() {
             _pairRequested.value = false
             Log.i(
                 TAG, "pair applied: gw=$api wk=${wk.ifEmpty { "(none)" }} profile=${p.profile.ifBlank { "(default)" }} " +
-                    "auth.len=${p.authKey.length} key.len=${p.apiKey.length} wkToken.len=${p.watchkitToken.length}",
+                    "auth.len=${p.authKey.length} key.len=${p.apiKey.length} wkToken.len=${p.watchkitToken?.length ?: 0}",
             )
         }
 

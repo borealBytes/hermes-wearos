@@ -199,7 +199,7 @@ fun SettingsScreen(
         if (h.isEmpty()) { pairStatus = "⚠️ set your tailnet handle first"; return@LaunchedEffect }
         settings.setTailnetHandle(h)
         pairBusy = true
-        pairStatus = "knocking on pair.$h.ts.net…"
+        pairStatus = "knocking on $h.ts.net…"
         val out = withContext(Dispatchers.IO) { PairingClient().claim(h, pairPin, android.os.Build.MODEL) }
         pairBusy = false
         pairStatus = when (out) {
@@ -208,6 +208,7 @@ fun SettingsScreen(
                 "claimed ✓ — enrolling over the tunnel"
             }
             PairingClient.Outcome.Gone -> "that PIN is spent — tap New PIN"
+            PairingClient.Outcome.Malformed -> "⚠️ packet arrived unreadable — tap New PIN and retry"
             PairingClient.Outcome.RateLimited -> "too many tries (429) — the PIN holds, knock again"
             PairingClient.Outcome.Pending -> "still waiting on the PC — knock again any time"
             PairingClient.Outcome.Queued -> "knocked — waiting for hermes watch pair"

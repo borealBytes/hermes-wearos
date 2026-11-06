@@ -26,12 +26,15 @@ data class PairPacket(
     @SerialName("watchkit_port") val watchkitPort: Int = 0,
     @SerialName("profile") val profile: String = "",
     @SerialName("api_key") val apiKey: String = "",
-    @SerialName("watchkit_token") val watchkitToken: String = "",
+    // NULLABLE per the claim contract (plugin serves an explicit null when no watchkit
+    // bearer is configured — proven live 2026-11-06; a non-null type deserialized that
+    // null, threw, and the retry loop reported a happily-consumed PIN as "spent").
+    @SerialName("watchkit_token") val watchkitToken: String? = null,
 ) {
     /** One safe line for logcat: identities + LENGTHS, never a key value. */
     fun redacted(): String =
         "tailnet=$tailnet gateway=$gatewayFqdn:$gatewayPort wk_port=$watchkitPort profile=$profile " +
-            "auth.len=${authKey.length} key.len=${apiKey.length} wkToken.len=${watchkitToken.length}"
+            "auth.len=${authKey.length} key.len=${apiKey.length} wkToken.len=${watchkitToken?.length ?: 0}"
 }
 
 /**
@@ -68,6 +71,9 @@ class PairingClient(private val http: Http = LiveHttp()) {
         data class Claimed(val packet: PairPacket) : Outcome() // 200 — the one-shot payload
         data object Gone : Outcome()            // 410 — spent or expired; re-mint the PIN
         data object RateLimited : Outcome()     // 429 — back off, the PIN stays good
+        /** 200 arrived but the body was unreadable — the packet is CONSUMED; retrying
+         *  only trades the truth for a misleading "spent". Terminal, never re-polls. */
+        data object Malformed : Outcome()
         data class Failed(val why: String) : Outcome()
     }
 
@@ -100,7 +106,7 @@ class PairingClient(private val http: Http = LiveHttp()) {
             sleep(backoff)
             backoff = (backoff * 2).coerceAtMost(8_000L)
             when (val o = poll(handle, pin)) {
-                is Outcome.Claimed, Outcome.Gone -> return o
+                is Outcome.Claimed, Outcome.Gone, Outcome.Malformed -> return o
                 Outcome.Pending -> last = o
                 // RateLimited / Failed: keep the PIN up, back off harder, keep waiting.
                 else -> { last = o; backoff = (backoff * 3).coerceAtMost(20_000L) }
@@ -182,7 +188,7 @@ class PairingClient(private val http: Http = LiveHttp()) {
         fun outcomeOf(code: Int, body: String): Outcome = when (code) {
             202 -> Outcome.Queued
             204 -> Outcome.Pending
-            200 -> parsePacket(body)?.let { Outcome.Claimed(it) } ?: Outcome.Failed("claim packet unreadable")
+            200 -> parsePacket(body)?.let { Outcome.Claimed(it) } ?: Outcome.Malformed
             410 -> Outcome.Gone
             429 -> Outcome.RateLimited
             else -> Outcome.Failed("HTTP $code")

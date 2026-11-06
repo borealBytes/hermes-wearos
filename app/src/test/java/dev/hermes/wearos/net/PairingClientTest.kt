@@ -106,8 +106,22 @@ class PairingClientTest {
         val claimed = PairingClient.outcomeOf(200, packetJson)
         assertTrue(claimed is PairingClient.Outcome.Claimed)
         assertEquals("gateway.lab.ts.net", (claimed as PairingClient.Outcome.Claimed).packet.gatewayFqdn)
-        // 200 with garbage is a Failed, never a crash and never an empty "success".
-        assertTrue(PairingClient.outcomeOf(200, "{{{") is PairingClient.Outcome.Failed)
+        // 200 with garbage is Malformed — terminal (the packet was CONSUMED; re-polling
+        // would only turn the truth into a misleading "spent"). Never a crash.
+        assertTrue(PairingClient.outcomeOf(200, "{{{") is PairingClient.Outcome.Malformed)
+    }
+
+    @Test
+    fun `a null watchkit_token parses — the plugin serves explicit null, not absence`() {
+        // Measured live 2026-11-06 (first real-watch drill): the packet carried
+        // "watchkit_token":null because no watchkit bearer was configured. A non-null
+        // field deserialized that null, threw AFTER the one-shot GET, and the retry
+        // loop honestly-lyingly reported "that PIN is spent". The contract says
+        // nullable; the model must honor it.
+        val json = packetJson.replace("\"watchkit_token\":\"WKTOKEN\"", "\"watchkit_token\":null")
+        val p = PairingClient.parsePacket(json)!!
+        assertNull(p.watchkitToken)
+        assertTrue(p.redacted(), p.redacted().contains("wkToken.len=0"))
     }
 
     // ── the knock→poll loop ──────────────────────────────────────────────────────────────────
@@ -205,5 +219,15 @@ class PairingClientTest {
         val pin = PairingCode.mint()
         val url = PairingClient.pollUrl("lab", pin)
         assertTrue(url.endsWith("?pin=$pin"))
+    }
+    @Test
+    fun `a malformed 200 ends the wait — the consumed PIN is never re-polled`() {
+        // The exact failure that ate the first live drill: packet served (200), body
+        // unparseable, loop kept polling, next GET said 410, wearer saw "spent" for a
+        // claim that had actually SUCCEEDED server-side.
+        val h = Harness(202 to "", 204 to "", 200 to "not json")
+        val out = h.run()
+        assertTrue(out is PairingClient.Outcome.Malformed)
+        assertEquals(3, h.http.calls.size) // POST + one pending GET + the 200 — no fourth call
     }
 }
