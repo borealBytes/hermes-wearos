@@ -60,7 +60,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-          arguments: --version
+          # (v4 dropped `arguments:` — same as ci.yml; the pin proves itself on first use)
 
       # Tag push → GITHUB_REF_NAME; dispatch → v$(cat VERSION). Tags containing '-'
       # (e.g. v0.8.0-plugin.1) publish as prereleases.

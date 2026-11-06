@@ -39,7 +39,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-          arguments: --version
+          # (v4 dropped the old `arguments:` probe param — the pin is proven by the
+          # first real gradle invocation below failing loudly if it's wrong)
 
       # The ~52 JVM-only tests (app/src/test/) — CONTRIBUTING.md: "JVM suite must stay green".
       # No --offline here: CI resolves from google()/mavenCentral() normally.

@@ -26,15 +26,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # hermes-agent IS on PyPI (latest 0.19.0 at pin time) and requires
-      # Python >=3.11,<3.14, so pin 3.13 — ubuntu-latest's system python is 3.12
-      # today but an image bump to 3.14 would break `pip install`.
-      # If the PyPI release ever lags the `plugins validate` API this gate needs,
-      # fall back to the repo tarball:
-      #   pip install https://github.com/NousResearch/hermes-agent/archive/refs/heads/main.tar.gz
+      # hermes-agent REFUSES pip/wheel builds by design (measured 2026-11-06: the
+      # sdist's build hook errors "Building wheels or sdists for hermes-agent is not
+      # supported… use uv sync"; PyPI's 0.19.0 predates `plugins validate` entirely —
+      # that's how this job's first real run failed). The supported dev path is uv
+      # against a source checkout, so the gate mirrors it, pinned to the CalVer tag
+      # matching the admission-era CLI (v2026.9.24 == v0.22.5). Bump deliberately,
+      # never float `main`. Requires Python >=3.11,<3.14.
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Validate plugin
         run: |
@@ -42,5 +47,7 @@ jobs:
             echo "::notice::hermes-plugin/ not in tree yet — skipping"
             exit 0
           fi
-          pip install hermes-agent
-          hermes plugins validate hermes-plugin/ --install-deps
+          git clone --depth 1 --branch v2026.9.24 \
+            https://github.com/NousResearch/hermes-agent hermes-runtime
+          (cd hermes-runtime && uv sync --frozen --no-dev -q)
+          hermes-runtime/.venv/bin/hermes plugins validate hermes-plugin/ --install-deps
