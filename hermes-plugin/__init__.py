@@ -597,8 +597,18 @@ def _fix_serve() -> None:
     # and applies itself. One click, zero re-runs.
     cmd = ["tailscale", "funnel", "--bg", "--https=443", f"http://127.0.0.1:{port}"]
     print(f"  · running: {' '.join(cmd)}")
-    print("    (if the tailnet toggle is off, this waits for you: console.tailscale.com")
-    print("     → Settings ▸ General ▸ Funnel ▸ Manage → enable; it applies by itself)")
+    # The enable approval lives at a per-NODE link (docs Jan 2026: the CLI "triggers a
+    # web interface that prompts you to approve enabling Funnel"; no console toggle
+    # exists in the redesign). We compute it ourselves so it prints BEFORE the wait.
+    try:
+        st = json.loads(subprocess.run(["tailscale", "status", "--json"],
+                                       capture_output=True, text=True, timeout=10).stdout)
+        node_id = st.get("Self", {}).get("ID", "")
+        if node_id:
+            print(f"    enable (one click, approves THIS node): https://login.tailscale.com/f/funnel?node={node_id}")
+    except Exception:
+        pass
+    print("    (waiting up to 4 min for the approval; it applies itself once clicked)")
     try:
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
                              stdin=subprocess.DEVNULL)
@@ -611,11 +621,10 @@ def _fix_serve() -> None:
     out_text = ((run.stdout or "") + (run.stderr or "")).strip()
     # NB: the disabled-toggle path exits 0 with prose (measured) — parse text BEFORE rc.
     if "funnel is not enabled" in out_text.lower():
-        print("  ✗ funnel toggle is DISABLED tailnet-wide. Enable (free, Personal plan ok):")
-        print("        console.tailscale.com → Settings ▸ General ▸ Funnel card ▸ Manage")
+        print("  ✗ funnel not enabled yet. Approve it at the per-node link (free,")
+        print("    Personal plan ok — there is no console switch; this link IS the UI):")
         link = next((w for w in out_text.split() if w.startswith("https://")), "")
-        if link:
-            print(f"        (direct link: {link})")
+        print(f"        {link or 'https://login.tailscale.com/f/funnel?node=<Self.ID from: tailscale status --json>'}")
         print("  …then re-run this verb. The door must be PUBLIC — a watch with no")
         print("  tunnel yet can't ride a tailnet-only serve.")
         return
