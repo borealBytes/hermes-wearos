@@ -151,7 +151,7 @@ overwrite-or-skip. Tests: `gradle :app:testDebugUnitTest` (must stay green, JVM-
 ## 4. Interview the human ONLY for unknowables
 
 - **Gateway URLs** — if a Hermes gateway runs on THIS machine, check Tailscale first:
-  `tailscale status --json | jq -r '.Self.DnsName'` → your FQDN (use `http://<fqdn>:8642`;
+  `tailscale status --json | jq -r '.Self.DNSName'` → your FQDN (use `http://<fqdn>:8642`;
   MagicDNS resolves `.ts.net` only inside the tailnet — and since §11.4 the watch reaches it
   THROUGH its own node, so a tailnet URL is the only one that works; LAN literals are
   reachable through the tunnel too if you must use one).

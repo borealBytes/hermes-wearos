@@ -286,10 +286,21 @@ def _build_packet() -> dict:
     profile = str(_cfg("gateway_profile", "wear"))
     client = _client()
     authkey = client.mint_enrollment_key(tag=tag, expiry=expiry)
+    fqdn = gateway_fqdn()
+    if not fqdn:
+        # Loud fail beats a packet the watch can't dial — and never leave the minted
+        # key orphaned: this is exactly what last_key_id exists for.
+        try:
+            client.expire_key(client.last_key_id)
+        except Exception:
+            pass
+        raise ValueError("gateway FQDN unknown (tailscale status reports none) — "
+                         "cannot hand the watch a tunnel it can't dial")
     return {
         "authkey": authkey,                       # zeroed after pickup (poll_packet)
-        "tailnet": client.tailnet,
-        "gateway_fqdn": gateway_fqdn(),
+        "tailnet": (client.tailnet if client.tailnet not in ("", "-")
+                    else tailnet_name()) or "-",
+        "gateway_fqdn": fqdn,
         "gateway_port": GATEWAY_PORT,
         "watchkit_port": WATCHKIT_PORT,           # present only when the sidecar is detected
         "profile": profile,
@@ -386,13 +397,28 @@ def _profile_home(profile: str) -> Optional[Path]:
 
 
 def gateway_fqdn() -> str:
-    """This box's ts.net FQDN via the local socket (AGENTS.md §4). Never fabricate: an
-    empty answer makes claim/wizard red, which is the truth."""
+    """This box's ts.net FQDN via the local socket. Measured on 1.102.3: the field is
+    Self.DNSName (capitals — AGENTS.md's old `.Self.DnsName` reads null); no
+    fabrication: an empty answer makes claim/wizard red, which is the truth."""
     try:
         out = subprocess.run(
             ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=10
         )
-        return json.loads(out.stdout).get("Self", {}).get("DnsName", "").rstrip(".")
+        self_ = json.loads(out.stdout).get("Self", {})
+        fqdn = str(self_.get("DNSName") or self_.get("DnsName") or "")
+        return fqdn.rstrip(".")
+    except Exception:
+        return ""
+
+
+def tailnet_name() -> str:
+    """Real tailnet handle (CurrentTailnet.Name, measured location) for packets/registry
+    — never the '-' placeholder, which is API-internal only."""
+    try:
+        out = subprocess.run(
+            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=10
+        )
+        return str(json.loads(out.stdout).get("CurrentTailnet", {}).get("Name", ""))
     except Exception:
         return ""
 
