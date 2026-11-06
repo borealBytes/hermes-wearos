@@ -581,14 +581,28 @@ def _fix_serve() -> None:
     # Real flags measured on tailscale 1.102.3: funnel is its own verb mirroring serve
     # (--bg/--https); no --funnel flag on serve. Root mount: the door itself 404s every
     # path except /pair/claim, so nothing else is reachable even though it's mounted at /.
-    cmd = ["tailscale", "funnel", "--bg", "--https=443", f"http://127.0.0.1:{port}"]
+    # NON-INTERACTIVE (measured): without --yes + stdin closed the CLI BLOCKS on
+    # "Press enter after enabling" for the whole timeout when the toggle is off.
+    cmd = ["tailscale", "funnel", "--bg", "--https=443", "--yes",
+           f"http://127.0.0.1:{port}"]
     print(f"  · running: {' '.join(cmd)}")
     try:
-        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                             stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         print(f"  ✗ could not run the tailscale CLI: {exc}")
         return
     out_text = ((run.stdout or "") + (run.stderr or "")).strip()
+    # NB: the disabled-toggle path exits 0 with prose (measured) — parse text BEFORE rc.
+    if "funnel is not enabled" in out_text.lower():
+        print("  ✗ funnel toggle is DISABLED tailnet-wide. Enable (free, Personal plan ok):")
+        print("        console.tailscale.com → Settings ▸ General ▸ Funnel card ▸ Manage")
+        link = next((w for w in out_text.split() if w.startswith("https://")), "")
+        if link:
+            print(f"        (direct link: {link})")
+        print("  …then re-run this verb. The door must be PUBLIC — a watch with no")
+        print("  tunnel yet can't ride a tailnet-only serve.")
+        return
     if run.returncode == 0:
         print("  ✓ funnel route applied.")
         print("    " + "\n    ".join(out_text.splitlines()[:6]))
@@ -596,12 +610,6 @@ def _fix_serve() -> None:
         if url:
             print("  · watch-side pairing address (type on the watch, minus https://):")
             print(f"      {url.split('//', 1)[1].split('/')[0]}   → POST /pair/claim")
-        return
-    if "funnel is not enabled" in out_text.lower():
-        print("  ✗ funnel toggle is DISABLED tailnet-wide. Enable (free, Personal plan ok):")
-        print("        console.tailscale.com → Settings ▸ General ▸ Funnel card ▸ Manage")
-        print("  …then re-run this verb. The door must be PUBLIC — a watch with no")
-        print("  tunnel yet can't ride a tailnet-only serve.")
         return
     print(f"  ✗ funnel refused: {out_text[:300]}")
 
