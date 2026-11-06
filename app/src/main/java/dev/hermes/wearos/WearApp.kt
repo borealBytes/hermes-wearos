@@ -730,7 +730,13 @@ class WearApp : Application() {
             refreshGatewayMirror()
             agents.loadCache()
             agents.refresh()
-            tailnetStart() // the Done-handler's own landing step — now with a real key
+            // THE KEEPER ALREADY RUNS KEYLESS (boot start → startOnce counts NEEDS_AUTH as
+            // running), so the plain start below would be a NO-OP and the watch would sit
+            // at NEEDS_AUTH holding a perfectly good key — measured on the first real-watch
+            // drill 2026-11-06. An engine idling at NEEDS_AUTH must be force-REENROLLED.
+            val idle = TailnetLogic.phase(
+                TailnetEngine.status.value, enabled = true, gatewayHost = "") == TailnetPhase.NEEDS_AUTH
+            if (idle) tailnetReenroll() else tailnetStart()
             _pairRequested.value = false
             Log.i(
                 TAG, "pair applied: gw=$api wk=${wk.ifEmpty { "(none)" }} profile=${p.profile.ifBlank { "(default)" }} " +
