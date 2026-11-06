@@ -424,10 +424,19 @@ def tailnet_state() -> dict:
         checks["credential"] = {"ok": False, "detail": str(exc),
                                 "fix": "hermes watch setup — walks you through it (account → install → token)"}
     port = _claim_port()
+    funneled = False
+    try:
+        fs = subprocess.run(["tailscale", "funnel", "status"],
+                            capture_output=True, text=True, timeout=5)
+        funneled = fs.returncode == 0 and f":{port}" in ((fs.stdout or "") + (fs.stderr or ""))
+    except Exception:
+        pass
+    door_up = claim_server.door_alive(port)
     checks["claim_door"] = {
-        "ok": claim_server.door_alive(port) if _CTX is not None else False,
-        "detail": f"127.0.0.1:{port} — front it with: tailscale serve --bg --https=443 --funnel /pair/*",
-        "fix": "hermes watch setup --fix serve",
+        "ok": funneled and door_up,
+        "detail": (f"127.0.0.1:{port} — funneled:{'yes' if funneled else 'no'}, "
+                   f"door:{'up' if door_up else 'down'}"),
+        "fix": "hermes watch setup --fix serve (fronts the door); hermes watch pair starts the door",
     }
     devices = _CTX.state.get(STATE_DEVICES) or {} if _CTX else {}
     checks["devices_online"] = {
