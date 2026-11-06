@@ -67,7 +67,13 @@ object Watchkit {
                 (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
             _sttEngine.value = stt?.let { s -> flag(s, "engine")?.takeIf { flag(s, "ready") == "true" } }
             _sttEngines.value = parseSttEngines(stt)
-        }.onFailure { _sttEngine.value = null; _sttEngines.value = emptyList() }
+        }.onFailure {
+            // The silent catch once cost a whole debugging lane ("watchkit offline" with no
+            // why): the probe runs over the tunnel, and tunnel failures come in flavors
+            // (SOCKS cold-race, port refused, ufw) that the picker can't guess. One line, always.
+            android.util.Log.w("HermesWear", "watchkit /health probe failed: ${it.javaClass.simpleName}: ${it.message?.take(90)}")
+            _sttEngine.value = null; _sttEngines.value = emptyList()
+        }
     }
 
     /** Pure-ish (kotlinx JSON only → JVM testable): /health `stt.engines[]` → rows. */
