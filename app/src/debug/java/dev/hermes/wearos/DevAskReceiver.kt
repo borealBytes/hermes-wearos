@@ -106,6 +106,7 @@ class DevAskReceiver : BroadcastReceiver() {
         // off` is the dev escape hatch back to plain sockets; `-e tailnet_reenroll` wipes
         // node identity and re-enrolls with the stored key.
         intent?.getStringExtra("set_tailnet_key")?.let { WearApp.Graph.devSetTailnetKey(it); return }
+        intent?.getStringExtra("set_pair_handle")?.let { WearApp.Graph.devSetPairHandle(it); return }
         if (intent?.hasExtra("tailnet_status") == true) { WearApp.Graph.devTailnetStatus(); return }
         intent?.getStringExtra("tailnet_on")?.let { WearApp.Graph.devTailnetOn(it); return }
         if (intent?.hasExtra("tailnet_reenroll") == true) { WearApp.Graph.devTailnetReenroll(); return }

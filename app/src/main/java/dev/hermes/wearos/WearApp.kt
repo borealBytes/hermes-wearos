@@ -659,6 +659,14 @@ class WearApp : Application() {
             Log.i(TAG, "set_tailnet_key stored (${key.length} chars) — keeper started")
         }
 
+        /** `-e set_pair_handle <h>` on the debug channel: the Pair screen's handle without
+         *  GBoard wrestling (same motivation as add_gw); the screen re-reads on next open. */
+        fun devSetPairHandle(handle: String) = scope.launch {
+            val h = dev.hermes.wearos.domain.PairingCode.normalizeHandle(handle)
+            settings.setTailnetHandle(h)
+            Log.i(TAG, "set_pair_handle stored: ${if (h.isEmpty()) "(cleared)" else h}")
+        }
+
         // ── TAILNET keeper API (SPEC §11.4) — shared by Settings ▸ Tailnet and the dev hooks ──
 
         /** The tunnel truth as the UI reads it (engine status, parsed). */
