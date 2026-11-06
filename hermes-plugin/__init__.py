@@ -415,21 +415,6 @@ def tailnet_state() -> dict:
         except tailscale.TailnetAPIError as exc:
             checks["magicdns"] = {"ok": False, "detail": str(exc)}
         try:
-            funnel_pref = str(client.funnel_pref().get("funnelNodeAttr", ""))
-            # Measured (probe 2026-11-06): tailnet-level toggle is a separate gate from
-            # the ACL attr. attr_required is the RECOMMENDED state: funnel on, each node
-            # opted in by its ACL attribute — which is exactly our two-step grant.
-            checks["funnel_toggle"] = {
-                "ok": funnel_pref in ("enabled", "attr_required"),
-                "detail": {"enabled": "enabled (all nodes)",
-                           "attr_required": "enabled, per-node ACL attribute required (recommended)",
-                           "disabled": "disabled tailnet-wide"}.get(funnel_pref, funnel_pref or "unreadable"),
-                "fix": "console: Settings ▸ General ▸ Funnel card ▸ Manage → enable (free on Personal)",
-            }
-        except tailscale.TailnetAPIError as exc:
-            checks["funnel_toggle"] = {"ok": False, "detail": str(exc),
-                                       "fix": "hermes watch setup --fix funnel"}
-        try:
             funnel_ok, detail = client.funnel_attr_present()
             checks["funnel_attr"] = {"ok": funnel_ok, "detail": detail,
                                      "fix": "hermes watch setup --fix funnel"}
@@ -537,18 +522,10 @@ def _fix_funnel(yes: bool) -> None:
         print(f"  ✗ {exc}")
         print("  run `hermes watch setup --fix credential` first.")
         return
-    # Two independent gates, measured in order (probe 2026-11-06): the TAILNET TOGGLE
-    # first — an ACL grant does nothing while funnel is disabled network-wide.
-    try:
-        pref = str(client.funnel_pref().get("funnelNodeAttr", ""))
-    except tailscale.TailnetAPIError as exc:
-        pref = ""
-        print(f"  ! funnel toggle state unreadable: {exc}")
-    if pref == "disabled" or pref == "":
-        print("  ✗ funnel is DISABLED tailnet-wide (measured). Enable it (free, Personal plan ok):")
-        print("        console.tailscale.com/admin → Settings ▸ General ▸ Funnel card ▸ Manage → enable")
-        if not yes:
-            return
+    # ACL attribute half of the funnel story. The OTHER half — the tailnet-level toggle —
+    # has no API endpoint (measured 2026-11-06: /prefs/funnel 404s); it is console-only
+    # (Settings ▸ General ▸ Funnel ▸ Manage). `--fix serve` is what actually discovers a
+    # disabled toggle, straight from the tailscale CLI's own error + link.
     try:
         ok, detail = client.funnel_attr_present()
     except tailscale.TailnetAPIError as exc:  # CredentialMissing included: it's the base
@@ -560,12 +537,16 @@ def _fix_funnel(yes: bool) -> None:
         return
     print(f"  ✗ {detail}")
     tag = str(_cfg("watch_tag", "tag:hermes-watch"))
-    print('  one-rule diff (add to the policy file\'s "nodeAttrs"):')
-    print(json.dumps({"nodeAttrs": {tailscale.funnel_rule_key(tag): {"attr": ["funnel"], "hosts": [tag]}}},
+    print('  two-section diff (add to the policy file — the tag must exist before a')
+    print('  key can carry it, and nodeAttrs entries are {target,attr} — all measured):')
+    print(json.dumps({"tagOwners": {tag: ["autogroup:member"]},
+                      "nodeAttrs": [{"target": [tag], "attr": ["funnel"]}]},
                      indent=2).replace("\n", "\n        "))
     print("        console: console.tailscale.com/admin/acls/visual (Access controls ▸ Policies ▸ JSON editor)")
     if not yes:
         print("  re-run with --yes to apply this preview (replaces the tailnet policy file, If-Match guarded).")
+        print("  NOTE: your commented legacy policy renders as clean JSON after a replace —")
+        print("  same rules, comments dropped. Preview first, obviously.")
         return
     print("  · preview approved (--yes) — replacing the ACL (etag-guarded)…")
     try:
@@ -579,27 +560,50 @@ def _fix_funnel(yes: bool) -> None:
 
 
 def _fix_serve() -> None:
-    cmd = "tailscale serve --bg --https=443 --funnel /pair/*"
+    """Front the claim door AND learn the funnel-toggle truth in one live attempt:
+    `tailscale funnel` fails with 'Funnel is not enabled on your tailnet' + a console
+    link when the (console-only, no-API — measured) toggle is off."""
+    port = int(_cfg("claim_port", 42653))
     try:
-        out = subprocess.run(["tailscale", "serve", "status"],
+        out = subprocess.run(["tailscale", "funnel", "status"],
                              capture_output=True, text=True, timeout=10)
         text = (out.stdout or "") + (out.stderr or "")
     except FileNotFoundError:
         print("  ✗ tailscale CLI not found — install tailscaled first (see README).")
         return
     except subprocess.SubprocessError as exc:
-        print(f"  ✗ could not read `tailscale serve status`: {exc}")
+        print(f"  ✗ could not read `tailscale funnel status`: {exc}")
         return
-    lower = text.lower()
-    if out.returncode != 0 and "no serve config" in lower:
-        print("  · no serve config yet — the funnel door does not exist.")
-    elif "/pair" in text:
-        print("  ✓ /pair/* already served — nothing to do.")
-        print(f"    (serve status: {text.strip().splitlines()[0]})")
+    if out.returncode == 0 and f":{port}" in text.replace("127.0.0.1", ""):
+        print("  ✓ door already funneled — nothing to do.")
+        print("    " + "\n    ".join(text.strip().splitlines()[:6]))
         return
-    else:
-        print("  · serve config exists but no /pair/ path — add the funnel route.")
-    print(f"  run it yourself (the wizard never executes system commands):\n    {cmd}")
+    # Real flags measured on tailscale 1.102.3: funnel is its own verb mirroring serve
+    # (--bg/--https); no --funnel flag on serve. Root mount: the door itself 404s every
+    # path except /pair/claim, so nothing else is reachable even though it's mounted at /.
+    cmd = ["tailscale", "funnel", "--bg", "--https=443", f"http://127.0.0.1:{port}"]
+    print(f"  · running: {' '.join(cmd)}")
+    try:
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.SubprocessError) as exc:
+        print(f"  ✗ could not run the tailscale CLI: {exc}")
+        return
+    out_text = ((run.stdout or "") + (run.stderr or "")).strip()
+    if run.returncode == 0:
+        print("  ✓ funnel route applied.")
+        print("    " + "\n    ".join(out_text.splitlines()[:6]))
+        url = next((w for w in out_text.split() if w.startswith("https://")), "")
+        if url:
+            print("  · watch-side pairing address (type on the watch, minus https://):")
+            print(f"      {url.split('//', 1)[1].split('/')[0]}   → POST /pair/claim")
+        return
+    if "funnel is not enabled" in out_text.lower():
+        print("  ✗ funnel toggle is DISABLED tailnet-wide. Enable (free, Personal plan ok):")
+        print("        console.tailscale.com → Settings ▸ General ▸ Funnel card ▸ Manage")
+        print("  …then re-run this verb. The door must be PUBLIC — a watch with no")
+        print("  tunnel yet can't ride a tailnet-only serve.")
+        return
+    print(f"  ✗ funnel refused: {out_text[:300]}")
 
 
 # ── tools ─────────────────────────────────────────────────────────────────────

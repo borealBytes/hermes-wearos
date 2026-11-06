@@ -7,15 +7,18 @@ Endpoints verified LIVE against the API surface and the official client
   Keys    POST /api/v2/tailnet/{t}/keys       one-use, pre-authorized, tagged enrollment keys
             body: capabilities.devices.create{reusable:false, ephemeral:false,
                   preauthorized:true, tags:["tag:x"]} + TOP-LEVEL expirySeconds
+            (description: plain words only — parentheses 400)
             response: secret field is "key", id field is "id" (one-time keys spend on
-            enrollment; last_key_id lets us expire an UN-spent key after a lost claim)
-            POST .../keys/{id}/expire         always expire what you never used
+            enrollment; last_key_id lets us remove an UN-spent key after a lost claim)
+            DELETE .../keys/{id}               remove/expire a key (the .../expire route 404s)
   DNS     GET  /api/v2/tailnet/{t}/dns/preferences   MagicDNS truth for the wizard
-  Funnel  GET  /api/v2/tailnet/{t}/prefs/funnel      funnelNodeAttr:
-            enabled | attr_required | disabled  (the tailnet-level toggle — a separate
-            red item from the ACL attr; on borealbytes.github it measured DISABLED)
-  ACL     GET  /api/v2/tailnet/{t}/acl        JSON envelope {"acl": text, "etag": ...}
-            (raw body also tolerated for canned/test payloads)
+  Funnel  (no API endpoint exists — measured 2026-11-06: /prefs/funnel and friends all
+            404; the tailnet-level toggle is CONSOLE-ONLY, Settings ▸ General ▸ Funnel.
+            The wizard learns its truth empirically: --fix serve RUNS `tailscale serve
+            --funnel …` and parses the CLI's "Funnel is not enabled" error + link.)
+  ACL     GET  /api/v2/tailnet/{t}/acl        policy text + ETag (the etag is the HTTP
+            ETag header, not a body field — measured; Accept: application/json renders
+            even a commented legacy file as clean {"grants","ssh"} JSON)
         POST /api/v2/tailnet/{t}/acl          FULL-FILE REPLACEMENT — there is no PATCH —
             with If-Match: "<etag>" so a concurrent console edit conflicts instead of
             being silently overwritten (measured via client source, policyfile.go)
@@ -28,7 +31,6 @@ os.environ or .env files itself.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import re
 import urllib.error
@@ -40,10 +42,6 @@ from typing import Any, Optional
 API_BASE = "https://api.tailscale.com/api/v2"
 USER_AGENT = "hermes-wearkit/0.1 (Hermes Wear Kit plugin)"
 
-
-def funnel_rule_key(tag: str) -> str:
-    """Stable nodeAttrs rule name for our grant (sha256, NOT process-random hash())."""
-    return f"hermes-wearkit-funnel-{hashlib.sha256(tag.encode()).hexdigest()[:6]}"
 
 
 class TailnetAPIError(RuntimeError):
@@ -102,7 +100,7 @@ class TailnetClient:
     def _request(self, method: str, path: str, payload: Any = None, *,
                  raw_body: bytes = b"", content_type: str = "application/json",
                  auth: bool = True, if_match: Optional[str] = None,
-                 accept: Optional[str] = None) -> bytes:
+                 accept: Optional[str] = None, want_headers: bool = False):
         data = raw_body if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(API_BASE + path, data=data or None, method=method)
         req.add_header("User-Agent", USER_AGENT)
@@ -116,7 +114,8 @@ class TailnetClient:
             req.add_header("If-Match", json.dumps(if_match))  # quoted, per client-go policyfile.go
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.read()
+                body = resp.read()
+                return (body, dict(resp.headers)) if want_headers else body
         except urllib.error.HTTPError as exc:
             raise TailnetAPIError(exc.code, exc.read().decode(errors="replace")) from exc
         except OSError as exc:
@@ -126,43 +125,42 @@ class TailnetClient:
         return json.loads(self._request("GET", path))
 
     def _tn(self) -> str:
-        # "-" means "the token's own tailnet": resolve it so later calls can use it.
-        if self.tailnet == "-":
-            raise TailnetAPIError(0, "tailnet handle not configured (config_schema: tailnet)")
-        return urllib.parse.quote(self.tailnet, safe="")
+        # "-" is the API's own "this token's tailnet" spelling (measured 2026-11-06) —
+        # a configured handle is welcome (multi-tailnet futures) but never required.
+        return urllib.parse.quote(self.tailnet or "-", safe="")
 
     # -- probes the wizard runs -------------------------------------------------
     def validate(self) -> dict:
         """GET /tailnet/-/devices — 200 proves the credential AND discovers the tailnet."""
         data = self._get("/tailnet/-/devices")
-        if self.tailnet == "-":
-            self.tailnet = data.get("tailnet", "-")
+        # Measured 2026-11-06: the devices response carries NO "tailnet" field; every
+        # endpoint accepts the literal "-" (the token's own tailnet), so "-" is the
+        # first-class answer and config stays optional.
+        self.tailnet = str(data.get("tailnet") or self.tailnet)
         return data
 
     def dns_preferences(self) -> dict:
         return self._get(f"/tailnet/{self._tn()}/dns/preferences")
 
-    def funnel_pref(self) -> dict:
-        """Tailnet-level funnel toggle (separate from the ACL attr): the CLI on
-        borealbytes.github measured DISABLED — so the wizard shows TWO funnel lights."""
-        return self._get(f"/tailnet/{self._tn()}/prefs/funnel")
-
     def acl_full(self) -> tuple[str, Optional[str]]:
-        """(policy text, etag). Tolerates both the JSON envelope {"acl","etag"} the API
-        returns and a raw policy body (canned test payloads, hujson tailnets). We ASK
-        for JSON: the console's JSON-editor tab proves the server can render a
-        comment-free view of a commented HuJSON file (measured: owner's policy file is
-        the legacy commented src/dst/ip form — raw GET would hand us HuJSON)."""
-        body = self._request("GET", f"/tailnet/{self._tn()}/acl",
-                             accept="application/json, text/plain;q=0.9").decode(errors="replace")
+        """(policy text, etag). We ASK for JSON and MEASURED (2026-11-06, owner's
+        commented legacy file): the API honors it and returns clean {"grants","ssh"}
+        JSON — the auto-patch path therefore works on comment-heavy files too. The
+        etag is NOT in the body; it is the HTTP ETag header (measured), so we grab
+        headers here. Tolerates a bare policy body for canned test payloads."""
+        body, headers = self._request("GET", f"/tailnet/{self._tn()}/acl",
+                                      accept="application/json, text/plain;q=0.9",
+                                      want_headers=True)
+        text = body.decode(errors="replace")
+        etag = headers.get("ETag") or headers.get("etag")
         try:
-            parsed = json.loads(body)
+            parsed = json.loads(text)
         except ValueError:
-            return body, None
+            return text, str(etag).strip('"') if etag else None
         if isinstance(parsed, dict) and isinstance(parsed.get("acl"), str):
-            etag = parsed.get("etag")
-            return parsed["acl"], str(etag) if etag else None
-        return body, None
+            etag = etag or parsed.get("etag")
+            return parsed["acl"], str(etag).strip('"') if etag else None
+        return text, str(etag).strip('"') if etag else None
 
     def acl_text(self) -> str:
         return self.acl_full()[0]
@@ -188,19 +186,26 @@ class TailnetClient:
             acl = json.loads(text)
         except ValueError:
             return False, "huJSON ACLs not supported by this plugin; use the console diff"
-        attrs = (acl.get("nodeAttrs") or {})
-        for what in attrs.values():
+        attrs = acl.get("nodeAttrs") or []
+        # Detect BOTH spellings: grants-era array [{src,hosts,prop}] (what a GET after
+        # our write returns — measured) and legacy map {name:{attr,hosts}} (old files).
+        groups = attrs.values() if isinstance(attrs, dict) else (attrs if isinstance(attrs, list) else [])
+        for what in groups:
             if isinstance(what, dict) and any(
-                a == "funnel" or str(a).startswith("funnel:")  # tolerate both grant spellings
-                for a in (what.get("attr") or [])
+                str(a) == "funnel" or str(a).startswith("funnel:")
+                for a in (what.get("prop") or what.get("attr") or [])
             ):
                 return True, "funnel attribute present on at least one node"
         return False, "ACL lacks a funnel node attribute (hermes watch setup --fix funnel)"
 
     def add_funnel_attr(self, tag: str) -> Any:
-        """Minimal grant: attr ["funnel"] (bare — the tagged nodes may funnel) scoped to
-        hosts [tag]. Conflicts (stale etag) surface as TailnetAPIError; the wizard then
-        prints the console diff instead of guessing."""
+        """Minimal pairing grant, measured-complete: (a) the tag must EXIST before any
+        key can carry it (mint 400s 'tags ... invalid or not permitted' otherwise), so
+        we add a tagOwners rule defining it for tailnet members; (b) a bare 'funnel'
+        attr scoped to hosts [tag] lets exactly those nodes funnel. Conflicts surface
+        as TailnetAPIError; the wizard then prints the console diff instead of guessing.
+        CAVEAT (measured): replacing a commented legacy policy with this render loses
+        the comments — the file becomes clean JSON. Functionally equivalent."""
         try:
             text, etag = self.acl_full()
             acl = json.loads(text)
@@ -208,8 +213,22 @@ class TailnetClient:
             raise TailnetAPIError(0, f"cannot replace a non-JSON/default ACL ({exc}); use the console") from exc
         if not isinstance(acl, dict):
             raise TailnetAPIError(0, "ACL policy is not a JSON object; use the console")
-        attrs = acl.setdefault("nodeAttrs", {})
-        attrs.setdefault(funnel_rule_key(tag), {"attr": ["funnel"], "hosts": [tag]})
+        full_tag = tag if tag.startswith("tag:") else "tag:" + tag
+        # Shapes measured live (each 400 taught one): tagOwners = LEGACY MAP form
+        # ({tag: [owners]}); nodeAttrs = ARRAY of {target, attr} grants — NOT prop,
+        # NOT hosts, NOT src (all rejected); the legacy map-of-{attr,hosts} spelling
+        # is refused on write.
+        owners = acl.setdefault("tagOwners", {})
+        if not owners.get(full_tag):
+            owners[full_tag] = ["autogroup:member"]
+        attrs = acl.setdefault("nodeAttrs", [])
+        if not isinstance(attrs, list):
+            raise TailnetAPIError(0, "nodeAttrs is legacy-map form; convert to grants-array in the console first")
+        if not any(isinstance(g, dict) and full_tag in (g.get("target") or g.get("hosts") or [])
+                   and any(str(a) == "funnel" or str(a).startswith("funnel:")
+                           for a in (g.get("attr") or g.get("prop") or []))
+                   for g in attrs):
+            attrs.append({"target": [full_tag], "attr": ["funnel"]})
         return self.patch_acl(json.dumps(acl, indent=2), etag)
 
     # -- enrollment keys (the pairing heart) ------------------------------------
@@ -240,11 +259,14 @@ class TailnetClient:
                 }
             },
             "expirySeconds": self._expiry_seconds(expiry),
-            "description": "hermes-wearkit pairing (single-use)",
+            "description": "hermes wearkit pairing",  # measured: parentheses are rejected
         }
         data = json.loads(self._request("POST", f"/tailnet/{self._tn()}/keys", payload=body))
         self.last_key_id = data.get("id") or ""  # expire an un-spent key after a lost claim
         return data["key"]
 
     def expire_key(self, key_id: str) -> Any:
-        return self._request("POST", f"/tailnet/{self._tn()}/keys/{urllib.parse.quote(key_id)}/expire")
+        """Cleanup for an UN-spent enrollment key. Measured 2026-11-06: the verb is
+        DELETE /keys/{id} (→ 200 'null'); POST .../keys/{id}/expire is not a route."""
+        self._request("DELETE", f"/tailnet/{self._tn()}/keys/{urllib.parse.quote(key_id)}")
+        return {"expired": key_id}
