@@ -7,25 +7,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Gateway registry (SPEC §11): seed defaults (tailnet first), legacy-key migration, CRUD with
- * selection fixups, JSON round-trip, and the base-URL/token folds. Pure — mirrors exactly what
- * AppSettings persists.
+ * Gateway registry (SPEC §11/§11.4): seed defaults (tailnet-FQDN-ONLY — the LAN fallback was
+ * retired with the tunnel doctrine), legacy-key migration (fresh install stays EMPTY so the
+ * Pair screen opens), CRUD with selection fixups, JSON round-trip, and the base-URL/token folds.
+ * Pure — mirrors exactly what AppSettings persists.
  */
 class GatewayModelTest {
 
     @Test
-    fun `seed puts tailnet first lan second`() {
+    fun `seed is tailnet-FQDN only — no LAN default ships`() {
         val g = GatewayModel.seed("tok")
         assertEquals(GatewayModel.SEED_ID, g.id)
         assertEquals("hermes", g.label)
-        assertEquals(
-            listOf("http://hermes.tailnet.ts.net:8642", "http://192.168.1.50:8642"),
-            g.apiEndpoints,
-        )
-        assertEquals(
-            listOf("http://hermes.tailnet.ts.net:42651", "http://192.168.1.50:42651"),
-            g.watchkitEndpoints,
-        )
+        assertEquals(listOf("http://hermes.tailnet.ts.net:8642"), g.apiEndpoints)
+        assertEquals(listOf("http://hermes.tailnet.ts.net:42651"), g.watchkitEndpoints)
         assertEquals("tok", g.token)
     }
 
@@ -60,18 +55,20 @@ class GatewayModelTest {
     }
 
     @Test
-    fun `migrate fresh install seeds tailnet first`() {
+    fun `migrate fresh install leaves the registry EMPTY for the Pair screen`() {
+        // "tailnet only, always": an unenrolled watch must be TOLD (Pair screen), not shipped a
+        // silent placeholder — the empty list is the caller's null path (ensureGateways → Pair).
         val (list, selected) = GatewayModel.migrate("", "", "")
-        assertEquals(listOf(GatewayModel.seed("")), list)
-        assertEquals(GatewayModel.SEED_ID, selected)
+        assertTrue(list.isEmpty())
+        assertEquals("", selected)
     }
 
     @Test
-    fun `migrate stock default base url keeps tailnet-first order and migrates token`() {
+    fun `migrate stock default base url keeps the tailnet-only list and migrates token`() {
         val (list, selected) = GatewayModel.migrate("http://hermes.tailnet.ts.net:8642/p/wear", "SECRET", "http://hermes.tailnet.ts.net:42651")
         assertEquals(GatewayModel.SEED_ID, selected)
         val g = list.single()
-        assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, g.apiEndpoints) // tailnet FIRST, LAN second
+        assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, g.apiEndpoints) // tailnet ONLY
         assertEquals(GatewayModel.DEFAULT_WATCHKIT_ENDPOINTS, g.watchkitEndpoints)
         assertEquals("SECRET", g.token)
     }
@@ -98,10 +95,26 @@ class GatewayModelTest {
     }
 
     @Test
-    fun `migrate from explicit LAN still lands tailnet-first at home defaults`() {
-        val (list, _) = GatewayModel.migrate("http://192.168.1.50:8642/p/wear", "K", "")
-        val g = list.single()
-        assertEquals(listOf(GatewayModel.TAILNET_API, GatewayModel.LAN_API), g.apiEndpoints)
+    fun `the retired LAN placeholder still migrates as untouched (hashed)`() {
+        // Builds installed BEFORE the LAN default was deleted carry it in their mirror; the
+        // plaintext constant is gone but the SHA-256 stays, so those installs still migrate
+        // (seed, tailnet-only) rather than being mislabeled as a custom host.
+        val (list, selected) = GatewayModel.migrate("http://192.168.1.50:8642/p/wear", "K", "http://192.168.1.50:42651")
+        assertEquals(GatewayModel.SEED_ID, selected)
+        assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, list.single().apiEndpoints)
+        assertEquals(GatewayModel.DEFAULT_WATCHKIT_ENDPOINTS, list.single().watchkitEndpoints)
+    }
+
+    @Test
+    fun `a user-added LAN literal is a real custom host — it leads, tailnet follows`() {
+        // DELETE of the LAN DEFAULT never meant DELETE of LAN ENDPOINTS: any address the owner
+        // typed stays (dialed THROUGH the tunnel) and keeps the "what worked today" ordering.
+        val (list, selected) = GatewayModel.migrate("http://192.168.10.20:8642/p/wear", "K", "")
+        assertEquals("192-168-10-20", selected)
+        assertEquals(
+            listOf("http://192.168.10.20:8642", GatewayModel.TAILNET_API),
+            list.single().apiEndpoints,
+        )
     }
 
     @Test
@@ -111,7 +124,7 @@ class GatewayModelTest {
         assertEquals(selected, g.id)
         assertEquals("vps-example-com", g.id)
         assertEquals(
-            listOf("http://vps.example.com:8642", GatewayModel.TAILNET_API, GatewayModel.LAN_API),
+            listOf("http://vps.example.com:8642", GatewayModel.TAILNET_API),
             g.apiEndpoints,
         )
         assertTrue(g.watchkitEndpoints.first().startsWith("http://vps.example.com:42651"))
@@ -175,14 +188,14 @@ class GatewayModelTest {
     @Test
     fun `foldBaseUrl prepends unknown endpoint but never reorders known ones`() {
         val seed = listOf(GatewayModel.seed(""))
-        // Failover winner / agent switch re-sets base_url with an endpoint already on the list:
-        // order MUST stand (owner: tailnet default entry, LAN fallback).
-        val foldedLan = GatewayModel.foldBaseUrl(seed, GatewayModel.SEED_ID, "http://192.168.1.50:8642/p/wear")
-        assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, foldedLan.single().apiEndpoints)
-        // User types a brand-new host: that becomes the primary entry.
+        // Failover winner / agent switch re-sets base_url with the endpoint already on the list:
+        // order MUST stand (the re-set is mechanical, not an owner edit).
+        val foldedKnown = GatewayModel.foldBaseUrl(seed, GatewayModel.SEED_ID, "http://hermes.tailnet.ts.net:8642/p/wear")
+        assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, foldedKnown.single().apiEndpoints)
+        // User types a brand-new host (tailnet or a LAN literal riding the tunnel): it PREPENDS.
         val foldedNew = GatewayModel.foldBaseUrl(seed, GatewayModel.SEED_ID, "http://new.host:8642/p/wear")
         assertEquals(
-            listOf("http://new.host:8642", GatewayModel.TAILNET_API, GatewayModel.LAN_API),
+            listOf("http://new.host:8642", GatewayModel.TAILNET_API),
             foldedNew.single().apiEndpoints,
         )
         // No selection / junk URL: list stands.

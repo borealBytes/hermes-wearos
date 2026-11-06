@@ -240,6 +240,17 @@ class MainActivity : ComponentActivity() {
                 val gatewayLabel by WearApp.Graph.gatewayLabel.collectAsState()
 
                 var screen by remember { mutableStateOf(Screen.Chat) }
+                // FIRST-RUN / NEEDS_AUTH PAIR GATE (SPEC §4, "tailnet only, always"): an empty
+                // registry or any engine edge into NEEDS_AUTH routes the wrist to Settings —
+                // whose own collector lands the Pair page — instead of a chat with nothing to
+                // reach. When the packet lands (Graph.pairApplyPacket clears the flag), the
+                // wearer is handed back the chat.
+                val pairNow by WearApp.Graph.pairRequested.collectAsState()
+                var pairTookOver by remember { mutableStateOf(false) }
+                LaunchedEffect(pairNow) {
+                    if (pairNow) { screen = Screen.Settings; pairTookOver = true }
+                    else if (pairTookOver) { screen = Screen.Chat; pairTookOver = false }
+                }
                 var composing by remember { mutableStateOf(false) }
                 var draft by remember { mutableStateOf("") }
                 var showAgents by remember { mutableStateOf(false) }

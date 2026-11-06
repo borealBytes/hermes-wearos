@@ -8,8 +8,10 @@ import kotlinx.serialization.json.Json
  * One Hermes gateway the watch can reach (owner multi-gateway epic, SPEC §11). Endpoints are
  * ORDERED candidate bases WITHOUT the `/p/<agent>` suffix — the profile segment stays derived
  * exactly as before (ProfileLogic), so a gateway serves every agent on that host. The first
- * api/watchkit endpoint is the DEFAULT entry (tailnet first at home tailnet-fails fast → LAN
- * wins via Failover). `token` is the gateway's API_SERVER_KEY; the watchkit bearer stays a
+ * api/watchkit endpoint is the DEFAULT entry (Failover advances through the list in order).
+ * Under "tailnet only, always" (SPEC §11.4) every endpoint is reached THROUGH the embedded
+ * tunnel node — a user-added LAN literal is just another address the tunnel dials, never a
+ * shipped default. `token` is the gateway's API_SERVER_KEY; the watchkit bearer stays a
  * separate global setting (watchkit has its own token by design).
  */
 @Serializable
@@ -47,37 +49,39 @@ data class Gateway(
  * gateway list. No android.* imports — JVM-tested (GatewayModelTest).
  */
 object GatewayModel {
-    /** First-run example gateway: tailnet identity FIRST, home LAN as fallback (SPEC §11).
-     *  These are PLACEHOLDERS — replace them in Settings ▸ Gateways (or via watchos.config.json
-     *  + scripts/setup.sh) with your own host; every field is editable in-app. */
+    /** Migration/placeholder gateway: tailnet identity ONLY ("tailnet only, always",
+     *  SPEC §11.4 — the LAN fallback shipped pre-§11.4 is retired; a user-added LAN literal
+     *  is still accepted, it just rides the tunnel like every other address).
+     *  PLACEHOLDER — replace via Settings ▸ Gateways, Pair, or watchos.config.json
+     *  + scripts/setup.sh; every field is editable in-app. */
     const val SEED_ID = "hermes"
     const val SEED_LABEL = "hermes"
     const val TAILNET_API = "http://hermes.tailnet.ts.net:8642"
-    const val LAN_API = "http://192.168.1.50:8642"
     const val TAILNET_WATCHKIT = "http://hermes.tailnet.ts.net:42651"
-    const val LAN_WATCHKIT = "http://192.168.1.50:42651"
 
     // Stock URLs shipped by the pre-publication builds (the author's own box) are kept ONLY as
     // SHA-256 hashes, so neither the original machine name nor its tailnet/LAN addresses appear
     // anywhere in the public source. Migration treats a hash match as "untouched" exactly like
-    // the plaintext sets did; runtime behavior is unchanged.
+    // the plaintext sets did; runtime behavior is unchanged. The retired LAN placeholders live
+    // here too: an untouched old install still migrates as untouched even though no LAN default
+    // ships in plaintext any more.
     private val STOCK_API_HASHES = setOf(
         "b26b44efd05c19faedbd5013d468a3594dd0800b432787e154cfc5ad723b6613",  // pre-publication tailscale IP
         "bdd7614b75ac97eec1bb40244ee04826c30f7e0f3333d6c491542c807f6295e2",  // pre-publication tailnet FQDN
         "1c40e2aa2a7527905ed5d5e16f42693e95ddbbc5eee1d6d4a37cdafacd75d430",  // pre-publication LAN IP
+        "aed30e92d80bcd06b6eec83b56afab6ca68997f77153b4e323069aa872b2490b",  // retired LAN_API placeholder
     )
     private val STOCK_WATCHKIT_HASHES = setOf(
         "d48bff43b71e37f4520a2a134ce5c47b317429f601999d52646e6d3396a12e56", "0b36e3f4218c9a2145cb26de491c366c07001e322238f3318d6e57021e3dca86", "e69cee7ce67df00905ad523782622d1888dcfeeb022876154c18ddab752ec213",
+        "0dff167bc96cb76d28b0831c0cc6977a64a45bef745936dedbb070804ec38375",  // retired LAN_WATCHKIT placeholder
+        "024ac05609ff2a3375d39b9263297f61fe9c3bb38fb1a57ed1c0fe7cadff4064",  // retired LAN watchkit :8651
     )
 
     /** Stock defaults (all shipped builds) that migration treats as "untouched". */
-    private val STOCK_API = setOf(TAILNET_API, LAN_API)
+    private val STOCK_API = setOf(TAILNET_API)
     // The published example once used :8651 for watchkit (moved to :42651, SPEC §11.4) — builds
     // installed back then still carry those URLs and must migrate as untouched, not custom.
-    private val STOCK_WATCHKIT = setOf(
-        TAILNET_WATCHKIT, LAN_WATCHKIT,
-        "http://hermes.tailnet.ts.net:8651", "http://192.168.1.50:8651",
-    )
+    private val STOCK_WATCHKIT = setOf(TAILNET_WATCHKIT, "http://hermes.tailnet.ts.net:8651")
 
     private fun sha256hex(url: String): String =
         java.security.MessageDigest.getInstance("SHA-256")
@@ -90,10 +94,11 @@ object GatewayModel {
     private val json = Json { ignoreUnknownKeys = true }
     private val listSerializer = ListSerializer(Gateway.serializer())
 
-    val DEFAULT_API_ENDPOINTS = listOf(TAILNET_API, LAN_API)
-    val DEFAULT_WATCHKIT_ENDPOINTS = listOf(TAILNET_WATCHKIT, LAN_WATCHKIT)
+    /** Tailnet-FQDN-only defaults (SPEC §11.4): the tunnel is THE transport, nothing else ships. */
+    val DEFAULT_API_ENDPOINTS = listOf(TAILNET_API)
+    val DEFAULT_WATCHKIT_ENDPOINTS = listOf(TAILNET_WATCHKIT)
 
-    /** First-run gateway: tailnet URL is the DEFAULT entry, LAN the home fallback. */
+    /** Placeholder gateway for untouched installs: the tailnet URL is the ONLY DEFAULT entry. */
     fun seed(token: String = ""): Gateway =
         Gateway(SEED_ID, SEED_LABEL, DEFAULT_API_ENDPOINTS, DEFAULT_WATCHKIT_ENDPOINTS, token.trim())
 
@@ -130,10 +135,12 @@ object GatewayModel {
      * watchkit_url) into the gateway registry. Legacy keys are NEVER removed — they stay the
      * live mirror (syncMirror writes them), so the watch keeps working either way.
      *
-     * Rules (owner-locked):
-     *  - untouched/stock values (or fresh install) → seed(): tailnet first, LAN fallback;
+     * Rules (owner-locked, tailnet-only doctrine SPEC §11.4):
+     *  - fresh install (no legacy endpoint at all) → EMPTY registry: the caller opens the
+     *    Pair screen instead of silently seeding a placeholder the tunnel cannot reach;
+     *  - untouched/stock placeholder values → seed(): tailnet-FQDN-only defaults;
      *  - a CUSTOM host keeps its endpoint FIRST (what worked today keeps working first), the
-     *    known defaults follow so tailnet/LAN failover still applies;
+     *    tailnet default follows so failover still applies through the tunnel;
      *  - token migrates verbatim onto the gateway.
      */
     fun migrate(
@@ -144,7 +151,8 @@ object GatewayModel {
         val token = legacyToken.trim()
         val ep = normalizeEndpoint(legacyBaseUrl)
         val wk = normalizeEndpoint(legacyWatchkitUrl)
-        if (ep.isEmpty() || isStockApi(ep)) {
+        if (ep.isEmpty()) return emptyList<Gateway>() to "" // fresh install → Pair screen, no placeholder
+        if (isStockApi(ep)) {
             val g = seed(token)
             val withWk = if (wk.isNotEmpty() && !isStockWatchkit(wk))
                 g.copy(watchkitEndpoints = (listOf(wk) + g.watchkitEndpoints).distinct()) else g

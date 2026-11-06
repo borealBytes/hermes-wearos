@@ -31,6 +31,15 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 
 /** Gateway connection settings, Keystore-friendly store later (M2+); DataStore for now. */
 class AppSettings(private val context: Context) {
+    /**
+     * Debuggable APK — the ONLY build that may take the tailnet OFF ("tailnet only, always",
+     * SPEC §11.4). The pref key `tailnet_enabled` stays (dev builds + the debug DevAskReceiver's
+     * `-e tailnet_on off` ride it); on release this flag makes tailnetEnabled() answer true no
+     * matter what the pref holds, so the tunnel cannot be silently off in a user's hand.
+     */
+    private val debuggable: Boolean =
+        (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
     companion object {
         private val KEY_BASE_URL = stringPreferencesKey("base_url")
         private val KEY_TOKEN = stringPreferencesKey("token")
@@ -51,13 +60,17 @@ class AppSettings(private val context: Context) {
         private val KEY_ACTIVE_CHAT = stringPreferencesKey("active_chat")
         private val KEY_WATCHKIT_URL = stringPreferencesKey("watchkit_url")
         private val KEY_WATCHKIT_TOKEN = stringPreferencesKey("watchkit_token")
-        // EMBEDDED TAILNET (SPEC §11.4): the watch's OWN tsnet node — the tunnel is the only
-        // transport ("tailnet only, always", owner 2026-11-02). The key enrolls a fresh node
-        // only; identity lives in filesDir/tailnet once enrolled. Enabled=false = plain sockets
-        // (dev escape hatch, not a user mode).
+        // EMBEDDED TAILNET accessors (SPEC §11.4). Release doctrine is "tailnet only, always":
+        // tailnetEnabled() answers TRUE on non-debuggable builds no matter what the pref holds —
+        // the KEY stays (dev builds + the `-e tailnet_on off` escape hatch ride it) but it is
+        // DEV-ONLY INPUT, never a release user mode. With no key the engine still runs and reports
+        // NEEDS_AUTH (the Pair screen); silent plain-socket operation is not a thing.
         private val KEY_TAILNET_KEY = stringPreferencesKey("tailnet_key")
         private val KEY_TAILNET_HOSTNAME = stringPreferencesKey("tailnet_hostname")
         private val KEY_TAILNET_ENABLED = booleanPreferencesKey("tailnet_enabled")
+        // The tailnet handle (tailnet NAME, e.g. "lab") remembered for the Pair screen's funnel
+        // URL pair.<handle>.ts.net — one-time input, kept after pairing for re-pairing.
+        private val KEY_TAILNET_HANDLE = stringPreferencesKey("tailnet_handle")
         private val KEY_AGENTS_CACHE = stringPreferencesKey("agents_cache_json")
         private val KEY_SESSIONS_CACHE = stringPreferencesKey("gw_sessions_json")
         private val KEY_SESSIONS_TS = longPreferencesKey("gw_sessions_ts")
@@ -77,7 +90,8 @@ class AppSettings(private val context: Context) {
         private val KEY_BODY_LOC = booleanPreferencesKey("body_watch_location")
 
         // Example default: tailnet hostname placeholder + wear profile — edit in-app or via
-        // scripts/setup.sh; production path is the pairing flow (S5). Mirrors GatewayModel.seed().
+        // scripts/setup.sh; the production path is the Pair flow (Settings ▸ Gateways ▸ Pair, S5).
+        // Mirrors GatewayModel.seed() — tailnet-FQDN-only since §11.4 shipped.
         const val DEFAULT_BASE_URL = "http://hermes.tailnet.ts.net:8642/p/wear"
         // watchkit helper daemon (server/watchkit): mermaid render + whisper STT, tailnet-only.
         const val DEFAULT_WATCHKIT_URL = "http://hermes.tailnet.ts.net:42651"
@@ -117,12 +131,23 @@ class AppSettings(private val context: Context) {
     // EMBEDDED TAILNET accessors (SPEC §11.4).
     suspend fun tailnetKey(): String = context.dataStore.data.first()[KEY_TAILNET_KEY] ?: ""
     suspend fun tailnetHostname(): String = context.dataStore.data.first()[KEY_TAILNET_HOSTNAME] ?: DEFAULT_TAILNET_HOSTNAME
-    suspend fun tailnetEnabled(): Boolean = context.dataStore.data.first()[KEY_TAILNET_ENABLED] ?: true
+    /**
+     * Force-ON in release ("tailnet only, always"): only a DEBUGGABLE build may ride the
+     * plain-sockets escape hatch, so on release the persisted flag is ignored and true stands.
+     */
+    suspend fun tailnetEnabled(): Boolean =
+        !debuggable || (context.dataStore.data.first()[KEY_TAILNET_ENABLED] ?: true)
     suspend fun setTailnetKey(v: String) { context.dataStore.edit { it[KEY_TAILNET_KEY] = v.trim() } }
     suspend fun setTailnetHostname(v: String) {
         context.dataStore.edit { it[KEY_TAILNET_HOSTNAME] = v.trim().ifEmpty { DEFAULT_TAILNET_HOSTNAME } }
     }
     suspend fun setTailnetEnabled(v: Boolean) { context.dataStore.edit { it[KEY_TAILNET_ENABLED] = v } }
+
+    /** Pair screen's funnel input: the tailnet handle, normalized (PairingCode) and remembered. */
+    suspend fun tailnetHandle(): String = context.dataStore.data.first()[KEY_TAILNET_HANDLE] ?: ""
+    suspend fun setTailnetHandle(v: String) {
+        context.dataStore.edit { it[KEY_TAILNET_HANDLE] = dev.hermes.wearos.domain.PairingCode.normalizeHandle(v) }
+    }
 
     suspend fun setBaseUrl(v: String, foldRegistry: Boolean = true) {
         val t = v.trim().trimEnd('/')

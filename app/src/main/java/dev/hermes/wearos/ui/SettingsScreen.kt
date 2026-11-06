@@ -71,6 +71,7 @@ import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
 import dev.hermes.wearos.domain.NetworkWatch
+import dev.hermes.wearos.domain.PairingCode
 import dev.hermes.wearos.domain.RouteReport
 import dev.hermes.wearos.domain.TailnetLogic
 import dev.hermes.wearos.domain.TailnetPhase
@@ -78,10 +79,12 @@ import dev.hermes.wearos.health.BodySnapshot
 import dev.hermes.wearos.health.BodyTools
 import dev.hermes.wearos.location.LocationTool
 import dev.hermes.wearos.net.HermesApi
+import dev.hermes.wearos.net.PairingClient
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.voice.SpeakAloud
 import dev.hermes.wearos.voice.VoskStt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -115,6 +118,14 @@ fun SettingsScreen(
     var tnTesting by remember { mutableStateOf(false) }
     var tnTestResult by remember { mutableStateOf("") }
     var tnReenrollArmed by remember { mutableStateOf(false) }
+    // PAIR page state (S5, SPEC §4): the funnel handle, the watch-minted PIN + its clock, and
+    // the funnel's last word. pairAttempt++ is the knock trigger for the claim LaunchedEffect.
+    var pairHandle by remember { mutableStateOf("") }
+    var pairPin by remember { mutableStateOf(PairingCode.mint()) }
+    var pairMintedAt by remember { mutableStateOf(System.currentTimeMillis()) }
+    var pairStatus by remember { mutableStateOf("type your tailnet handle, then knock") }
+    var pairBusy by remember { mutableStateOf(false) }
+    var pairAttempt by remember { mutableStateOf(0) }
     var testResult by remember { mutableStateOf("…") }
     var testing by remember { mutableStateOf(false) }
     var wkResult by remember { mutableStateOf("") }
@@ -177,6 +188,38 @@ fun SettingsScreen(
     // just wrapped in `if (page == …)` — same state, same prefs, same behavior.
     var page by remember { mutableStateOf(SettingsPage.Root) }
     androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = page.up() }
+    // PAIR GATE (S5): first launch (empty registry) and engine edges into NEEDS_AUTH request
+    // the Pair screen — this edge lands the page. Cleared on packet arrival (Graph.pairApplyPacket).
+    val pairNow by WearApp.Graph.pairRequested.collectAsState()
+    LaunchedEffect(pairNow) { if (pairNow) page = SettingsPage.Pair }
+    // KNOCK + POLL the funnel (client.claim owns the backoff; a 429 never burns the PIN).
+    LaunchedEffect(pairAttempt) {
+        if (pairAttempt == 0) return@LaunchedEffect
+        val h = PairingCode.normalizeHandle(pairHandle)
+        if (h.isEmpty()) { pairStatus = "⚠️ set your tailnet handle first"; return@LaunchedEffect }
+        settings.setTailnetHandle(h)
+        pairBusy = true
+        pairStatus = "knocking on pair.$h.ts.net…"
+        val out = withContext(Dispatchers.IO) { PairingClient().claim(h, pairPin, android.os.Build.MODEL) }
+        pairBusy = false
+        pairStatus = when (out) {
+            is PairingClient.Outcome.Claimed -> {
+                WearApp.Graph.pairApplyPacket(out.packet)
+                "claimed ✓ — enrolling over the tunnel"
+            }
+            PairingClient.Outcome.Gone -> "that PIN is spent — tap New PIN"
+            PairingClient.Outcome.RateLimited -> "too many tries (429) — the PIN holds, knock again"
+            PairingClient.Outcome.Pending -> "still waiting on the PC — knock again any time"
+            PairingClient.Outcome.Queued -> "knocked — waiting for hermes watch pair"
+            is PairingClient.Outcome.Failed -> "⚠️ ${out.why}"
+        }
+    }
+    // The 5-min TTL (SPEC §4): when it dies, the screen says so instead of polling a dead PIN.
+    LaunchedEffect(pairPin) {
+        val left = PairingCode.TTL_MS - (System.currentTimeMillis() - pairMintedAt)
+        if (left > 0) delay(left + 50)
+        if (!pairBusy && pairAttempt > 0) pairStatus = "PIN expired — tap New PIN"
+    }
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
     val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
     val sttPresent = remember { VoskStt.isModelPresent(context) }
@@ -202,6 +245,7 @@ fun SettingsScreen(
         tnEnabled = settings.tailnetEnabled()
         tnKey = settings.tailnetKey()
         tnHost = settings.tailnetHostname()
+        pairHandle = settings.tailnetHandle()
     }
 
     /** Host of the active gateway endpoint — the peer the tailnet phase is judged against. */
@@ -523,6 +567,9 @@ fun SettingsScreen(
             val tnSt by WearApp.Graph.tailnetStatus.collectAsState()
             val tnPhase = TailnetLogic.phase(tnSt, tnEnabled, settingsGwHost())
             SettingNavRow("🕸️", "Tailnet", TailnetLogic.describe(tnPhase, tnSt, settingsGwHost())) { page = SettingsPage.Tailnet }
+            // PAIR (SPEC §4 / S5): like Tailnet, it hangs UNDER Gateways — its whole job is
+            // filling this registry (key + endpoints + token) from the plugin's claim funnel.
+            SettingNavRow("🤝", "Pair", "PIN up · gateway claim from your tailnet") { page = SettingsPage.Pair }
         }
         if (page == SettingsPage.Tailnet) {
         // ─── TAILNET (SPEC §11.4): the watch's own node is THE transport ─────────────────
@@ -549,12 +596,17 @@ fun SettingsScreen(
                 color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Use tailnet", style = MaterialTheme.typography.caption1)
-            Switch(
-                checked = tnEnabled,
-                onCheckedChange = { v -> tnEnabled = v; WearApp.Graph.tailnetSetEnabled(v) },
-            )
+        // DEBUGGABLE BUILDS ONLY ("tailnet only, always"): release force-ON (AppSettings ignores
+        // the pref on non-debuggable APKs), so the OFF switch — the plain-sockets escape hatch —
+        // is dev input by definition and hiding it is the honest UI for that.
+        if (WearApp.Graph.isDebugBuild) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Use tailnet", style = MaterialTheme.typography.caption1)
+                Switch(
+                    checked = tnEnabled,
+                    onCheckedChange = { v -> tnEnabled = v; WearApp.Graph.tailnetSetEnabled(v) },
+                )
+            }
         }
         FieldLabel("Node name")
         EditLine(
@@ -634,8 +686,69 @@ fun SettingsScreen(
             )
         }
         Text(
-            "Every ask rides the tunnel — no LAN, no phone. Node state lives on this watch; " +
-                "a Re-enroll spends a key and leaves the old node for pruning in the admin.",
+            "Every ask rides the tunnel — no LAN, no phone, and no switch to turn it off: " +
+                "the tunnel is THE transport. Node state lives on this watch; a Re-enroll " +
+                "spends a key and leaves the old node for pruning in the admin." +
+                if (WearApp.Graph.isDebugBuild) " The switch above is the dev escape hatch (off = plain sockets)." else "",
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+        )
+        }
+        if (page == SettingsPage.Pair) {
+        // ─── PAIR (SPEC §4 onboarding, S5): the bootstrap door ───────────────────────────
+        // The watch mints a one-shot 6-digit PIN (5-min TTL, re-mintable) and knocks the plugin's
+        // funnel over plain HTTPS (the ONLY no-tunnel client, net/PairingClient). The PC's
+        // `hermes watch pair` answers the claim; the packet carries authkey + endpoints + keys and
+        // lands through Graph.pairApplyPacket — the Tailnet Done-handler's sequence, extended.
+        // IME rule holds: the handle EditLine saves on Done AND on the Save button.
+        FieldLabel("Tailnet handle")
+        EditLine(
+            value = pairHandle,
+            onChange = { pairHandle = it },
+            placeholder = "your-tailnet-name",
+            onDone = { scope.launch { settings.setTailnetHandle(pairHandle) } },
+        )
+        Button(
+            onClick = { scope.launch { settings.setTailnetHandle(pairHandle) } },
+            modifier = Modifier.size(width = 72.dp, height = 32.dp),
+        ) { Text("Save", style = MaterialTheme.typography.button) }
+        FieldLabel("Your PIN (5 min)")
+        Text(
+            pairPin,
+            style = MaterialTheme.typography.title2.copy(letterSpacing = 8.sp),
+            color = MaterialTheme.colors.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            if (pairBusy) "…" else pairStatus,
+            style = MaterialTheme.typography.caption2,
+            color = when {
+                pairStatus.startsWith("⚠️") || pairStatus.startsWith("that PIN") || pairStatus.startsWith("PIN expired") -> Color(0xFFE57373)
+                pairStatus.startsWith("claimed") -> Color(0xFF81C784)
+                else -> MaterialTheme.colors.onBackground.copy(alpha = 0.7f)
+            },
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { if (!pairBusy) pairAttempt++ },
+                modifier = Modifier.size(width = 84.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.85f)),
+            ) { Text(if (pairBusy) "…" else "Knock", style = MaterialTheme.typography.button) }
+            Button(
+                onClick = {
+                    pairPin = PairingCode.mint(); pairMintedAt = System.currentTimeMillis()
+                    pairStatus = "new PIN — knock when ready"
+                },
+                modifier = Modifier.size(width = 84.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+            ) { Text("New PIN", style = MaterialTheme.typography.button) }
+        }
+        Text(
+            "On the PC: hermes watch pair — it types this PIN once. The claim is served exactly " +
+                "once, the funnel is reached BEFORE any tunnel exists, and the authkey never appears in a log.",
             style = MaterialTheme.typography.caption2,
             color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
         )
@@ -1351,7 +1464,7 @@ private fun GatewayEditor(
             placeholder = "http://hermes.tailnet.ts.net:8642", onDone = { onSave(draft) })
         FieldLabel("API backup (optional)")
         EditLine(value = draft.apiB, onChange = { onChange(draft.copy(apiB = it)) },
-            placeholder = "http://192.168.1.50:8642", onDone = { onSave(draft) })
+            placeholder = "http://hermes2.tailnet.ts.net:8642", onDone = { onSave(draft) })
         if (draft.extraApis.isNotEmpty() || draft.extraWks.isNotEmpty()) {
             // Reassurance the hidden endpoints ride along (they used to be silently dropped).
             Text("+${draft.extraApis.size} api / +${draft.extraWks.size} wk kept",
@@ -1745,6 +1858,9 @@ enum class SettingsPage(val title: String) {
     // The watch's own tailnet node (SPEC §11.4): like agent keys, it belongs UNDER Gateways —
     // the tunnel exists to reach them.
     Tailnet("Tailnet"),
+    // S5 (SPEC §4): the PIN + funnel bootstrap that FILLS the registry — fresh installs and every
+    // NEEDS_AUTH edge route the wrist here ("tailnet only, always": unenrolled = told, not silent).
+    Pair("Pair"),
     Display("Display"),
     Watch("Watch"),
     Voice("Voice out"),
@@ -1758,9 +1874,11 @@ enum class SettingsPage(val title: String) {
     About("About"),
 }
 
-/** Back-target per page: Agent keys and Tailnet return to Gateways, everything else to the hub. */
+/** Back-target per page: Agent keys, Tailnet, and Pair return to Gateways; everything else to the hub. */
 private fun SettingsPage.up(): SettingsPage =
-    if (this == SettingsPage.AgentKeys || this == SettingsPage.Tailnet) SettingsPage.Gateways else SettingsPage.Root
+    if (this == SettingsPage.AgentKeys || this == SettingsPage.Tailnet || this == SettingsPage.Pair)
+        SettingsPage.Gateways
+    else SettingsPage.Root
 
 @Composable
 private fun SettingNavRow(emoji: String, title: String, subtitle: String, onClick: () -> Unit) {

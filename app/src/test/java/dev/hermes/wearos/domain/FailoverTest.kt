@@ -9,14 +9,14 @@ import org.junit.Test
 
 /**
  * Endpoint failover state machine (SPEC §11) driven by a FAKE prober + FAKE clock: the exact
- * home scenario — tailnet endpoint first, dead until timeout; LAN answers; winner is remembered;
+ * failover scenario — first endpoint dead until timeout; the backup answers; winner is remembered;
  * primary gets its short-backoff retry; mid-session failures advance the list.
  */
 class FailoverTest {
 
     private val tailnet = "http://hermes.tailnet.ts.net:8642"
-    private val lan = "http://192.168.1.50:8642"
-    private val endpoints = listOf(tailnet, lan)
+    private val backup = "http://hermes2.tailnet.ts.net:8642"
+    private val endpoints = listOf(tailnet, backup)
 
     private class Fake(val name: String) : Exception(name)
 
@@ -45,13 +45,13 @@ class FailoverTest {
     }
 
     @Test
-    fun `tailnet dead lan alive at home - lan wins after one fast failure`() {
+    fun `primary tailnet dead backup alive - backup wins after one fast failure`() {
         val probed = mutableListOf<String>()
         val f = machine(now = { 0L })
-        val winner = f.go { url -> probed += url; url == lan }
-        assertEquals(lan, winner)
-        assertEquals(listOf(tailnet, lan), probed) // advance order = endpoint order
-        assertEquals(lan, f.effective())
+        val winner = f.go { url -> probed += url; url == backup }
+        assertEquals(backup, winner)
+        assertEquals(listOf(tailnet, backup), probed) // advance order = endpoint order
+        assertEquals(backup, f.effective())
         assertTrue(f.describe().contains("primary"))
         assertTrue(f.describe().contains("down"))
     }
@@ -61,10 +61,10 @@ class FailoverTest {
         var probes = 0
         var now = 0L
         val f = machine(now = { now })
-        assertEquals(lan, f.go { probes++; it == lan })
+        assertEquals(backup, f.go { probes++; it == backup })
         assertEquals(2, probes)
         now = 10_000L // well inside reprobe + primary-retry windows
-        assertEquals(lan, f.go { probes++; true })
+        assertEquals(backup, f.go { probes++; true })
         assertEquals("sticky winner must not re-probe", 2, probes)
         assertFalse(f.needsProbe(now))
     }
@@ -75,8 +75,8 @@ class FailoverTest {
         val probed = mutableListOf<String>()
         val f = Failover(endpoints, clock = { now })
         // Home scenario: fallback wins at t=0.
-        assertEquals(lan, f.go { url -> probed += url; url == lan })
-        assertEquals(listOf(tailnet, lan), probed)
+        assertEquals(backup, f.go { url -> probed += url; url == backup })
+        assertEquals(listOf(tailnet, backup), probed)
         // Within backoff: no retry churn.
         now = 30_000L
         assertFalse(f.needsProbe(now))
@@ -84,14 +84,14 @@ class FailoverTest {
         now = 61_000L
         assertTrue(f.needsProbe(now))
         probed.clear()
-        assertEquals(lan, f.go { url -> probed += url; url == lan })
+        assertEquals(backup, f.go { url -> probed += url; url == backup })
         assertEquals("primary must be retried first", tailnet, probed.first())
         // Still dead: primary re-armed for another window — next cycle probes it once more,
-        // and the LAN winner is found WITHOUT re-probing the whole list.
+        // and the backup winner is found WITHOUT re-probing the whole list.
         probed.clear()
         now = 122_000L
-        assertEquals(lan, f.go { url -> probed += url; url == lan })
-        assertEquals(listOf(tailnet, lan), probed)
+        assertEquals(backup, f.go { url -> probed += url; url == backup })
+        assertEquals(listOf(tailnet, backup), probed)
     }
 
     @Test
@@ -99,7 +99,7 @@ class FailoverTest {
         var now = 0L
         var tailnetUp = false
         val f = Failover(endpoints, clock = { now })
-        assertEquals(lan, f.go { url -> url == lan })
+        assertEquals(backup, f.go { url -> url == backup })
         now = 61_000L
         tailnetUp = true
         assertEquals(tailnet, f.go { url -> url == tailnet })
@@ -118,37 +118,37 @@ class FailoverTest {
         // …then the socket dies mid-chat (SPEC §11 advance-on-timeout).
         f.reportNetworkFailure(tailnet, now = 5_000L)
         assertNull(f.winner)
-        val next = f.go { url -> probed += url; url == lan }
-        assertEquals(lan, next)
-        assertEquals(listOf(tailnet, lan), probed) // ordered advance
+        val next = f.go { url -> probed += url; url == backup }
+        assertEquals(backup, next)
+        assertEquals(listOf(tailnet, backup), probed) // ordered advance
     }
 
     @Test
     fun `non-winner failure does not disturb a healthy winner`() {
         val f = machine(now = { 0L })
-        f.onSuccess(lan, now = 0L)
+        f.onSuccess(backup, now = 0L)
         f.onFailure(tailnet, now = 0L) // the dead primary recorded for the dots
-        assertEquals(lan, f.winner)
-        assertEquals(mapOf(lan to true, tailnet to false), f.lastResult)
+        assertEquals(backup, f.winner)
+        assertEquals(mapOf(backup to true, tailnet to false), f.lastResult)
     }
 
     @Test
     fun `all endpoints dead keeps the previous winner standing`() {
         var now = 0L
         val f = Failover(endpoints, clock = { now })
-        assertEquals(lan, f.go { url -> url == lan })
+        assertEquals(backup, f.go { url -> url == backup })
         // Later everything is down (VPN flap, gateway restart storm):
         now = 400_000L // past reprobe ttl
         val kept = f.go { false }
-        assertEquals("stale pointer beats a null one", lan, kept)
+        assertEquals("stale pointer beats a null one", backup, kept)
         assertFalse(f.isWinner(tailnet))
     }
 
     @Test
     fun `force ensure always re-probes and can move the winner`() {
-        var up = lan
+        var up = backup
         val f = machine(now = { 0L })
-        assertEquals(lan, f.go { url -> url == up })
+        assertEquals(backup, f.go { url -> url == up })
         up = tailnet
         assertEquals(tailnet, f.go(force = true) { url -> url == up })
         assertEquals(tailnet, f.winner)
@@ -168,8 +168,8 @@ class FailoverTest {
         val probed = mutableListOf<String>()
         val f = machine(now = { 0L })
         val winner = f.go { url -> probed += url; if (url == tailnet) throw Fake("timeout"); true }
-        assertEquals(lan, winner)
-        assertEquals(listOf(tailnet, lan), probed)
+        assertEquals(backup, winner)
+        assertEquals(listOf(tailnet, backup), probed)
     }
 
     @Test
@@ -179,7 +179,7 @@ class FailoverTest {
         val winner = f.go { url -> url == vps }
         assertEquals(vps, winner)
         // Primary-retry order after backoff keeps list order for the rest:
-        assertEquals(listOf(tailnet, lan, vps), f.probeOrder(61_000L))
+        assertEquals(listOf(tailnet, backup, vps), f.probeOrder(61_000L))
     }
 
     // ── lastKnownGood / fallbackPointer: SPEC §11.5, the "couldn't connect over tailnet" bug ──
@@ -187,14 +187,14 @@ class FailoverTest {
     @Test
     fun `dethroned winner stays the pointer - a never-answered primary must not outrank it`() {
         val f = machine(now = { 0L })
-        assertEquals(lan, f.go { url -> url == lan }) // home: tailnet entry is DNS-dead, LAN serves
-        f.reportNetworkFailure(lan, now = 5_000L)    // a plain LAN hiccup dethrones the winner
+        assertEquals(backup, f.go { url -> url == backup }) // the primary entry is DNS-dead, backup serves
+        f.reportNetworkFailure(backup, now = 5_000L)    // a plain link hiccup dethrones the winner
         assertNull(f.winner)
-        // advanceFrom must NOT be handed the tailnet name: on a watch outside the tailnet that is a
-        // host DNS can never resolve, so the "recovery" was a guaranteed second failure whose text
-        // the owner read as "tailnet broken" while sitting on Wi-Fi.
-        assertEquals(lan, f.fallbackPointer())
-        assertEquals(lan, f.effective())
+        // advanceFrom must NOT be handed a never-answered primary: a name the tunnel cannot
+        // resolve right now is a guaranteed second failure whose text the wearer reads as
+        // "tailnet broken" while the thing that just answered sits unused.
+        assertEquals(backup, f.fallbackPointer())
+        assertEquals(backup, f.effective())
     }
 
     @Test
@@ -211,13 +211,13 @@ class FailoverTest {
     fun `total outage after a good run keeps pointing at what answered`() {
         var now = 0L
         val f = Failover(endpoints, clock = { now })
-        assertEquals(lan, f.go { url -> url == lan })
+        assertEquals(backup, f.go { url -> url == backup })
         now = 400_000L
-        f.reportNetworkFailure(lan, now)
+        f.reportNetworkFailure(backup, now)
         assertNull(f.go { false })               // VPN flap: every candidate dead
-        assertEquals(lan, f.lastKnownGood)
-        assertEquals(lan, f.fallbackPointer())
-        assertEquals(lan, f.effective())
+        assertEquals(backup, f.lastKnownGood)
+        assertEquals(backup, f.fallbackPointer())
+        assertEquals(backup, f.effective())
     }
 
     @Test
@@ -225,11 +225,11 @@ class FailoverTest {
         // bound per GATEWAY and its winner is the endpoint, not the /p/<profile> suffix — switching
         // agents reuses it, so no profile can pick its own route or poison another's.
         val f = machine(now = { 0L })
-        val baseForComfyui = GatewayModel.apiBase(lan, "comfyui")
-        val baseForWear = GatewayModel.apiBase(lan, "wear")
-        assertEquals(lan, f.go { url -> url == lan })
-        assertEquals("$lan/p/comfyui", baseForComfyui)
-        assertEquals("$lan/p/wear", baseForWear)
+        val baseForComfyui = GatewayModel.apiBase(backup, "comfyui")
+        val baseForWear = GatewayModel.apiBase(backup, "wear")
+        assertEquals(backup, f.go { url -> url == backup })
+        assertEquals("$backup/p/comfyui", baseForComfyui)
+        assertEquals("$backup/p/wear", baseForWear)
         assertEquals(f.effective(), GatewayModel.normalizeEndpoint(baseForComfyui))
         assertEquals(f.effective(), GatewayModel.normalizeEndpoint(baseForWear))
     }
@@ -239,11 +239,11 @@ class FailoverTest {
     @Test
     fun `network change dethrones the winner at once but keeps the pointer`() {
         val f = machine(now = { 0L })
-        assertEquals(lan, f.go { url -> url == lan }) // learned at home
+        assertEquals(backup, f.go { url -> url == backup }) // learned at home
         f.invalidate(now = 1_000L) // walk out: the tether attaches, no request has failed yet
         assertNull("a winner learned on a dead network must not stay the crown", f.winner)
-        assertEquals("…but the thing that answered is still the best pointer", lan, f.lastKnownGood)
-        assertEquals(lan, f.effective())
+        assertEquals("…but the thing that answered is still the best pointer", backup, f.lastKnownGood)
+        assertEquals(backup, f.effective())
         assertTrue("the next ensure must probe, not ride a 5-minute TTL learned elsewhere", f.needsProbe(1_000L))
     }
 
@@ -252,8 +252,8 @@ class FailoverTest {
         var now = 0L
         val probed = mutableListOf<String>()
         val f = Failover(endpoints, clock = { now })
-        assertEquals(lan, f.go { url -> probed += url; url == lan })
-        // On the tether behind an exit-node phone, the tailnet entry is the RIGHT answer (§11.5).
+        assertEquals(backup, f.go { url -> probed += url; url == backup })
+        // Once the link moves and the node re-attaches, the primary tailnet entry is the RIGHT answer (§11.6).
         now = 5_000L
         f.invalidate(now)
         probed.clear()

@@ -99,6 +99,26 @@ class WearApp : Application() {
         private val _gatewaySelectedId = MutableStateFlow("")
         val gatewaySelectedId: kotlinx.coroutines.flow.StateFlow<String> = _gatewaySelectedId
 
+        /**
+         * PAIR SCREEN REQUEST (S5, SPEC §4): true while the wrist should be looking at
+         * Settings ▸ Gateways ▸ Pair — fresh install (empty registry) or an engine edge into
+         * NEEDS_AUTH (no silent plain-socket operation; an unenrolled watch says so). Cleared
+         * when a pairing packet lands (or the wearer closes it; the next NEEDS_AUTH re-arms it).
+         */
+        private val _pairRequested = MutableStateFlow(false)
+        val pairRequested: kotlinx.coroutines.flow.StateFlow<Boolean> = _pairRequested
+        fun pairScreenSeen() { _pairRequested.value = false }
+
+        /**
+         * True on debuggable builds — the ONLY builds allowed to take the tailnet OFF
+         * (Settings ▸ Tailnet's switch + `-e tailnet_on off`). Release is force-ON
+         * ("tailnet only, always", SPEC §11.4). FLAG_DEBUGGABLE, not BuildConfig.DEBUG: the app
+         * module does not generate BuildConfig, and this tracks the actual installed APK anyway.
+         */
+        val isDebugBuild: Boolean
+            get() = ::app.isInitialized &&
+                (app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
         private suspend fun refreshGatewayMirror() {
             _gatewayList.value = settings.gateways()
             _gatewaySelectedId.value = settings.selectedGatewayId()
@@ -377,9 +397,14 @@ class WearApp : Application() {
                 }
                 // Queued AFTER Watchkit.setConfig so the first /agents fetch carries the real token.
                 scope.launch {
-                    val gw = settings.ensureGateways() // one-time seed/migrate (never loses old keys)
+                    // One-time seed/migrate (never loses old keys). An EMPTY registry is the
+                    // legitimate fresh-install state now: no placeholder is seeded, the Pair
+                    // screen opens instead ("tailnet only, always" — an unenrolled watch is told,
+                    // not shipped a silent LAN default).
+                    val gw = settings.ensureGateways()
                     settings.loadProfile()
                     if (gw != null) { endpoints.bind(gw); endpoints.ensure(false) } // background probe: tailnet-first
+                    else _pairRequested.value = true
                     refreshGatewayMirror()
                     agents.loadCache()
                     agents.refresh()
@@ -393,14 +418,12 @@ class WearApp : Application() {
                 // Attention bit → complication prefs + requestUpdateAll (single hook, SPEC §5 U4).
                 scope.launch { store.chats.collect { chats -> Attention.publish(app, chats.any { it.pendingAttention }) } }
                 // TUNNEL KEEPER (SPEC §11.4 "tailnet only, always"): start the embedded node NOW
-                // so the tunnel predates the first ask; no-op when disabled/keyless (the service
-                // reads prefs and stops itself). The boot receiver covers cold boots.
+                // so the tunnel predates the first ask. NO KEY GATE: keyless, the engine runs to
+                // NEEDS_AUTH and the Pair screen opens — the watch never drifts into silent
+                // plain-socket operation (release cannot even turn the keeper off). The boot
+                // receiver covers cold boots.
                 scope.launch {
-                    if (settings.tailnetEnabled() && settings.tailnetKey().isNotEmpty()) {
-                        androidx.core.content.ContextCompat.startForegroundService(
-                            app, Intent(app, dev.hermes.wearos.notify.TailnetService::class.java),
-                        )
-                    }
+                    if (settings.tailnetEnabled()) tailnetStart()
                 }
                 // THE TUNNEL GATES THE TRUTH (SPEC §11.4): the boot probe below races node
                 // enrollment and can legitimately fail every .ts.net entry BEFORE the node is
@@ -415,6 +438,11 @@ class WearApp : Application() {
                             enabled = settings.tailnetEnabled(),
                             gatewayHost = runCatching { android.net.Uri.parse(settings.baseUrl()).host.orEmpty() }.getOrDefault(""),
                         )
+                        // NEEDS_AUTH EDGE → the Pair screen (doctrine: unenrolled = told, not
+                        // silently degraded). Only the EDGE fires — a held NEEDS_AUTH must not
+                        // yank the wearer out of Settings every status poll.
+                        if (phase == TailnetPhase.NEEDS_AUTH && last != null && last != TailnetPhase.NEEDS_AUTH)
+                            _pairRequested.value = true
                         if (phase != last && (phase == TailnetPhase.ACTIVE || last == TailnetPhase.ACTIVE)) {
                             last = phase
                             if (hasEndpoints()) {
@@ -658,6 +686,48 @@ class WearApp : Application() {
         fun tailnetReenroll() = scope.launch {
             TailnetEngine.reEnroll(app, settings.tailnetHostname(), settings.tailnetKey())
             Log.i(TAG, "tailnet reenroll kicked (old node stays in admin until pruned)")
+        }
+
+        /**
+         * APPLY A PAIRING PACKET (S5, SPEC §4): the EXACT write sequence of the Settings ▸ Tailnet
+         * Done-handler (setTailnetKey → tailnetStart), extended for everything the plugin's claim
+         * packet carries — node name (per-profile `<profile>-watch` suffix, AGENTS.md §2), the
+         * profile's api_key as the gateway token, the gateway record (selected, so the failover
+         * machine + mirror pick it up), and watchkit URL/token when present. Authkeys are never
+         * logged — only lengths.
+         */
+        fun pairApplyPacket(p: dev.hermes.wearos.net.PairPacket) = scope.launch {
+            settings.setTailnetKey(p.authKey)
+            if (p.profile.isNotBlank()) settings.setTailnetHostname("${p.profile.trim()}-watch")
+            if (p.apiKey.isNotBlank()) settings.setToken(p.apiKey)
+            val api = "http://${p.gatewayFqdn.trim()}:${if (p.gatewayPort > 0) p.gatewayPort else 8642}"
+            val wk = if (p.watchkitPort > 0) "http://${p.gatewayFqdn.trim()}:${p.watchkitPort}" else ""
+            val id = dev.hermes.wearos.domain.GatewayModel.hostId(api)
+            val gw = dev.hermes.wearos.domain.Gateway(
+                id = id,
+                label = p.tailnet.trim().ifBlank { id },
+                apiEndpoints = listOf(api),
+                watchkitEndpoints = if (wk.isEmpty()) emptyList() else listOf(wk),
+                token = p.apiKey.trim(),
+            )
+            settings.saveGateway(gw, select = true)
+            if (wk.isNotEmpty()) {
+                settings.setMermaidBaseUrl(wk)
+                if (p.watchkitToken.isNotBlank()) settings.setWatchkitToken(p.watchkitToken)
+                Watchkit.setConfig(wk, settings.watchkitToken())
+            }
+            endpoints.rebind(gw)
+            runCatching { endpoints.ensure(force = true) } // all-dead pre-enroll is fine; ACTIVE edge re-probes
+            settings.loadProfile()
+            refreshGatewayMirror()
+            agents.loadCache()
+            agents.refresh()
+            tailnetStart() // the Done-handler's own landing step — now with a real key
+            _pairRequested.value = false
+            Log.i(
+                TAG, "pair applied: gw=$api wk=${wk.ifEmpty { "(none)" }} profile=${p.profile.ifBlank { "(default)" }} " +
+                    "auth.len=${p.authKey.length} key.len=${p.apiKey.length} wkToken.len=${p.watchkitToken.length}",
+            )
         }
 
         /** Dev-only (adb `-e tailnet_on on|off`): the escape hatch — off = plain sockets (dev). */

@@ -98,16 +98,31 @@ if [ -z "$TOKEN" ] && [ -f "$HOME/.hermes/profiles/$PROFILE/.env" ]; then
   [ -n "$TOKEN" ] && say "token auto-detected from ~/.hermes/profiles/$PROFILE/.env"
 fi
 if [ ${#APIS[@]} -eq 0 ]; then
-  APIS=("http://hermes.tailnet.ts.net:8642" "http://192.168.1.50:8642")
-  warn "no apiEndpoints configured — using example placeholders (edit $CONFIG)"
+  # Tailnet-FQDN-only default (AGENTS.md §2 doctrine): no LAN placeholders ship. The watch
+  # enrolls through its own node (or Settings ▸ Gateways ▸ Pair); this is just the stand-in.
+  APIS=("http://hermes.tailnet.ts.net:8642")
+  warn "no apiEndpoints configured — using the tailnet-FQDN placeholder (edit $CONFIG, or pair on-watch)"
 fi
 case "$TOKEN" in REPLACE*|"") warn "token missing/placeholder — the watch will 401 until it's set" ;; esac
+
+# TAILNET-ONLY DOCTRINE (SPEC §11.4): every endpoint is dialed THROUGH the watch's node, so a
+# non-.ts.net, non-100.64/10 literal only works once the tunnel is ENROLLED (MagicDNS/CGNAT
+# addresses are the ones the tailnet resolves natively). Accepted — but you should know.
+offtailnet_warn() { # <url>
+  local host="${1#*://}"; host="${host%%/*}"; host="${host%%:*}"; host="${host##*@}"
+  case "$host" in
+    ts.net|*.ts.net) return ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return ;;
+  esac
+  warn "$1 — non-tailnet literal: reached THROUGH the tunnel, works only after the watch node enrolls (prefer <host>.<tailnet>.ts.net)"
+}
+for u in "${APIS[@]}" "${WKS[@]}"; do [ -n "$u" ] && offtailnet_warn "$u"; done
 
 say "plan: gateway '${LABEL:-hermes}'"
 printf '   api      : %s\n' "${APIS[@]}"
 printf '   watchkit : %s\n' "${WKS[@]:-<none — optional, needed for mermaid/images/whisper>}"
 printf '   token    : %s\n' "$([ -n "$TOKEN" ] && echo "set (${#TOKEN} chars)" || echo "<missing>")"
-printf '   tailnet  : %s\n' "$([ -n "$TAILNET_KEY" ] && echo "key set (${#TAILNET_KEY} chars)${TAILNET_HOST:+ as $TAILNET_HOST}" || echo "<no key — tunnel stays off (dev-direct)>")"
+printf '   tailnet  : %s\n' "$([ -n "$TAILNET_KEY" ] && echo "key set (${#TAILNET_KEY} chars)${TAILNET_HOST:+ as $TAILNET_HOST}" || echo "<no key — node idles NEEDS_AUTH; pair on-watch (Settings ▸ Gateways ▸ Pair) or pass --tailnet-key>")"
 
 # ── adb ──────────────────────────────────────────────────────────────────────
 ADB="$(command -v adb 2>/dev/null || true)"
