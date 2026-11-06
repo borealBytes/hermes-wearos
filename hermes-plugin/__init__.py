@@ -587,16 +587,24 @@ def _fix_serve() -> None:
         print("  ✓ door already funneled — nothing to do.")
         print("    " + "\n    ".join(text.strip().splitlines()[:6]))
         return
-    # Real flags measured on tailscale 1.102.3: funnel is its own verb mirroring serve
-    # (--bg/--https); no --funnel flag on serve. Root mount: the door itself 404s every
-    # path except /pair/claim, so nothing else is reachable even though it's mounted at /.
-    # NON-INTERACTIVE, measured both ways: --yes BLOCKS forever on the disabled-toggle
-    # path; plain + closed stdin prints the error and exits on EOF. Do not "simplify".
+    # Flags measured on 1.102.3: funnel is its own verb mirroring serve (--bg/--https);
+    # serve has no --funnel flag. Root mount is safe: the door 404s every path except
+    # /pair/claim, so nothing else is internet-reachable even mounted at /.
+    # Measured to the bottom: on a DISABLED toggle `tailscale funnel` prints the enable
+    # link and then WAITS (no flag disables this; --yes makes it wait forever; /dev/tty
+    # and stdin tricks irrelevant — it polls). So we EMBRACE it: the wizard stays alive
+    # up to 4 min, and the moment the user clicks Funnel→enable the command proceeds
+    # and applies itself. One click, zero re-runs.
     cmd = ["tailscale", "funnel", "--bg", "--https=443", f"http://127.0.0.1:{port}"]
     print(f"  · running: {' '.join(cmd)}")
+    print("    (if the tailnet toggle is off, this waits for you: console.tailscale.com")
+    print("     → Settings ▸ General ▸ Funnel ▸ Manage → enable; it applies by itself)")
     try:
-        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
                              stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        print("  ✗ gave up waiting (4 min). Flip the toggle, then re-run this verb.")
+        return
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         print(f"  ✗ could not run the tailscale CLI: {exc}")
         return
