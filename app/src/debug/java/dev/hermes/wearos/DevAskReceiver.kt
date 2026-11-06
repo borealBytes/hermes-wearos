@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
  *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags),
  *  -e set_agent_key <agent>=<key> / -e agent_keys (per-profile gateway keys, SPEC §12.2).
+ *  -e vosk_install / vosk_cancel / vosk_remove / vosk_status (in-app offline-model install).
  *  Tailnet-epic additions (SPEC §11.4): -e set_tailnet_key <tskey-auth-…>, -e tailnet_status,
  *  -e tailnet_on on|off (dev escape hatch to plain sockets), -e tailnet_reenroll. */
 class DevAskReceiver : BroadcastReceiver() {
@@ -77,8 +78,17 @@ class DevAskReceiver : BroadcastReceiver() {
             }
             return
         }
-        if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }
-        // -e orb_slot "3|approvals" → remap ONE dial direction (drives the dial UI + shots;
+        // Vosk model install (owner 2026-11-06): drive the Voice-in card from adb for testing.
+        if (intent?.hasExtra("vosk_install") == true) { WearApp.Graph.voskInstaller.install(); return }
+        if (intent?.hasExtra("vosk_cancel") == true) { WearApp.Graph.voskInstaller.cancel(); return }
+        if (intent?.hasExtra("vosk_remove") == true) { WearApp.Graph.voskInstaller.remove(); return }
+        if (intent?.hasExtra("vosk_status") == true) {
+            val label = dev.hermes.wearos.domain.VoskInstall.statusLabel(WearApp.Graph.voskInstaller.state.value)
+            Log.i("HermesWear", "dev: vosk status — $label")
+            Toast.makeText(context, "vosk: $label", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }        // -e orb_slot "3|approvals" → remap ONE dial direction (drives the dial UI + shots;
         // SPEC §12.1), -e approvals → open the per-chat approvals sheet like the lane does.
         intent?.getStringExtra("orb_slot")?.let { spec -> WearApp.Graph.devOrbSlot(spec); return }
         if (intent?.hasExtra("approvals") == true) { WearApp.Graph.devApprovals.value = true; return }

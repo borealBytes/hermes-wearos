@@ -69,6 +69,9 @@ class WearApp : Application() {
         /** Batch-4 #9: streamed-mic STT on the gateway engine, with the local auto-fallback. */
         lateinit var sttGateway: GatewayStt
             private set
+        /** Owner 2026-11-06: in-app install/remove of the offline Vosk model (Voice in page). */
+        lateinit var voskInstaller: dev.hermes.wearos.voice.VoskInstaller
+            private set
 
         /** Which engine the mic flow gets NOW (batch-4 #8/#9 picker; offline-safe default).
          *  GATEWAY needs no availability gate — voice/GatewayStt falls back locally by design. */
@@ -412,6 +415,7 @@ class WearApp : Application() {
                 stt = VoskStt(app)
                 sttSystem = SystemStt(app)
                 sttGateway = GatewayStt(app, stt)
+                voskInstaller = dev.hermes.wearos.voice.VoskInstaller(app, scope)
                 scope.launch { settings.loadSttProvider(); settings.loadSttGatewayEngine() } // seed the #8 picker mirror + #16 engine pick
                 session.resume() // loads registry (migrates legacy keys), restores active chat + in-flight run
                 network.start() // LAST: its hook reaches into every other Graph member

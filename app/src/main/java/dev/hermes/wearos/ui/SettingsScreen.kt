@@ -64,6 +64,7 @@ import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.domain.FontScale
 import dev.hermes.wearos.domain.SttProvider
 import dev.hermes.wearos.domain.SttProviders
+import dev.hermes.wearos.domain.VoskInstallState
 import dev.hermes.wearos.voice.SystemStt
 import dev.hermes.wearos.domain.TtsConfig
 import dev.hermes.wearos.domain.Lane
@@ -223,7 +224,7 @@ fun SettingsScreen(
     }
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
     val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
-    val sttPresent = remember { VoskStt.isModelPresent(context) }
+    var sttPresent by remember { mutableStateOf(VoskStt.isModelPresent(context)) }
     val version = remember {
         try {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
@@ -1151,6 +1152,11 @@ fun SettingsScreen(
             val sysAvailable = remember { SystemStt.isAvailable(context) }
             val sysPkg = remember { SystemStt.recognizerPackage(context) }
             var sttProv by remember { mutableStateOf(SttProviders.fromId(SttProviders.current)) }
+            // Model presence becomes LIVE state (owner 2026-11-06): the in-app installer flips
+            // it without leaving the page, so the row subtitle follows the installer flow.
+            val installer = dev.hermes.wearos.WearApp.Graph.voskInstaller
+            val installState by installer.state.collectAsState()
+            LaunchedEffect(installState) { sttPresent = VoskStt.isModelPresent(context) }
             VoicePickRow(
                 "🎙️ Local Vosk · " + SttProviders.subtitle(SttProvider.LOCAL, sttPresent, sysAvailable, sysPkg),
                 SttProviders.id(SttProvider.LOCAL), SttProviders.id(sttProv),
@@ -1240,6 +1246,38 @@ fun SettingsScreen(
                     )
                 }
             }
+            // ── OFFLINE MODEL (owner 2026-11-06: *"install the local Vosk as a check option"*)
+            // — the LOCAL row above is a choice; it only WORKS once the ~39 MB model sits in
+            // filesDir. It rides in from the wearer's own gateway (GET /stt/vosk-model, bearer
+            // + tailnet already established there), Range-resumes across wifi dropouts, and is
+            // verified by marker before the tree swaps in. After install the mic works in
+            // airplane mode; "remove" frees the space and the offer comes back.
+            FieldLabel("🗃 offline model")
+            val gwModel by dev.hermes.wearos.net.Watchkit.voskModel.collectAsState()
+            Text(
+                dev.hermes.wearos.domain.VoskInstall.statusLabel(installState) +
+                    if (installState is VoskInstallState.Missing && gwModel != null)
+                        " · ${dev.hermes.wearos.domain.VoskInstall.humanBytes(gwModel!!.sizeBytes)} via gateway"
+                    else "",
+                style = MaterialTheme.typography.caption3,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            ) {
+                when (installState) {
+                    is VoskInstallState.Missing, is VoskInstallState.Failed ->
+                        SplashChoiceChip("⬇ install", false) { installer.install() }
+                    is VoskInstallState.Download ->
+                        SplashChoiceChip("cancel", false) { installer.cancel() }
+                    VoskInstallState.Ready ->
+                        SplashChoiceChip("remove", false) { installer.remove() }
+                    VoskInstallState.Unpacking -> {}
+                }
+            }
         }
         if (page == SettingsPage.Media) {
             // MEDIA EPIC (owner 2026-11-02: "a slider for the video quality … an option for
@@ -1294,7 +1332,7 @@ fun SettingsScreen(
             StatusLine("tts engine", ttsState.toString())
         }
         if (page == SettingsPage.About) {
-            StatusLine("stt model", if (sttPresent) "present ✅" else "missing – get-vosk-model.sh")
+            StatusLine("stt model", if (sttPresent) "present ✅" else "missing · Voice in ▸ install")
             StatusLine("version", "v$version")
             // BATCH-4 #10 (owner's credit line, verbatim): MIT · borealBytes (tappable) ·
             // Superior ByteWorks, LLC · Clayton Young. The org name opens the GitHub on the

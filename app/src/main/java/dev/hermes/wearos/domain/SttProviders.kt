@@ -66,7 +66,7 @@ object SttProviders {
         gatewayEngine: String? = null,
     ): String = when (provider) {
         SttProvider.LOCAL ->
-            if (localModelPresent) "offline · on-watch" else "model missing · get-vosk-model.sh"
+            if (localModelPresent) "offline · on-watch" else "model missing · install below"
         SttProvider.SYSTEM ->
             if (systemAvailable) "OFF-DEVICE · ${vendor(recognizerPackage)}"
             else "no recognizer on this watch"

@@ -58,6 +58,17 @@ object Watchkit {
     private val _sttEngines = MutableStateFlow<List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo>>(emptyList())
     val sttEngines: StateFlow<List<dev.hermes.wearos.domain.SttProviders.SttEngineInfo>> = _sttEngines.asStateFlow()
 
+    /**
+     * Gateway-cached Vosk model facts from `/health stt.vosk_model` — the Voice-in install card
+     * prints the real size ("install · 39 MB") and hides the button when the gateway cannot
+     * serve it at all. null = gateway never answered / old watchkit without the endpoint.
+     */
+    private val _voskModel = MutableStateFlow<VoskModelInfo?>(null)
+    val voskModel: StateFlow<VoskModelInfo?> = _voskModel.asStateFlow()
+
+    @kotlinx.serialization.Serializable
+    data class VoskModelInfo(val ready: Boolean, val sizeBytes: Long)
+
     suspend fun refreshSttEngine() = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder().url("${_config.value.baseUrl}/health").get().build()
@@ -67,12 +78,13 @@ object Watchkit {
                 (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
             _sttEngine.value = stt?.let { s -> flag(s, "engine")?.takeIf { flag(s, "ready") == "true" } }
             _sttEngines.value = parseSttEngines(stt)
+            _voskModel.value = parseVoskModel(stt)
         }.onFailure {
             // The silent catch once cost a whole debugging lane ("watchkit offline" with no
             // why): the probe runs over the tunnel, and tunnel failures come in flavors
             // (SOCKS cold-race, port refused, ufw) that the picker can't guess. One line, always.
             android.util.Log.w("HermesWear", "watchkit /health probe failed: ${it.javaClass.simpleName}: ${it.message?.take(90)}")
-            _sttEngine.value = null; _sttEngines.value = emptyList()
+            _sttEngine.value = null; _sttEngines.value = emptyList(); _voskModel.value = null
         }
     }
 
@@ -92,6 +104,19 @@ object Watchkit {
                 missing = f("missing").orEmpty(),
             )
         }
+    }
+
+    /**
+     * Pure: `/health stt.vosk_model` → info, or null (old watchkit / no field). `size` arrives
+     * JSON-null when the gateway has not cached the zip yet — that is ready:false, size 0.
+     */
+    internal fun parseVoskModel(
+        stt: kotlinx.serialization.json.JsonObject?,
+    ): VoskModelInfo? {
+        val o = stt?.get("vosk_model") as? kotlinx.serialization.json.JsonObject ?: return null
+        val ready = (o["ready"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+        val size = (o["size"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+        return VoskModelInfo(ready, size)
     }
 
     /**

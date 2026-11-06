@@ -210,6 +210,8 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | `am broadcast -e text` only delivered the first word | quote trap (§6.3) — outer double quotes, inner single |
 | Repeated `hermes-wearos*` rows in the admin console | each Re-enroll enrolls a NEW node — expected; prune the stale rows there |
 | No mermaid/images/whisper | watchkit daemon down → `scripts/watchkit.sh start` (check `status`/`logs`) |
+| Voice-in ▸ Gateway shows "not installed" | engine weights missing on the gateway box → `server/watchkit/.venv/bin/python stt_stream.py --check` names the exact gap; default engine = config `stt_stream_engine` (use `"parakeet"` for live partials; `"whisper"` = final-only) |
+| Offline STT says "model missing" | Settings ▸ Voice in ▸ offline model ▸ ⬇ install (gateway-cached, resume-safe; `scripts/get-vosk-model.sh` remains the adb path) |
 | A session row "vanished" after long-press | It was 🗃 **archived**, not lost — Sessions ▸ 🗃 archived chip ▸ hold the row ▸ ♻️ unarchive |
 | `--offline` build fails on a fresh clone | Run once **online** to populate the devkit, then go offline |
 | `Toast`/UI glitch in screenshots | debug-only DevAskReceiver ran without the app open — launch the app first |

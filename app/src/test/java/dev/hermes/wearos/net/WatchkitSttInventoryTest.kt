@@ -25,8 +25,7 @@ class WatchkitSttInventoryTest {
         assertEquals("parakeet", rows[1].id); assertEquals(true, rows[1].streaming)
     }
 
-    @Test fun `not-installed engines keep their flag and reason`() {
-        val stt = obj(
+    @Test fun `not-installed engines keep their flag and reason`() {        val stt = obj(
             """{"engines":[{"engine":"k2","ready":false,"streaming":true,"missing":"model missing"}]}"""
         )
         val rows = Watchkit.parseSttEngines(stt)
@@ -43,5 +42,19 @@ class WatchkitSttInventoryTest {
             emptyList<Any>(),
             Watchkit.parseSttEngines(obj("""{"engines":[{"ready":true}]}""")), // no id → dropped
         )
+    }
+
+    @Test fun `vosk model field parses size and pre-cache state`() {
+        val cached = Watchkit.parseVoskModel(
+            obj("""{"engine":"parakeet","vosk_model":{"ready":true,"size":41205931}}"""),
+        )
+        assertEquals(true, cached?.ready)
+        assertEquals(41_205_931L, cached?.sizeBytes)
+        val pending = Watchkit.parseVoskModel(obj("""{"vosk_model":{"ready":false,"size":null}}"""))
+        assertEquals(false, pending?.ready)
+        assertEquals(0L, pending?.sizeBytes)
+        // Old watchkit without the field must read as "unknown", not "absent".
+        assertEquals(null, Watchkit.parseVoskModel(obj("""{"engine":"whisper"}""")))
+        assertEquals(null, Watchkit.parseVoskModel(null))
     }
 }
