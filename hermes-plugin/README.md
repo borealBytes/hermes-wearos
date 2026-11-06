@@ -11,6 +11,55 @@ hermes watch setup                # wizard: tailscaled → credential → MagicD
 hermes watch pair                 # or: /pair <PIN> in any Hermes chat surface
 ```
 
+## Installed — what it looks like, and where config lives
+
+The dashboard's **Plugins** page is where an installed plugin shows up: name, source,
+version, an `enabled` chip, the description, and Disable / Remove controls.
+
+![The wearos card on the Hermes dashboard Plugins page](../docs/screens/60-plugin-card.png)
+
+The card is a management tile, not the config surface ("No dashboard tab" is the core
+UI saying this plugin doesn't ship a dashboard page of its own — the Wear Kit's read-only
+page lives in the **Desktop workspace** instead: paired devices + the readiness checklist
+lights, from `watch_status`; run `hermes webapp` to open it).
+
+**Settings** live in the gateway's `config.yaml`, under the plugin's entry:
+
+```yaml
+# ~/.hermes/config.yaml
+plugins:
+  enabled: [wearos]
+  entries:
+    wearos:
+      settings:
+        gateway_profile: wear-demo
+```
+
+Edit them by hand, with `hermes plugins config wearos`, or with `hermes watch setup` —
+the wizard reads the same block and live-validates every credential before it green-lights
+pairing. Secrets (`type: secret` below) are stored in the profile's `.env` and read back
+through Hermes's `get_secret`; they never appear in the config file or logs.
+
+### Config options (`plugin.yaml` → `config_schema`)
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `tailnet` | str | — | Tailnet handle as shown in the Tailscale admin console (`*.ts.net`); validated live before anything else. |
+| `tailscale_api_token` | secret | — | Owner/Admin API token — mints single-use enrollment keys, reads/patches tailnet prefs. **Either this or the OAuth pair.** |
+| `tailscale_oauth_client_id` | str | — | Preferred credential. Scope it to `auth_keys` + `devices:core` and restrict it to the watch tag. |
+| `tailscale_oauth_client_secret` | secret | — | Secret for the OAuth client (client_credentials flow). |
+| `watch_tag` | str | `tag:hermes-watch` | ACL tag stamped on every enrolled watch node (ACL hygiene). |
+| `key_expiry` | str | `24h` | Lifetime of the single-use enrollment key handed to a watch. |
+| `gateway_profile` | str | `wear` | Hermes profile the watch binds to (its `/p/<profile>` lane + API key). |
+| `gateway_api_key` | secret | — | Fallback for the packet's `api_key`; normally resolved from the profile's own `API_SERVER_KEY` (see below). |
+| `watchkit_token` | secret | — | Optional watchkit helper bearer handed to the watch in the packet (nullable field — leave unset if no sidecar). |
+| `claim_port` | int | `42653` | Loopback port of the funnel-facing claim door (`127.0.0.1` only). |
+| `apk_release_url` | str | `…hermes-wearos/releases/latest` | Where "install the watch app" points (CI-built APK + SHA256SUMS). |
+
+Where the running plugin lives on disk: install dir `~/.hermes/plugins/wearos/`, device
+registry + PIN ledger `~/.hermes/plugin-data/agent-plugin-wearos-<scope>/state.json`
+(0600), and the claim door as one in-process daemon thread on the loopback port above.
+
 ## Install the watch app
 
 The Wear OS APK is **not bundled here**: it ships as a CI-built GitHub Release
@@ -102,7 +151,8 @@ ephemeral claim door). Host modules resolve from `~/.hermes/hermes-agent` or
   Hermes's `get_secret`). Per-watch enrollment keys are single-use and zeroed from the
   ledger the moment the watch collects its packet; the device registry never stores one.
   Plugin state (device registry, PIN ledger, claimed-packet tombstone) is one
-  profile-scoped JSON file at `~/.hermes/plugin-data/wearos/state.json`, mode 0600.
+  profile-scoped JSON file at `~/.hermes/plugin-data/agent-plugin-wearos-<scope>/state.json`,
+  mode 0600 (verified on a live install, dashboard v0.23.0).
 - **Background processes:** the plugin starts ONE in-process daemon thread — the loopback
   claim door (`127.0.0.1:claim_port`, opened at `gateway:startup`, closed on plugin
   unload; `hermes watch pair` re-opens it if nothing is answering). No subprocesses are

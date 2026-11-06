@@ -397,6 +397,12 @@ scripts/setup.sh                        # build → install → push config → 
 
 ## Gateway-side setup (5 minutes, once)
 
+The blessed path is the **`wearos` plugin**: `hermes plugins install wearos` then
+`hermes watch setup` — the wizard covers everything in this section (and the pairing
+ceremony after it). It shows up as a managed card on your dashboard's Plugins page, and
+all of its options live in one `plugins.entries.wearos.settings` block — full config
+table in [hermes-plugin/README.md](hermes-plugin/README.md). To wire it by hand instead:
+
 ```yaml
 # ~/.hermes/profiles/wear/config.yaml  — minimal
 toolsets: [hermes-cli]
