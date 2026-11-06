@@ -590,10 +590,9 @@ def _fix_serve() -> None:
     # Real flags measured on tailscale 1.102.3: funnel is its own verb mirroring serve
     # (--bg/--https); no --funnel flag on serve. Root mount: the door itself 404s every
     # path except /pair/claim, so nothing else is reachable even though it's mounted at /.
-    # NON-INTERACTIVE (measured): without --yes + stdin closed the CLI BLOCKS on
-    # "Press enter after enabling" for the whole timeout when the toggle is off.
-    cmd = ["tailscale", "funnel", "--bg", "--https=443", "--yes",
-           f"http://127.0.0.1:{port}"]
+    # NON-INTERACTIVE, measured both ways: --yes BLOCKS forever on the disabled-toggle
+    # path; plain + closed stdin prints the error and exits on EOF. Do not "simplify".
+    cmd = ["tailscale", "funnel", "--bg", "--https=443", f"http://127.0.0.1:{port}"]
     print(f"  · running: {' '.join(cmd)}")
     try:
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
