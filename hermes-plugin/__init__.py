@@ -798,3 +798,11 @@ def register(ctx) -> None:
     )
     ctx.register_hook("gateway:startup", _on_gateway_startup)
     ctx.on_unload(claim_server.stop_server)
+    # Door comes up at LOAD, not only at gateway:startup — a hot-reloaded plugin never
+    # sees the startup hook, and a down door is a SILENT pairing failure. Idempotent
+    # (defers to any door already answering); a daemon thread; harmless in one-shot
+    # CLI processes and validation probes (they exit; on_unload stops it where loaded).
+    try:
+        ensure_door()
+    except Exception:
+        logger.debug("wearos: door bring-up at load failed", exc_info=True)
