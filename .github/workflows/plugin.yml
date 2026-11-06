@@ -1,0 +1,46 @@
+name: Plugin catalog gate
+
+# Gates hermes-plugin/ with the same command the Hermes plugin catalog CI runs:
+#   hermes plugins validate hermes-plugin/ --install-deps
+# Skips gracefully while hermes-plugin/ doesn't exist yet in the tree.
+
+on:
+  pull_request:
+    paths:
+      - 'hermes-plugin/**'
+      - '.github/workflows/plugin.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'hermes-plugin/**'
+      - '.github/workflows/plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: hermes plugins validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # hermes-agent IS on PyPI (latest 0.19.0 at pin time) and requires
+      # Python >=3.11,<3.14, so pin 3.13 — ubuntu-latest's system python is 3.12
+      # today but an image bump to 3.14 would break `pip install`.
+      # If the PyPI release ever lags the `plugins validate` API this gate needs,
+      # fall back to the repo tarball:
+      #   pip install https://github.com/NousResearch/hermes-agent/archive/refs/heads/main.tar.gz
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Validate plugin
+        run: |
+          if [ ! -d hermes-plugin ]; then
+            echo "::notice::hermes-plugin/ not in tree yet — skipping"
+            exit 0
+          fi
+          pip install hermes-agent
+          hermes plugins validate hermes-plugin/ --install-deps
