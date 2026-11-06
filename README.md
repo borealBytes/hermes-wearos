@@ -164,6 +164,10 @@ respect.
 | **Voice out, fully on-device** — the engine picker, system voice with fallback, reply speed (this wrist reads at 1.81×), and a preview button, all on one Settings page. | **Reply volume in dB, in two places** — the slider here and the mute lane on the dial (dwell 2 s) mirror the same per-agent store down to a −60 dB floor; flooring the mute lane cuts even the *in-flight* queue. |
 | <img src="docs/screens/39-karaoke-follow.png" width="180"/> | <img src="docs/screens/40-stt-source.png" width="180"/> |
 | **The glass follows the voice** — while a reply is spoken the sentence being read stays in view, teleprompter-style; one touch hands scroll control back to you mid-speech. | **Pick your audio path per agent** — Local Vosk (offline default), the vendor recognizer honestly labeled OFF-DEVICE (Google or Samsung, whichever your watch ships), or Gateway: whisper rows (final when you stop) and parakeet (streaming partials) — the highlighted row is the live source. |
+| <img src="docs/screens/56-voicein-picker.png" width="180"/> | <img src="docs/screens/57-voicein-not-installed.png" width="180"/> |
+| **The Voice-in page, telling the truth** — the Gateway row names the engine actually loaded (`parakeet`, streaming ✓), and below it the offline model card states its state plainly: `not installed · 41 MB via gateway`, with an `install` chip right there. No adb, no script, no ceremony. | **Offline STT, one tap away** — the model used to be a script's job; now the watch streams the zip from your own gateway over the bearer it already holds and unpacks it into place. The same page that offers Gateway parakeet grows its own offline engine. |
+| <img src="docs/screens/58-voicein-downloading.png" width="180"/> | <img src="docs/screens/59-voicein-installed.png" width="180"/> |
+| **The card becomes a progress bar** — `downloading 30% · 13 MB of 41 MB`, `cancel` ready. The pull is Range-resumable: a wifi dropout keeps the `.part` and the next tap continues byte-for-byte where it died. The tree swaps in only after the acoustic-model marker verifies — a half model reads *failed*, never *installed*. | **`installed · works offline`** — airplane-mode dictation on your wrist, and `remove` gives back the 69 MB. `scripts/get-vosk-model.sh` remains the adb path for scripted setups; both write the identical tree, and the mic resolves it live — no app restart. |
 | <img src="docs/screens/44-notify-desktop-approval.png" width="180"/> | <img src="docs/screens/45-notify-desktop-settled.png" width="180"/> |
 | **A desktop run parks on your wrist** — when a session running at your desk hits a gated command, the parked command buzzes your watch; *Open* adopts the session and answers it from the wrist. | **Answers finished off the wrist** — an ordinary notification says "answer ready", and one tap drops you into the thread mid-stream. The off-screen feed survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no double-post on handback). |
 
@@ -232,7 +236,7 @@ paths (and one keyboard back door):
 
 | Path (the picker's own words) | Where audio goes | Quality | Default |
 |---|---|---|---|
-| **Local Vosk · offline** | never leaves the watch | Best-effort on-device. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. | ✅ default |
+| **Local Vosk · offline** | never leaves the watch | Best-effort on-device. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. Needs the model — one tap on Voice in installs it from your gateway (41 MB, resumable). | ✅ default |
 | **OFF-DEVICE · vendor (Google or Samsung)** | the vendor's cloud — whatever recognizer your watch ships | Usually the best raw accuracy on the watch, at the cost of the vendor hearing it. The picker says **OFF-DEVICE** even when the vendor caches locally — that's deliberate. | your choice |
 | **Gateway · whisper** (`watchkit /stt/whisper`) | your own box, through your own tunnel (the mic clip rides as **Opus**, AAC fallback — watchkit sniffs the container) | Noticeably better than Vosk — but buffered: the final text lands when you stop talking. Model choice is a row on the Voice page. | opt-in |
 | **Gateway · parakeet** (streaming) | your own box, through your own tunnel (same Opus wire) | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. | opt-in |
@@ -299,9 +303,11 @@ and the watch's own numbers say what that is made of:
 | splash intro film | 0.9 MB | yes, the fun part is under a megabyte |
 | resources + everything else | ~2 MB | media3, Compose, the lot |
 
-Optional pieces live OUTSIDE the APK: the Vosk acoustic model is **68 MB** pushed once into the
-app's files dir (`scripts/get-vosk-model.sh`; the Settings ▸ About page tells you whether it's
-there, and deleting it just falls back to vendor/gateway STT).
+Optional pieces live OUTSIDE the APK: the Vosk acoustic model (41 MB zip → 69 MB unpacked) rides
+into the app's files dir one tap at a time from Settings ▸ Voice in — streamed from your own
+gateway's cache, Range-resumable, marker-verified before the tree swaps (see the sequence above).
+`scripts/get-vosk-model.sh` remains the adb path for scripted setups; both write the same tree.
+Deleting it just falls back to vendor/gateway STT, and the Voice-in card says which state you're in.
 
 **The part watches usually die of — cache creep — doesn't exist here.** The app writes no disk
 cache at all (the entire `cache/` dir after a full day of streaming, images, and voice: **25 KB**):
