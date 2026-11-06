@@ -1,0 +1,153 @@
+# APK Release — the Wear OS APK ships as a CI-built GitHub Release, never a committed
+# binary. This is admission rule 17's escape clause made airtight: Actions-built + SLSA
+# attested + SHA256SUMS, verifiable after the fact with:
+#
+#   gh attestation verify --repo borealBytes/hermes-wearos <apk>
+#   sha256sum -c SHA256SUMS.txt
+#
+# The ~105 MB APK (AGENTS.md §1) rides the Release-asset API (2 GB/asset), not a workflow
+# artifact. The ~17 MB app/libs/hermes-tailnet.aar is a COMMITTED artifact (SPEC §11.4),
+# so there is no Go/NDK build step here; scripts/tailnet-build.sh is the manual rebuild
+# path, only when tailnet/go changes.
+#
+# ONE-TIME keystore, then store the base64 in repo secret HERMES_KEYSTORE_B64:
+#   keytool -genkeypair -keystore hermes-wearos-release.jks -alias hermes-wearos \
+#     -keyalg RSA -keysize 2048 -validity 10000
+#   base64 -w0 hermes-wearos-release.jks        # → HERMES_KEYSTORE_B64
+# Companion secrets: HERMES_KEYSTORE_PASSWORD · HERMES_KEY_ALIAS (hermes-wearos) ·
+# HERMES_KEY_PASSWORD. ⚠ BACK UP THE KEYSTORE: a later Play upload needs the SAME key.
+# app/build.gradle.kts has NO signingConfig today, so signing happens HERE in-workflow
+# with zipalign+apksigner (build-tools;35.0.0) rather than in gradle — honest CI-side
+# signing. Do not drop a keystore.properties until the build file actually reads one.
+#
+# Pins below are verbatim from ci.yml: temurin JDK 17 · gradle 8.13 via setup-gradle
+# (no wrapper committed) · platforms;android-35 + build-tools;35.0.0 (compileSdk 35,
+# AGP 8.7.3 per gradle/libs.versions.toml).
+
+name: APK Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # version then comes from the VERSION file
+
+permissions:
+  contents: write      # softprops/action-gh-release
+  id-token: write      # OIDC for attest-build-provenance
+  attestations: write  # upload the attestation
+
+jobs:
+  release:
+    name: Build + publish release APK
+    runs-on: ubuntu-latest
+    env:
+      HERMES_KEYSTORE_B64: ${{ secrets.HERMES_KEYSTORE_B64 }}
+      HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
+      HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
+      HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          arguments: --version
+
+      # Tag push → GITHUB_REF_NAME; dispatch → v$(cat VERSION). Tags containing '-'
+      # (e.g. v0.8.0-plugin.1) publish as prereleases.
+      - name: Resolve release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble release APK
+        run: gradle --console=plain :app:assembleRelease
+
+      # No signingConfig in app/build.gradle.kts → AGP emits app-release-unsigned.apk;
+      # the glob also covers app-release.apk the day signing moves into gradle.
+      - name: Stage APK
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::expected exactly 1 release APK, found ${#apks[@]}"
+            exit 1
+          fi
+          cp "${apks[0]}" "dist/hermes-wearos-${TAG#v}.apk"
+
+      - name: Sign APK (when HERMES_KEYSTORE_B64 is set)
+        if: env.HERMES_KEYSTORE_B64 != ''
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          printf '%s' "$HERMES_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          for apk in dist/*.apk; do
+            "$BT/zipalign" -p -f 4 "$apk" "$apk.aligned"
+            mv "$apk.aligned" "$apk"
+            "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" \
+              --ks-key-alias "$HERMES_KEY_ALIAS" \
+              --ks-pass env:HERMES_KEYSTORE_PASSWORD \
+              --key-pass env:HERMES_KEY_PASSWORD \
+              -- "$apk"
+            "$BT/apksigner" verify -- "$apk"
+          done
+          rm -f "$RUNNER_TEMP/release.jks" dist/*.idsig
+
+      - name: Emit SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- *.apk > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.apk
+
+      - name: Release notes
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cat > dist/release-notes.md <<EOF
+          Wear OS APK ${TAG}, built by this workflow (gradle :app:assembleRelease on
+          ubuntu-latest; the embedded tailnet node rides the committed app/libs/hermes-tailnet.aar
+          — see scripts/tailnet-build.sh for the manual rebuild path). Admission rule 17's escape
+          clause: the APK is Actions-built and SLSA-attested, never a committed binary — every
+          release here is reproducible-verifiable from the tag that triggered it.
+
+          Verify (after downloading every asset from THIS release):
+
+          ~~~
+          gh attestation verify --repo ${GITHUB_REPOSITORY} hermes-wearos-${TAG#v}.apk
+          sha256sum -c SHA256SUMS.txt
+          ~~~
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          body_path: dist/release-notes.md
+          files: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
