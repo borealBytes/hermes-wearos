@@ -34,7 +34,7 @@ def client_returning(payload: bytes | None = None, raise_status: int | None = No
                                      tailnet="example.ts.example")
 
     def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
-                      auth=True, if_match=None):
+                      auth=True, if_match=None, accept=None):
         if raise_status is not None:
             raise tailscale.TailnetAPIError(raise_status, "no such file")
         return payload

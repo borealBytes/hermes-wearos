@@ -101,7 +101,8 @@ class TailnetClient:
 
     def _request(self, method: str, path: str, payload: Any = None, *,
                  raw_body: bytes = b"", content_type: str = "application/json",
-                 auth: bool = True, if_match: Optional[str] = None) -> bytes:
+                 auth: bool = True, if_match: Optional[str] = None,
+                 accept: Optional[str] = None) -> bytes:
         data = raw_body if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(API_BASE + path, data=data or None, method=method)
         req.add_header("User-Agent", USER_AGENT)
@@ -109,6 +110,8 @@ class TailnetClient:
             req.add_header("Content-Type", content_type)
         if auth:
             req.add_header("Authorization", "Bearer " + self._token())
+        if accept:
+            req.add_header("Accept", accept)
         if if_match:
             req.add_header("If-Match", json.dumps(if_match))  # quoted, per client-go policyfile.go
         try:
@@ -146,8 +149,12 @@ class TailnetClient:
 
     def acl_full(self) -> tuple[str, Optional[str]]:
         """(policy text, etag). Tolerates both the JSON envelope {"acl","etag"} the API
-        returns and a raw policy body (canned test payloads, hujson tailnets)."""
-        body = self._request("GET", f"/tailnet/{self._tn()}/acl").decode(errors="replace")
+        returns and a raw policy body (canned test payloads, hujson tailnets). We ASK
+        for JSON: the console's JSON-editor tab proves the server can render a
+        comment-free view of a commented HuJSON file (measured: owner's policy file is
+        the legacy commented src/dst/ip form — raw GET would hand us HuJSON)."""
+        body = self._request("GET", f"/tailnet/{self._tn()}/acl",
+                             accept="application/json, text/plain;q=0.9").decode(errors="replace")
         try:
             parsed = json.loads(body)
         except ValueError:

@@ -411,7 +411,7 @@ def tailnet_state() -> dict:
             prefs = client.dns_preferences()
             magic = bool(prefs.get("magicDNS"))
             checks["magicdns"] = {"ok": magic, "detail": "enabled" if magic else "disabled",
-                                  "fix": "console: https://login.tailscale.com/admin/dns"}
+                                  "fix": "console: Network ▸ DNS — enable MagicDNS (console.tailscale.com/admin)"}
         except tailscale.TailnetAPIError as exc:
             checks["magicdns"] = {"ok": False, "detail": str(exc)}
         try:
@@ -424,7 +424,7 @@ def tailnet_state() -> dict:
                 "detail": {"enabled": "enabled (all nodes)",
                            "attr_required": "enabled, per-node ACL attribute required (recommended)",
                            "disabled": "disabled tailnet-wide"}.get(funnel_pref, funnel_pref or "unreadable"),
-                "fix": "console: https://login.tailscale.com/admin/settings/networking (Funnel ▸ enable) — free on Personal",
+                "fix": "console: Settings ▸ General ▸ Funnel card ▸ Manage → enable (free on Personal)",
             }
         except tailscale.TailnetAPIError as exc:
             checks["funnel_toggle"] = {"ok": False, "detail": str(exc),
@@ -546,7 +546,7 @@ def _fix_funnel(yes: bool) -> None:
         print(f"  ! funnel toggle state unreadable: {exc}")
     if pref == "disabled" or pref == "":
         print("  ✗ funnel is DISABLED tailnet-wide (measured). Enable it (free, Personal plan ok):")
-        print("        https://login.tailscale.com/admin/settings/networking  (Funnel ▸ enable)")
+        print("        console.tailscale.com/admin → Settings ▸ General ▸ Funnel card ▸ Manage → enable")
         if not yes:
             return
     try:
@@ -563,7 +563,7 @@ def _fix_funnel(yes: bool) -> None:
     print('  one-rule diff (add to the policy file\'s "nodeAttrs"):')
     print(json.dumps({"nodeAttrs": {tailscale.funnel_rule_key(tag): {"attr": ["funnel"], "hosts": [tag]}}},
                      indent=2).replace("\n", "\n        "))
-    print("        console: https://login.tailscale.com/admin/acls/file")
+    print("        console: console.tailscale.com/admin/acls/visual (Access controls ▸ Policies ▸ JSON editor)")
     if not yes:
         print("  re-run with --yes to apply this preview (replaces the tailnet policy file, If-Match guarded).")
         return
