@@ -38,8 +38,8 @@ jobs:
           python-version: '3.13'
 
       - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
+        # (enable-cache off: the action's cache glob wants a repo-root uv.lock we
+        # don't own — the lock lives in the pinned hermes-runtime clone below)
 
       - name: Validate plugin
         run: |
