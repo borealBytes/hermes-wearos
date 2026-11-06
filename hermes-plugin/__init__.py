@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import subprocess
@@ -619,6 +620,14 @@ def _fix_serve() -> None:
         print(f"  ✗ could not run the tailscale CLI: {exc}")
         return
     out_text = ((run.stdout or "") + (run.stderr or "")).strip()
+    # Measured (post-approval): serve/funnel config WRITES need operator rights; a
+    # plain user gets "Access denied: serve config denied" after the enable succeeds.
+    if "serve config denied" in out_text.lower() or "access denied" in out_text.lower():
+        print("  ✗ funnel is enabled ✓ but this user may not write serve config.")
+        print("    one-time fix (the tailscale CLI prints this itself):")
+        print(f"        sudo tailscale set --operator={os.environ.get('USER', '$USER')}")
+        print("  …then re-run this verb.")
+        return
     # NB: the disabled-toggle path exits 0 with prose (measured) — parse text BEFORE rc.
     if "funnel is not enabled" in out_text.lower():
         print("  ✗ funnel not enabled yet. Approve it at the per-node link (free,")
