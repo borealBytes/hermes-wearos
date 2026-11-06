@@ -37,8 +37,9 @@ data class PairPacket(
 /**
  * THE BOOTSTRAP DOOR (SPEC §4/§11.4): the ONE OkHttp client in the app with NO TailnetRoute
  * selector — during pairing there IS no tunnel yet, so the claim API is dialed over plain HTTPS
- * to the plugin's funnel host `pair.<handle>.ts.net` (public DNS answers that name; the funnel
- * is the plugin's own tailnet node). Everything else stays the tunnel's; this client is used
+ * to the plugin's funnel host `<handle>.ts.net`. Measured reality (2026-11-06): a Funnel answers
+ * on the NODE's MagicDNS name — the wizard prints the exact line to type (e.g.
+ * `tuxdesktop.tailb12aa5`); there is no `pair.` prefix on any hostname Tailscale mints. Everything else stays the tunnel's; this client is used
  * for nothing else and is disposable ("destroy when done").
  *
  * Protocol (server side: hermes-plugin pair endpoints):
@@ -148,11 +149,13 @@ class PairingClient(private val http: Http = LiveHttp()) {
         @Serializable
         private data class ClaimRequest(val pin: String, val tailnet: String, val hostname: String)
 
-        /** `My-Home` → `https://pair.my-home.ts.net/pair/claim` (the plugin's funnel endpoint). */
+        /** `tux-desktop.tailb12aa5` → `https://tux-desktop.tailb12aa5.ts.net/pair/claim`.
+         *  The handle IS the door host (the node prefix of its MagicDNS name — what
+         *  `hermes watch setup --fix serve` prints); no synthetic `pair.` prefix. */
         fun claimUrl(handle: String): String {
             val h = PairingCode.normalizeHandle(handle)
-            require(h.isNotEmpty()) { "tailnet handle needed (the name before .ts.net)" }
-            return "https://pair.$h.ts.net/pair/claim"
+            require(h.isNotEmpty()) { "pairing address needed (the host the wizard prints, before .ts.net)" }
+            return "https://$h.ts.net/pair/claim"
         }
 
         fun pollUrl(handle: String, pin: String): String {

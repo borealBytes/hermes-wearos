@@ -19,7 +19,7 @@ class PairingClientTest {
     // ── pure wire pieces ─────────────────────────────────────────────────────────────────────
     @Test
     fun `claim url is plain HTTPS to the plugin funnel host`() {
-        assertEquals("https://pair.lab.ts.net/pair/claim", PairingClient.claimUrl("lab"))
+        assertEquals("https://lab.ts.net/pair/claim", PairingClient.claimUrl("lab"))
         // Funnel is reached BEFORE any tunnel exists → it must be a PUBLIC host, never the tunnel.
         assertFalse(PairingClient.claimUrl("lab").startsWith("http://"))
     }
@@ -35,7 +35,7 @@ class PairingClientTest {
 
     @Test
     fun `poll url carries the pin as a query param`() {
-        assertEquals("https://pair.lab.ts.net/pair/claim?pin=123456", PairingClient.pollUrl("lab", "123456"))
+        assertEquals("https://lab.ts.net/pair/claim?pin=123456", PairingClient.pollUrl("lab", "123456"))
     }
 
     @Test

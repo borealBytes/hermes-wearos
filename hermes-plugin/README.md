@@ -29,7 +29,8 @@ The Wear OS APK is **not bundled here**: it ships as a CI-built GitHub Release
   token. Both are entered as plugin config secrets (`hermes plugins config wearos` or
   `plugins.entries.wearos.settings` in config.yaml).
 - MagicDNS on (wizard checks and links the console). Funnel used only for the pairing
-  door: `pair.<tailnet>.ts.net` serving `/pair/*`.
+  door: the gateway node's MagicDNS name (e.g. `box.tailb12aa5.ts.net`) serving `/pair/*`
+  — `hermes watch setup --fix serve` prints the exact line to type on the watch.
 - `requires_hermes >= 0.22` (floor re-measured at PR time).
 
 ## The claim door (pairing API — the watch client is built against exactly this)
