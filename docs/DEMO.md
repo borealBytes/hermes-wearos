@@ -239,12 +239,13 @@ newer session-authority gateways 400 the watch's approval POST unless the body i
 poll normalizes `pending_controls[]` + one retry-from-snapshot on 400). Shots: `02b` PASS
 (t02bJ — grid dead-center; first two frames were splash-swallowed and one re-mask read a
 stale square: masks must diff 0 against their input), `05` PASS, `48` PASS (aurora + audio
-sting), `56` PASS (NEW — `-e approvals 1`, zero code), `33` PASS — re-framed via the
-deterministic `approval_demo 1` inject in a FRESH chat (heading + mono chip + flanks all
-legible; the gate claim now matches the idle orb — no stop square without a live run),
-`34` keeps its real-run shot and still PASSes; `retry-from-snapshot ok` log proof awaits a
-free lane (owner traffic held 10e `queued` 20 min → cancelled; lesson: the demo inject is
-the deterministic card lane). Docs-VM:
+sting), `56` PASS (NEW — `-e approvals 1`, zero code), `33` PASS — re-shot from a REAL
+gated run (batch10i, fresh chat, card scrolled center: yellow heading + mono chip with the
+exact parked command + wrench status + live stop orb; the ✅/❌ flanks hide while the card
+is fully on-glass — the app's own bottom-only rule), `34` PASS — that same run's settled
+answer after the wrist approve: parked → answered with the gen triple → `finish run
+error=false`, the fixed POST accepted FIRST TRY (retry-from-snapshot held in reserve,
+normalizer unit-proven). Docs-VM:
 plugin/config shots re-plumbed to the DESKTOP-IN-WEB ticket lane (`webapp_open` in
 capture.sh) — the Wear Kit PANE itself is desktop-APP-only, now stated in that README. Hero:
 `demo-walkthrough-v0.8.0.gif` (splash first → 16 beats → end card; v0.7.0 purged per §9).
