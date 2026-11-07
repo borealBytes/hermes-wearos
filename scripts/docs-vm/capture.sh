@@ -104,8 +104,8 @@ trap cleanup EXIT
 webapp_open(){
   local WEBTXT GPORT
   WEBTXT=$($SSH 'export PATH=$HOME/.local/bin:$PATH
-    hermes dashboard --stop >/dev/null 2>&1 || pkill -f "hermes dashboard" || true
-    pkill -f "hermes serve" || true
+    hermes dashboard --stop >/dev/null 2>&1 || true
+    fuser -k 9119/tcp >/dev/null 2>&1 || true
     sleep 2
     setsid nohup hermes serve >/tmp/serve.log 2>&1 < /dev/null &
     sleep 8
@@ -140,7 +140,7 @@ $SSH 'sudo tailscale logout 2>/dev/null || true
       rm -rf ~/.hermes/plugin-data/agent-plugin-wearos-* 2>/dev/null || true'
 # the dashboard process still holds the OLD env; restart it so nothing stale loads
 $SSH 'export PATH=$HOME/.local/bin:$PATH
-      hermes dashboard --stop >/dev/null 2>&1 || pkill -f "hermes dashboard" || true
+      hermes dashboard --stop >/dev/null 2>&1 || pkill -f "[h]ermes dashboard" || true
       sleep 2
       setsid nohup hermes dashboard --no-open --skip-build --port 9119 >/tmp/dash.log 2>&1 < /dev/null &
       sleep 6'
@@ -193,7 +193,7 @@ $SSH 'sudo tailscale set --operator=docs 2>/dev/null || true'
 say "SET B: front the claim door (tailscale funnel via the wizard fix-verb)"
 # restart dashboard so the plugin re-reads .env + config BEFORE the fix verb
 $SSH 'export PATH=$HOME/.local/bin:$PATH
-      hermes dashboard --stop >/dev/null 2>&1 || pkill -f "hermes dashboard" || true
+      hermes dashboard --stop >/dev/null 2>&1 || pkill -f "[h]ermes dashboard" || true
       sleep 2
       setsid nohup hermes dashboard --no-open --skip-build --port 9119 >/tmp/dash.log 2>&1 < /dev/null &
       sleep 6'
