@@ -87,8 +87,8 @@ enum class RenderCase(val id: String, val markdown: String) {
     Av(
         "av",
         "The comfy render is ready, and the sting is mixed:\n\n" +
-            "MEDIA:/run/media/user/Data/comfy/projects/hermes-wear-demo/outputs/muxed/demo-vertical-v0.6.0-song-d.mp4\n\n" +
-            "MEDIA:/tmp/medtest.wav\n\n" +
+            "MEDIA:/tmp/clip.mp4\n\n" +
+            "MEDIA:/tmp/tone.opus\n\n" +
             "Tap a card for fullscreen; back returns here.\n",
     ),
     Steps(
