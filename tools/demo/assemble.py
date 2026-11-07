@@ -18,33 +18,36 @@ with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 RAW = f"{VID}/demo-vertical-v{VER}-raw.mp4"
 
 # (source, in, dur, beat) ; None => canvas-only card. Arcs show the WHOLE feature:
-# action -> stream -> result. Durations tuned per raw's best window.
+# action -> stream -> result. Durations tuned per raw's best window (ffprobe-verified 2026-11-07:
+# every in+dur lands inside the take). v0.8.0: 24 beats / 141.3 s.
+# Stills linger, arcs show action->result. The 964x546 attention PAIR ships as its right half
+# (46-attention-off.png, gif_build.pair_half geometry) — no two-watch circle (§4 owner rule).
+# Karaoke + desktop-watch lost their motion takes this round: both ship as refreshed stills.
 SEGS = [
     (None,               None,  3.0,  0),   # hero card
     ("r0splash-take",     3.0,  9.0,  1),   # cold launch -> splash film -> reveal on moving frame
     ("r1dial",            0.5,  7.0,  2),   # orb tap -> dial ring pins, lanes glow
     ("r3-voice",          1.5,  8.0,  3),   # hold to mic lane -> listening -> live word stream
-    ("r2b-chat",          0.5,  7.5,  4),   # streamed answer scroll on the glass
-    ("img-02b-chat-table",0.0,  4.5,  5),   # markdown table card (still, slow push)
-    ("img-04-viewer-zoom",0.0,  4.5,  6),   # full-bleed image viewer (still, slow push)
-    ("img-25-model-picker",0.0, 4.0,  7),   # model picker modal (still)
-    ("img-26-model-picked",0.0, 4.0,  8),   # picked toast = routed (still)
-    ("r5b-approval",      1.5,  9.5,  9),   # gated command parks the card -> Approve tap -> resumes
-    ("img-33-approval-card",0.0,4.5, 10),   # the card on the transcript (still)
-    ("img-21-sessions-search",0.0,4.5,11),  # Search - 10 results (still)
-    ("r6e-sessions",      1.5, 13.0, 12),   # long-press row -> sheet -> archive -> filter
-    ("img-31-notify-plain",0.0, 4.0, 13),   # settle card in the shade (still)
-    ("img-32-notify-approval",0.0,4.0, 14), # approval notification (still)
-    ("r-karaoke",         None, 9.0, 15),   # karaoke follow while the reply speaks (pending take)
-    ("r-media",           1.5, 12.0, 16),   # media cards -> player -> volume -> pinch zoom
-    ("img-48-media-cards", 0.0, 4.0, 17),   # the media epic card wall (still)
-    ("img-50-gif-card",   0.0, 4.0, 18),   # animated GIF card (still; gif itself loops)
-    ("r7c-settings",      1.5, 10.0, 19),   # Settings pages + live font-scale drag
-    ("r7e-edge",          0.5,  6.5, 20),   # rim (edge-circle) drag scrolls the list
-    ("r7d-gateways",      1.0, 12.0, 21),   # gateway registry: winner dot + fallback
+    ("r2b-chat",          0.5,  7.5,  4),   # streamed answer scroll + tool call on the glass
+    ("img-02b-chat-table",0.0,  4.5,  5),   # batch-10 4-col Slip/Depth/Tide/Wind grid (still)
+    ("img-05-mermaid",    0.0,  4.5,  6),   # batch-10 graph LR round-trip diagram (still)
+    ("img-25-model-picker",0.0, 4.0,  7),   # model picker modal (still; picked-toast beat folded)
+    ("r5b-approval",      1.0,  9.0,  8),   # gated command parks the card -> Approve tap -> resumes
+    ("img-33-approval-card",0.0,4.5,  9),   # real gated run card in the transcript (still)
+    ("img-56-approval-modes",0.0,4.5,10),   # Inherit/Manual/Smart sheet (still, NEW in v0.8)
+    ("img-21-session-search",0.0,4.5,11),   # Search - 14 on `harbor` (still, re-shot)
+    ("r6e-sessions",      1.0, 10.5, 12),   # long-press row -> sheet -> archive -> filter
+    ("img-32-notify-approval",0.0,4.5, 13), # approval notification, actions expanded (still)
+    ("img-39-karaoke-follow",0.0,4.5, 14),  # spoken sentence highlighted (still — take pending)
+    ("r-media",           0.0,  4.5, 15),   # media cards -> player -> volume -> pinch (4.7 s take)
+    ("img-48-media-cards", 0.0, 4.5, 16),   # aurora gif card + audio sting wall (still)
+    ("r50-gif",           0.5,  7.0, 17),   # animated GIF card ON THE GLASS (motion take)
+    ("r7c-settings",      1.5, 10.5, 18),   # Settings pages + live font-scale drag
+    ("r7e-edge",          0.2,  4.3, 19),   # rim (edge-circle) drag scrolls the list
+    ("r7d-gateways",      0.5,  8.5, 20),   # gateway registry: winner dot + fallback
+    ("img-46-attention-off",0.0,4.5, 21),   # desktop answer + parked approval buzz (pair half)
     ("img-55-tailnet-status",0.0,4.5, 22),  # the embedded tailnet node (still, redacted)
-    ("r46-desktop",       None, 9.0, 23),   # DESKTOP WATCH: answer + approval park on the wrist
-    (None,               None,  3.5, 24),   # end card
+    (None,               None,  3.5, 23),   # end card
 ]
 
 def run(cmd):
