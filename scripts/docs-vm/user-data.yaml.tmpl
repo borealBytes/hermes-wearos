@@ -1,0 +1,29 @@
+#cloud-config
+# Cloud-init NoCloud seed for the docs VM — rendered by seed.sh (fills @SSH_PUB@).
+# The VM is born PII-clean: hostname `hermes-docs`, user `docs`, generic slirp IP.
+# Everything below runs inside the throwaway docs VM only.
+# NOTE: #cloud-config MUST be the literal first line or cloud-init ignores this file.
+hostname: hermes-docs
+manage_etc_hosts: true
+ssh_pwauth: false
+users:
+  - name: docs
+    groups: [sudo, adm]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - @SSH_PUB@
+runcmd:
+  # Tailscale's official installer: repo key + package + enable tailscaled.
+  # The node is installed but NOT logged in here — that is the SET A red-light state.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+package_update: true
+packages:
+  - qemu-guest-agent
+  - rsync
+  - curl
+  - ca-certificates
+  - git
+  - python3-venv
+output: {all: '>> /var/log/cloud-init-output.log'}
