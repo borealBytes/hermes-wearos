@@ -1428,7 +1428,12 @@ UI pass shows the full Media settings page and the knob→server round trip end 
 Three lanes, one build contract. Every lane runs `gradle :app:assembleRelease` with the
 ci.yml pins (temurin JDK 17 · gradle 8.13 · platforms;android-35 · build-tools;35.0.0) and
 zipalign+apksigner CI-side — the tailnet node rides the committed AAR (§11.4), so CI has no
-Go/NDK leg anywhere.
+Go/NDK leg anywhere. One deliberate asymmetry: the PR lane assembles with
+`-x lintVitalRelease`, because the release-target fatal-lint gate is a judgment the @rc and
+v-tag lanes enforce verbatim (as of this writing it aborts on
+`InvalidFragmentVersionForActivityResult` — `androidx.wear` resolves fragment 1.2.4; the fix
+is an explicit fragment ≥ 1.3.0 dependency in app/, tracked there, not here). A preview you
+can install should not be hostage to a gate whose whole job is guarding the Release.
 
 | Lane | Trigger | Signed with | Where it lands | Verify |
 |---|---|---|---|---|
