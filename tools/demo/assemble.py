@@ -21,25 +21,30 @@ RAW = f"{VID}/demo-vertical-v{VER}-raw.mp4"
 # action -> stream -> result. Durations tuned per raw's best window.
 SEGS = [
     (None,               None,  3.0,  0),   # hero card
-    ("r0-splash",         4.5,  9.0,  1),   # cold launch -> splash film -> reveal on moving frame (marks +5.3/+12.4)
-    ("r1-dial",           3.5,  4.0,  2),   # dial ring pinned, 8 lanes glow (dial_preview)
-    ("r1-dial",           7.5,  8.5,  3),   # press-hold red mic orb -> listening -> live STT partial "what"
-    ("r2b-chat",          4.0,  8.5,  4),   # streamed answer + red stop orb + scroll
-    ("r8-stopcards",     5.0, 14.0,  5),   # 700-word essay streams, tap orb -> "— stopped —" red stamp
-    ("img-table-02e",    0.0,  4.5,  6),   # markdown table card in the demo chat (still, slow push)
-    ("img-viewer-04e",    0.0,  4.5,  7),   # media viewer at 2.5x zoom (still, slow push)
-    ("r4b-pickers",       2.5,  9.0,  8),   # model picker: providers -> model list
-    ("r5b-approval",      8.0,  7.9,  9),   # ⚠ Approve card lands over the stream + ✅/❌ wedges
-    ("r5c-approve",       1.0,  7.0, 10),   # ✅ tap -> run resumes (gateway cancel -> continue)
-    ("img-sess-21d",      0.0,  4.5, 11),   # Search - 2 results for "harbors" (still, slow push)
-    ("r6e-sessions",      2.0, 14.0, 12),   # long-press row -> sheet -> archive -> count 11->10
-    ("img-shade-44",      0.0,  4.5, 13),   # desktop-session approval buzz card (still)
-    ("img-notify-31",     0.0,  4.5, 14),   # off-glass settle card, voice suppressed (still)
-    ("r3-voice",         17.0, 10.0, 15),   # voice-out speaks + karaoke follow on the reply
-    ("r7c-settings",      6.5, 11.0, 16),   # Display page + live font-scale 1.6 -> 0.75 -> reset
-    ("r7e-edge",          1.5,  6.9, 17),   # rim (edge-circle) drags scroll the list + normal swipe
-    ("r7d-gateways",      3.0, 13.0, 18),   # multi-gateway registry: winner dot + fallback + badge
-    (None,               None,  3.5, 19),   # end card
+    ("r0splash-take",     3.0,  9.0,  1),   # cold launch -> splash film -> reveal on moving frame
+    ("r1dial",            0.5,  7.0,  2),   # orb tap -> dial ring pins, lanes glow
+    ("r3-voice",          1.5,  8.0,  3),   # hold to mic lane -> listening -> live word stream
+    ("r2b-chat",          0.5,  7.5,  4),   # streamed answer scroll on the glass
+    ("img-02b-chat-table",0.0,  4.5,  5),   # markdown table card (still, slow push)
+    ("img-04-viewer-zoom",0.0,  4.5,  6),   # full-bleed image viewer (still, slow push)
+    ("img-25-model-picker",0.0, 4.0,  7),   # model picker modal (still)
+    ("img-26-model-picked",0.0, 4.0,  8),   # picked toast = routed (still)
+    ("r5b-approval",      1.5,  9.5,  9),   # gated command parks the card -> Approve tap -> resumes
+    ("img-33-approval-card",0.0,4.5, 10),   # the card on the transcript (still)
+    ("img-21-sessions-search",0.0,4.5,11),  # Search - 10 results (still)
+    ("r6e-sessions",      1.5, 13.0, 12),   # long-press row -> sheet -> archive -> filter
+    ("img-31-notify-plain",0.0, 4.0, 13),   # settle card in the shade (still)
+    ("img-32-notify-approval",0.0,4.0, 14), # approval notification (still)
+    ("r-karaoke",         None, 9.0, 15),   # karaoke follow while the reply speaks (pending take)
+    ("r-media",           1.5, 12.0, 16),   # media cards -> player -> volume -> pinch zoom
+    ("img-48-media-cards", 0.0, 4.0, 17),   # the media epic card wall (still)
+    ("img-50-gif-card",   0.0, 4.0, 18),   # animated GIF card (still; gif itself loops)
+    ("r7c-settings",      1.5, 10.0, 19),   # Settings pages + live font-scale drag
+    ("r7e-edge",          0.5,  6.5, 20),   # rim (edge-circle) drag scrolls the list
+    ("r7d-gateways",      1.0, 12.0, 21),   # gateway registry: winner dot + fallback
+    ("img-55-tailnet-status",0.0,4.5, 22),  # the embedded tailnet node (still, redacted)
+    ("r46-desktop",       None, 9.0, 23),   # DESKTOP WATCH: answer + approval park on the wrist
+    (None,               None,  3.5, 24),   # end card
 ]
 
 def run(cmd):
