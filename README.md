@@ -89,12 +89,10 @@ One shipped capability per row — every image below is a real capture in
 | **Per-chat model picker** — the 🧠 lane lists what your gateway exposes (default, provider back-ends, counts) and the header says the scope: *this chat only*. Every other chat keeps its own model. | **Picked = routed** — the toast names the exact id (`gpt-6-luna`), the next reply rides that model, and the gateway's usage log carries one call under it. The watch never bakes model names in; it lists what the gateway lists. |
 | <img src="docs/screens/28-browser-opened.png" width="180"/> | <img src="docs/screens/54-tool-activity.png" width="180"/> |
 | **Links are links** — a markdown link in an answer is blue, underlined, tappable; here the watch's browser renders the repo's GitHub org profile, at full width, on the wrist. | **See what the tools did** — every run that touches a tool carries a collapsible activity card: step count, per-tool commands, done ✓. The desktop's verbosity box, on your wrist, persisted in the transcript. |
-| <img src="docs/screens/33-approval-card.png" width="180"/> | <img src="docs/screens/34-approval-approved.png" width="180"/> |
-| **Approvals, in-session** — a gated tool call pauses the run and the card rides with it: yellow heading, the *exact parked command* in a mono chip, and the red-ringed stop orb; scroll the card off-glass and the answer moves to the orb flanks — ✅ left, ❌ right, no app-switching, no terminal. | **Tap OK — the run resumes** — the tool executes mid-run and the settled answer arrives in the same thread, seconds later. |
+| <img src="docs/screens/33-approval-card.png" width="180"/> | <img src="docs/screens/56-approval-modes.png" width="180"/> |
+| **Approvals, in-session** — a gated tool call pauses the run and the card rides with it: yellow heading, the *exact parked command* in a mono chip; scroll the card off-glass and the answer moves to the orb flanks — ✅ left, ❌ right, no app-switching, no terminal. Tap ✅ and the tool executes mid-run; the settled answer lands in the same thread seconds later. | **The approval level is yours, per chat** — Manual answers every prompt yourself, Smart auto-approves while you're away and asks when the chat is on your glass, Inherit defers to the agent default (SPEC §12.9). |
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/21-session-search.png" width="180"/> |
 | **Sessions, from your wrist** — every session your agent has, newest first, with a scrolling chip row to filter in one tap (`all` / per-agent / `💻 computer` — desktop-and-web lanes — / `archived`); one-tap new. | **Voice-or-type search, every session, every agent** — one query hits the gateway's full-text index; results come back across all your agents with the matching line quoted and the hit bracketed. |
-| <img src="docs/screens/56-approval-modes.png" width="180"/> | |
-| **The approval level is yours, per chat** — Manual answers every prompt yourself, Smart auto-approves while you're away and asks when the chat is on your glass, Inherit defers to the agent default (SPEC §12.9). | |
 | <img src="docs/screens/22-session-sheet.png" width="180"/> | <img src="docs/screens/23-archived-chip.png" width="180"/> |
 | **Long-press any session row** — ⑂ fork it into your agent and keep talking, 🗃 archive it off-canvas, or 🗑 delete behind a real double-tap confirm. | **Archived is not gone** — the 🗃 chip row filter shows the off-canvas pile; holding a row there gives ♻️ back. |
 | <img src="docs/screens/24-unarchive.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
@@ -103,11 +101,12 @@ One shipped capability per row — every image below is a real capture in
 | **Settled while you're away** — the answer lands as an ordinary Wear notification, orb-spirit avatar and all; the reply text is right in the card. Your DND, mute, and per-app settings all apply — the watch never shouts over a meeting. | **Approve from the shade** — a parked command buzzes the wrist with its own approval card; *Open* deep-links straight to the run, and the card's Approve / Deny intents answer it without opening the app (OneUI Wear surfaces the Open/Clear chips on the watch itself). |
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/30-settings-lane.png" width="180"/> |
 | **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together; ● marks the live agent. | **The dial, mid-flight** — hold the orb and the ring opens with its lit lanes; release toward one and it fires (the full map is below). The ⚙ lane is why Settings is never more than a flick. |
-| <img src="docs/screens/48-media-cards.png" width="180"/> | <img src="docs/screens/49-video-player.png" width="180"/> |
-| **Generated media rides the answer** — when the desktop can render, so can the wrist: this comfy aurora clip arrived as a `MEDIA:` line and landed as an inline card *that animates in the thread* (GIF chip on the corner), the mixed sting right below it — tap any card for fullscreen. | **Full-screen player, bezel-steered** — media3 transport with skip chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — the 60 % here came off that exact code path over adb). Close the sheet, and the bezel is system volume again. |
-| <img src="docs/screens/50-gif-card.gif" width="180" alt="A chat image card playing an animated GIF: test-pattern bars cycling under a GIF chip, recorded off the watch and circle-masked — real motion, real pixels"/> | <img src="docs/screens/51-video-pinched.png" width="180"/> |
-| **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This frame is a screen recording, circle-masked: the bars are moving. | **Pinch-to-zoom video** — the same zoom lane the image viewer has, living inside the player itself: pinch to 3×, drag to pan, double-tap toggles fit↔2.5×, and taps still raise the transport. |
-| <img src="docs/screens/52-audio-player.png" width="180"/> | **Audio gets the same front door** — an Opus clip from the gateway's media pipeline opens a full-screen sheet with the media3 transport; the bezel steers its volume exactly like video's. |
+| <img src="docs/screens/48-media-cards.png" width="180"/> | <img src="docs/screens/50-gif-card.gif" width="180" alt="A chat image card playing an animated GIF: test-pattern bars cycling under a GIF chip, recorded off the watch and circle-masked — real motion, real pixels"/> |
+| **Generated media rides the answer** — when the desktop can render, so can the wrist: this comfy aurora clip arrived as a `MEDIA:` line and landed as an inline card *that animates in the thread* (GIF chip on the corner), the mixed sting right below it — tap any card for fullscreen. | **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This is a screen recording, circle-masked: the bars are moving. |
+| <img src="docs/screens/49-video-player.gif" width="180" alt="The full-screen video player recorded off the watch while playing: the aurora clip mid-flight across frames, skip chips and the fading bezel-volume readout — circle-masked, real motion"/> | <img src="docs/screens/52-audio-player.png" width="180"/> |
+| **Full-screen player, bezel-steered** — media3 transport with skip chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — that meter came off the exact code path, driven over adb). Close the sheet, and the bezel is system volume again. Recording, not a still — the clip is playing across the frames. | **Audio gets the same front door** — an Opus clip from the gateway's media pipeline opens a full-screen sheet with the media3 transport; the bezel steers its volume exactly like video's. |
+| <img src="docs/screens/51-video-pinched.png" width="180"/> | |
+| **Pinch-to-zoom video** — the same zoom lane the image viewer has, living inside the player itself: pinch to 3×, drag to pan, double-tap toggles fit↔2.5×, and taps still raise the transport. | |
 | <img src="docs/screens/53-handoff-adopted.png" width="220" align="left" hspace="16"/> | **One conversation, either device.** A chat started at the desktop opens on the wrist with its whole history (gateway-first backfill — the orange "from" pill counts the rows that arrived from the gateway), you keep talking in the *same* session, and it keeps answering for the desktop too. No fork, no second copy: the cross-lane door is a one-column promote the watch does for you (SPEC §12.13), always reversible, and the desktop's own view never drifts. Manual fork stays exactly where it was — in your hand, on the session sheet. |
 | <img src="docs/screens/44-notify-desktop-approval.png" width="180"/> | <img src="docs/screens/45-notify-desktop-settled.png" width="180"/> |
 | **A desktop run parks on your wrist** — when a session running at your desk hits a gated command, the parked command buzzes your watch; *Open* adopts the session and answers it from the wrist. | **Answers finished off the wrist** — an ordinary notification says "answer ready", and one tap drops you into the thread mid-stream. The off-screen feed survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no double-post on handback). |
@@ -223,6 +222,29 @@ Three moving parts (plus the plugin, which is really the fourth):
 | Hermes gateway | Any Hermes install: point the plugin at a profile (e.g. `wear`) with a persona, tools, and an API key. SSE run streaming + cancel. |
 | `server/watchkit/` | Optional zero-dependency Node daemon: mermaid → PNG, full-res `/img` serving from allow-listed roots (GIFs verbatim — the animation survives), `/media` pre-shrink (H.264+AAC / Ogg-Opus) so clips stream smooth on wrist Wi-Fi, opt-in body-tool snapshot cache (+ MCP for the agent), cron/job probes. A render sidecar — never in the run path (SPEC §12.13). The plugin's in-process media lane is porting; the sidecar is the documented fallback. |
 
+### Who owns what — and why a plugin at all
+
+The watch app could, in principle, ship you a URL bar and a token field and call it done. That is
+exactly the old life, and it is why the plugin exists: **everything the watch should never have to
+know about your tailnet lives on the gateway side of the line.** A Tailscale API token is an
+admin-grade credential — minting keys, tagging nodes, patching ACLs — and a Galaxy Watch is the
+wrong place to paste one. The plugin keeps that credential on your box, where Hermes already keeps
+secrets, and hands the watch a key that is single-use, tag-restricted, and dead the moment
+enrollment finishes. Pairing becomes the only ceremony: six digits on the glass, one `pair` to
+Hermes, done — no console, no copy-paste, no phone app.
+
+| | **The plugin owns** (`hermes-plugin/`, on your gateway box) | **The watch owns** (`app/`, Wear APK) |
+|---|---|---|
+| Trust | The Tailscale credential; minting single-use pre-authorized `tag:hermes-watch` keys; the ACL grants (tagOwners + funnel attr) that make enrollment self-serve and narrow | The node identity it earns from that one key — and nothing else; it never sees an API token |
+| Pairing | The PIN ledger (5-min TTL, one claim, rate limits), the Funnel claim door (`/pair/*`, port 42653 loopback), the wizard (`hermes watch setup --fix …`) with per-node funnel links | Showing the 6-digit PIN, one handle field, the Knock button — and collecting the enrollment packet exactly once |
+| Transport | — (out of the data path entirely) | The embedded tsnet node: every REST/SSE call rides the watch's own WireGuard leg; loopback SOCKS5 shim; failover probe |
+| The agent relationship | Profile routing (`/p/wear`), per-profile API keys, session tools (`watch_sessions_*`, `watch_status`…), the Desktop Wear Kit pane, `hermes watch` CLI, readiness lights | The conversation: streaming markdown, the orb, approvals UI, on-device Vosk STT + TTS, media rendering, body tools |
+| Media | Telling the watch where watchkit is (ports ride the packet) | Rendering; and — being ported into the plugin — in-process image/GIF/video pre-shrink so the Node sidecar becomes optional |
+
+Read the middle column as the security story: the plugin is the **provisioner and the bouncer**;
+the APK is the **resident**. The resident can be thrown out (reinstall, factory reset) and let back
+in with a PIN, and nothing the attacker holds from the watch ever outlives a single enrollment.
+
 ## Networking: the watch's own tailnet node is the transport
 
 The app embeds a real Tailscale node (`tsnet`, no system Tailscale needed on the watch or a phone).
@@ -298,12 +320,9 @@ whose whole job is a four-step checklist:
 Below the checklist: the paired-device list and the **readiness lights** (tailscaled, credential,
 MagicDNS, funnel) — every red light names its fix verb, and `hermes watch setup` prints the same
 list as JSON. A desktop row stuck on *"copying…"* is core's pending-sync state: hit **Rescan**
-on the pane and it lands.
-
-The web dashboard's Plugins page shows the management tile — the card honestly says *"No dashboard
-tab"*, because this plugin's page is the Desktop pane, not a web page:
-
-<img src="docs/screens/60-plugin-card.png" width="720" alt="The wearos card on the Hermes dashboard Plugins page: name, source, version, enabled chip, description, and Disable / Remove controls — the card reads 'No dashboard tab'"/>
+on the pane and it lands. The web dashboard shows the same plugin as a plain management tile
+(Disable / Remove, *"No dashboard tab"* — honestly: this plugin's page is the Desktop pane, not
+a web page).
 
 The real config form (Settings ▸ Plugins ▸ wearos) is generated from the plugin's `config_schema`,
 descriptions included; secret fields render blank even when set — they are never echoed back. Full
@@ -320,7 +339,7 @@ terminal.
 | | |
 |---|---|
 | <img src="docs/screens/61-vm-plugins-page.png" width="420"/> | <img src="docs/screens/62-vm-wizard-red.png" width="420"/> |
-| **A brand-new install's Plugins page** — the wearos card is the only user-source plugin on the box, and the card legitimately says "No dashboard tab". | **`hermes watch setup` before any credential** — verbatim wizard JSON: red lights, each with its fix hint. Nothing invented for the camera. |
+| **A brand-new install's Plugins page** (Settings ▸ **Plugins**): the `wearos` row is the only user-source plugin on the box. The left nav grows a `wearos` sub-entry; the row and the **Manage plugins →** link both land on the Wear Kit pane — the config form two shots below is exactly what that click opens. The card legitimately says "No dashboard tab". | **`hermes watch setup` before any credential** — verbatim wizard JSON: red lights, each with its fix hint. Nothing invented for the camera. |
 | <img src="docs/screens/63-vm-wizard-green.png" width="360"/> | <img src="docs/screens/64-vm-pairing-ceremony.png" width="480"/> |
 | **Tailnet joined, funnel up, no watch yet** — all green except `devices_online: 0 paired`. Honest state, honest screenshot. | **The whole ceremony, start to finish** — mint PIN → watch knocks `POST /pair/claim` → `hermes watch pair <PIN>` claims → the packet is collected ONCE (the second GET gets 410). Single-use by construction. |
 | <img src="docs/screens/65-vm-wizard-paired.png" width="320"/> | <img src="docs/screens/66-vm-webapp-plugin-settings.png" width="420"/> |
