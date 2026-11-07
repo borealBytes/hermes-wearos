@@ -86,27 +86,34 @@ dc.ellipse((CX - 8, CY - 8, CX + D + 8, CY + D + 8), outline=COBALT + (230,), wi
 dc.ellipse((CX - 18, CY - 18, CX + D + 18, CY + D + 18), outline=COBALT + (70,), width=3)
 
 # ---- 4) per-beat caption pills ----
+# v0.8.0 vertical tour: 24 beats, index-aligned with assemble.py SEGS' beat column. Every
+# caption was re-worded against the batch-10 pixels (4-col grid, real gated card, LR mermaid,
+# aurora media, live GIF card, tailnet page) — pills measure <= canvas width.
 BEATS = [
-    "HERMES WEAR",
-    "LAUNCH INTO A FILM - THE SPLASH INTRO",
-    "ORB DIAL - DRAG EIGHT WAYS",
-    "PUSH TO TALK - SPEECH-TO-TEXT ON THE WRIST",
-    "STREAMED ANSWERS + LIVE TOOL CALLS",
-    "STOP ANY RUN MID-FLIGHT",
-    "TABLES - MERMAID - IMAGES - INLINE",
-    "TAP A CARD - ZOOM AND PAN",
-    "SWAP MODELS PER CHAT",
-    "GATED COMMANDS APPROVE ON THE WRIST",
-    "APPROVED - THE RUN RESUMES",
-    "SEARCH EVERY SESSION FROM THE WRIST",
-    "ARCHIVE AND UNARCHIVE - NOTHING LOST",
-    "DESKTOP RUNS BUZZ THE WRIST",
-    "SPOKEN ON GLASS - NOTIFIED OFF IT",
-    "VOICE OUT + KARAOKE FOLLOW",
-    "FONT SCALE - YOUR EYES YOUR SIZE",
-    "EDGE-CIRCLE SCROLLING - EVERY LIST",
-    "YOUR GATEWAYS - SAVE - SELECT - FAIL OVER",
-    "HERMES WEAR",
+    "HERMES WEAR",                                             # 00 hero card (wordmark)
+    "LAUNCH INTO A FILM - THE SPLASH INTRO",                   # 01 r0splash-take
+    "ORB DIAL - DRAG EIGHT WAYS",                              # 02 r1dial
+    "PUSH TO TALK - SPEECH-TO-TEXT ON THE WRIST",              # 03 r3-voice
+    "STREAMED ANSWERS + LIVE TOOL CALLS",                      # 04 r2b-chat
+    "MARKDOWN TABLES - REAL GRIDS ON THE WRIST",               # 05 img-02b-chat-table (4-col)
+    "MERMAID - RENDERED ON YOUR BOX",                          # 06 img-05-mermaid (graph LR)
+    "SWAP MODELS PER CHAT",                                    # 07 img-25-model-picker
+    "GATED COMMANDS APPROVE ON THE WRIST",                     # 08 r5b-approval
+    "THE PARKED COMMAND RIDES IN CHAT",                        # 09 img-33-approval-card (real run)
+    "APPROVAL MODES - INHERIT MANUAL SMART",                   # 10 img-56-approval-modes (NEW)
+    "SEARCH EVERY SESSION FROM THE WRIST",                     # 11 img-21-session-search
+    "ARCHIVE AND UNARCHIVE - NOTHING LOST",                    # 12 r6e-sessions
+    "APPROVE FROM THE NOTIFICATION SHADE",                     # 13 img-32-notify-approval (expanded)
+    "VOICE OUT + KARAOKE FOLLOW",                              # 14 img-39-karaoke-follow (still)
+    "TAP A CARD - PLAYER - VOLUME - PINCH",                    # 15 r-media
+    "GENERATED VIDEO AND AUDIO ON THE WRIST",                  # 16 img-48-media-cards (aurora gif)
+    "GIFS DECODE ON THE WRIST",                                # 17 r50-gif (MOTION take)
+    "FONT SCALE - YOUR EYES YOUR SIZE",                        # 18 r7c-settings
+    "EDGE-CIRCLE SCROLLING - EVERY LIST",                      # 19 r7e-edge
+    "YOUR GATEWAYS - SAVE - SELECT - FAIL OVER",               # 20 r7d-gateways
+    "DESKTOP RUNS BUZZ THE WRIST",                             # 21 img-46-attention-off (pair half)
+    "THE WATCH IS ITS OWN TAILNET NODE",                       # 22 img-55-tailnet-status
+    "HERMES WEAR",                                             # 23 end card (wordmark)
 ]
 fpill = font("RulesCnd-Light.ttf", 44)
 fsmall = font("RulesCmp-Medium.ttf", 30)

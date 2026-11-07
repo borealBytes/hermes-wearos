@@ -164,21 +164,21 @@ class NetworkWatchTest {
         // resolver in its own LinkProperties, yet .ts.net resolves because slirp forwards the HOST's
         // on-tailnet resolver. "Can't resolve" would have been a lie there; a dead probe never is.
         val tailnetUrl = "http://hermes.tailca7ee1.ts.net:8642"
-        val lanUrl = "http://192.168.1.50:8642"
+        val literalUrl = "http://box.home.arpa:8642" // a user-added literal — no tailnet clause it earns
         assertEquals(
             "wifi(wlan0) · validated — tailnet entries unreachable from here",
-            NetworkWatch.describe(wifi, listOf(tailnetUrl, lanUrl), mapOf(tailnetUrl to false, lanUrl to true)),
+            NetworkWatch.describe(wifi, listOf(tailnetUrl, literalUrl), mapOf(tailnetUrl to false, literalUrl to true)),
         )
         // It ANSWERED: a working route is a working route, whatever the capabilities claim. The
         // emulator lives in this case — it wins on a .ts.net endpoint while having no tailnet of its
         // own, and the hint printed next to that winner said two opposite things.
         assertEquals(
             "wifi(wlan0) · validated",
-            NetworkWatch.describe(wifi, listOf(tailnetUrl, lanUrl), mapOf(tailnetUrl to true, lanUrl to true)),
+            NetworkWatch.describe(wifi, listOf(tailnetUrl, literalUrl), mapOf(tailnetUrl to true, literalUrl to true)),
         )
         assertEquals(
             "wifi(wlan0) · validated",
-            NetworkWatch.describe(wifi, listOf(lanUrl), mapOf(lanUrl to true)),
+            NetworkWatch.describe(wifi, listOf(literalUrl), mapOf(literalUrl to true)),
         )
     }
 
@@ -203,8 +203,8 @@ class NetworkWatchTest {
                 wifi.copy(dns = listOf("192.168.10.1", NetInfo.TAILSCALE_RESOLVER)), listOf(tailnetUrl),
             ),
         )
-        // A LAN-only gateway never earns a tailnet clause at all.
-        assertEquals("wifi(wlan0) · validated", NetworkWatch.describe(wifi, listOf("http://192.168.1.50:8642")))
+        // A literal-only endpoint list never earns a tailnet clause at all.
+        assertEquals("wifi(wlan0) · validated", NetworkWatch.describe(wifi, listOf("http://box.home.arpa:8642")))
     }
 
     @Test

@@ -4,9 +4,11 @@
 Owner pacing rules (2026-11-01 batch): stills linger ~1.5 s (hero/end ~2.5 s) so they can
 actually be read, and motion is shown ONLY where it's real — the splash beat plays frames cut
 from the SHIPPED intro asset (circle-cropped, transparent bg), and since batch 9 an animated
-`docs/screens` GIF artifact plays its own recorded frames the same way. Canvas, fonts, caption
-pills and the `v<VER> · wear-demo` bug reuse the film's design system (see canvas_build.py +
-docs/DEMO.md §5).
+`docs/screens` GIF artifact plays its own recorded frames the same way. Since the v0.8 hero
+re-cut, stills read the shipped SQUARE originals (`tmp-shots/screens-square/`, falling back to
+the masked `docs/screens` artifact) and the GIF cuts its own circle with the splash mechanism —
+one round, cut fresh, never double-masked. Canvas, fonts, caption pills and the `v<VER> ·
+wear-demo` bug reuse the film's design system (see canvas_build.py + docs/DEMO.md §5).
 
 Run:  python3 tools/demo/gif_build.py     (writes to /tmp then into docs/demo/)
 """
@@ -15,6 +17,7 @@ import os, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GIF_TMP = os.environ.get("DEMO_GIF_TMP", "/tmp/opencode/gifbuild")
 SCREENS = os.path.join(ROOT, "docs", "screens")
+SQUARES = os.path.join(ROOT, "tmp-shots", "screens-square")
 ASSET = os.path.join(ROOT, "app", "src", "main", "assets", "hermes-watch-intro.mp4")
 _DEVKIT = os.path.join(os.path.dirname(ROOT), "devkit", "demo")
 FONT_DIR = os.environ.get("DEMO_FONTS", os.path.join(_DEVKIT, "fonts"))
@@ -119,15 +122,29 @@ def wordmark(canvas, sub):
     tracked(dd, ((W - ws) / 2, y2), sub, fs, (150, 158, 190), track=2)
     return ov
 
+def source_path(png):
+    """v0.8 hero rule: beats use the shipped SQUARE originals (this round's pixels, pre-mask);
+    fall back to the masked `docs/screens` artifact when no square exists — the animated `.gif`
+    beat is exactly that case."""
+    sq = os.path.join(SQUARES, png)
+    return sq if os.path.exists(sq) else os.path.join(SCREENS, png)
+
+def circle_cut(img, side):
+    """The GIF cuts its own round: square pixels in, circle-cropped RGBA out — the splash's
+    circle_frame mechanism, so opaque corners can never leak onto the canvas and the shipped
+    mask is never double-masked."""
+    fr = img.resize((side, side), Image.LANCZOS).convert("RGB").convert("RGBA")
+    m = Image.new("L", (side, side), 0)
+    ImageDraw.Draw(m).ellipse((0, 0, side - 1, side - 1), fill=255)
+    fr.putalpha(m)
+    return fr
+
 def place_still(canvas, png):
-    """Composite a circle-masked docs/screens still into the watch circle (glass ring on top).
+    """Composite a circle-cut still into the watch circle (glass ring on top).
     `name#i` = half i of a pair composite (see pair_half)."""
     ov = canvas.copy()
-    path = pair_half(png, int(png.rsplit("#", 1)[1])) if "#" in png else os.path.join(SCREENS, png)
-    still = Image.open(path).convert("RGBA")
-    side = D - 6
-    still = still.resize((side, side), Image.LANCZOS)
-    ov.alpha_composite(still, (CX + 3, CY + 3))
+    path = pair_half(png, int(png.rsplit("#", 1)[1])) if "#" in png else source_path(png)
+    ov.alpha_composite(circle_cut(Image.open(path), D - 6), (CX + 3, CY + 3))
     ov.alpha_composite(chrome)
     return ov
 
@@ -140,42 +157,35 @@ def pair_half(png, i):
     material). Inside the GIF they'd squeeze two watches into one circle — the owner's rule is
     one screen per frame — so gif_build splits them and gives each half its own beat."""
     os.makedirs(HALVES, exist_ok=True)
-    out = os.path.join(HALVES, f"{png.replace('/', '_')}_{i}.png")
+    out = os.path.join(HALVES, f"v{VER}-{png.replace('/', '_')}_{i}.png")  # versioned: re-shoots re-cut
     if not os.path.exists(out):
-        im = Image.open(os.path.join(SCREENS, png.split("#", 1)[0])).convert("RGBA")
+        im = Image.open(source_path(png.split("#", 1)[0])).convert("RGBA")
         # pair canvases are 964x544: circles at x 6..475 and 489..958, y 6..475 (chips below
         # belong to the README layout; the GIF's caption pill says what the chip said).
         x0 = (6, 489)[i]
         im.crop((x0, 6, x0 + 470, 476)).save(out)
     return out
 
-# ---- the beat sheet: caption -> stills (docs/screens) ----
+# ---- the beat sheet: caption -> stills (square originals, see source_path) — v0.8 hero ----
+# Splash-first (below), then one beat per shipped v0.8 feature; the animated `.gif` artifact
+# plays its own recorded frames the way the splash does.
 BEAT_SHOTS = [
-    ("SPLASH MODES - BUILT-IN FILM - YOUR OWN", ["36-splash-picker.png"]),
     ("ORB DIAL - DRAG EIGHT WAYS", ["01-orb-cluster.png"]),
+    ("ANSWERS STREAM AS MARKDOWN", ["02-chat-markdown.png"]),
+    ("MARKDOWN TABLES - REAL GRIDS ON THE WRIST", ["02b-chat-table.png"]),
+    ("REPLIES CARRY IMAGES INLINE", ["03-image-card.png"]),
+    ("MERMAID DIAGRAMS - RENDERED ON YOUR BOX", ["05-mermaid.png"]),
     ("PUSH TO TALK - SPEECH-TO-TEXT ON THE WRIST", ["06-ptt-overlay.png"]),
-    ("STREAMED ANSWERS + LIVE TOOL CALLS", ["02-chat-markdown.png", "54-tool-activity.png"]),
-    ("STOP ANY RUN MID-FLIGHT", ["07-stop-running.png"]),
-    ("TABLES - MERMAID - IMAGES - INLINE", ["02b-chat-table.png", "05-mermaid.png", "03-image-card.png"]),
-    ("TAP A CARD - ZOOM - PAN - FOLLOW LINKS", ["04-viewer-zoom.png", "28-browser-opened.png"]),
-    ("GENERATED VIDEO AND AUDIO ON THE WRIST", ["48-media-cards.png", "49-video-player.png", "52-audio-player.png"]),
+    ("SWAP MODELS PER CHAT", ["25-model-picker.png"]),
+    ("GATED COMMANDS APPROVE ON THE WRIST", ["33-approval-card.png"]),
+    ("APPROVAL MODES - INHERIT, MANUAL, SMART", ["56-approval-modes.png"]),
+    ("FINISHED ANSWERS BUZZ THE WRIST", ["31-notify-plain.png"]),
+    ("DESKTOP RUNS PARK ON THE WRIST", ["44-notify-desktop-approval.png"]),
+    ("GENERATED VIDEO AND AUDIO ON THE WRIST", ["48-media-cards.png"]),
     ("ANIMATED GIFS - DECODED AND PLAYING ON THE WRIST", ["50-gif-card.gif"]),
-    ("PINCH TO ZOOM - EVEN THE PLAYER", ["51-video-pinched.png"]),
-    ("ONE CONVERSATION - EITHER DEVICE", ["08-sessions.png", "53-handoff-adopted.png"]),
-    ("SWAP MODELS PER CHAT", ["25-model-picker.png", "26-model-picked.png"]),
-    ("GATED COMMANDS APPROVE ON THE WRIST", ["32-notify-approval.png", "33-approval-card.png"]),
-    ("APPROVED - THE RUN RESUMES", ["34-approval-approved.png"]),
-    ("SEARCH EVERY SESSION FROM THE WRIST", ["21-session-search.png"]),
-    ("ARCHIVE AND UNARCHIVE - NOTHING LOST", ["23-archived-chip.png", "24-unarchive.png"]),
-    ("DESKTOP RUNS BUZZ THE WRIST", ["44-notify-desktop-approval.png", "45-notify-desktop-settled.png"]),
-    ("SPOKEN ON GLASS - LIVE CHAT, NO NOTIFY", ["46-attention-pair.png#0"]),
-    ("OFF THE WRIST - NOTIFIED, GLASS SILENT", ["46-attention-pair.png#1"]),
-    ("VOICE OUT + KARAOKE FOLLOW", ["37-voice-output.png", "39-karaoke-follow.png"]),
-    ("THREE WAYS IN - VOSK - VENDOR - GATEWAY", ["40-stt-source.png"]),
-    ("FONT SCALE - YOUR EYES YOUR SIZE", ["14a-fontscale-min.png", "14b-fontscale-max.png"]),
-    ("EDGE-CIRCLE SCROLL - LIST AT THE TOP", ["41-edge-circle-pair.png#0"]),
-    ("ONE DRAG ON THE RIM - A FULL SCREEN MOVED", ["41-edge-circle-pair.png#1"]),
-    ("YOUR GATEWAYS - SAVE - SELECT - FAIL OVER", ["42-gateways-multi.png", "55-tailnet-status.png", "47-about-screen.png"]),
+    ("ABOUT - VERSION AND DIAGNOSTICS", ["47-about-screen.png"]),
+    ("THE EMBEDDED TUNNEL - LIVE STATUS", ["55-tailnet-status.png"]),
+    ("ONE CONVERSATION - EITHER DEVICE", ["08-sessions.png"]),
 ]
 HOLD_STILL_MS = 1500
 HOLD_HERO_MS = 2500
@@ -198,11 +208,7 @@ if not os.path.isdir(intro_dir) or not os.listdir(intro_dir):
                     "-vf", f"fps={FPS}", os.path.join(intro_dir, "i%04d.png")], check=True)
 
 def circle_frame(path):
-    fr = Image.open(path).convert("RGBA").resize((D, D), Image.LANCZOS).convert("RGB").convert("RGBA")
-    m = Image.new("L", (D, D), 0)
-    ImageDraw.Draw(m).ellipse((0, 0, D - 1, D - 1), fill=255)
-    fr.putalpha(m)
-    return fr
+    return circle_cut(Image.open(path), D)
 
 # OPEN: the shipped film plays IN the watch circle, title text rides the top band (owner rule:
 # every frame carries the watch face — no text-only cards).
@@ -220,7 +226,7 @@ for cap, shots in BEAT_SHOTS:
     for png in shots:
         if png.endswith(".gif"):
             bg = pill(base, cap)
-            anim = Image.open(os.path.join(SCREENS, png))
+            anim = Image.open(source_path(png))
             for i in range(anim.n_frames):
                 anim.seek(i)
                 ov = bg.copy()

@@ -7,12 +7,12 @@ import org.junit.Test
 
 /**
  * Routing failures translated for a wrist (SPEC §11.5). The strings are the product here: the
- * owner saw OkHttp's `Unable to resolve host "labhost.tailca7ee1.ts.net" …` on the watch and
- * concluded the TAILNET was broken, when the truth was that the watch is not in the tailnet (no
- * MagicDNS, no route to the 100.64/10 range) and the endpoint list simply had no address its
- * current Wi-Fi could route to. These tests pin the translation, including the parts that must NOT
- * change: real errors keep their own message, and nothing may claim more routes were tried than the
- * probe record actually holds.
+ * owner once saw OkHttp's `Unable to resolve host "labhost.tailca7ee1.ts.net" …` on the watch and
+ * concluded the TAILNET was broken. Post-§11.4 the sentence has an even sharper meaning: every
+ * ask rides the watch's OWN node, so a `.ts.net` DNS miss can only mean the tunnel is not enrolled
+ * (or not up) — and the message must say ENROLL (Settings ▸ Pair), never "add a LAN entry". These
+ * tests pin the translation, including the parts that must NOT change: real errors keep their own
+ * message, and nothing may claim more routes were tried than the probe record actually holds.
  */
 class RouteReportTest {
 
@@ -54,11 +54,14 @@ class RouteReportTest {
 
     // ── the messages themselves ─────────────────────────────────────────────────────────────
     @Test
-    fun `tailnet dns miss says the WATCH cannot resolve it and where to fix that`() {
+    fun `tailnet dns miss says the WATCH tunnel is not enrolled and names the repair door`() {
         val msg = RouteReport.explain(dnsOnTailnet)
         assertTrue(msg, msg.contains("won't resolve on the watch"))
-        assertTrue(msg, msg.contains("Settings ▸ Gateways"))
-        assertTrue(msg, msg.contains("LAN"))
+        assertTrue(msg, msg.contains("Settings"))
+        // Post-§11.4: the fix is ENROLL/REPAIR of the tunnel (the Pair screen), never a LAN hint.
+        assertTrue(msg, msg.contains("enroll"))
+        assertTrue(msg, msg.contains("Pair"))
+        assertFalse(msg, msg.contains("LAN"))
         // The trap this exists for: it must not blame the tailnet as if the phone's state mattered.
         assertFalse(msg, msg.contains("Unable to resolve host"))
     }

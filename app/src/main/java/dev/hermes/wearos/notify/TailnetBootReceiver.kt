@@ -12,8 +12,9 @@ import kotlinx.coroutines.launch
 /**
  * Boot / replace lifeline (SPEC §11.4): the tunnel must be up BEFORE the first ask, not
  * after the first launch. BOOT_COMPLETED + MY_PACKAGE_REPLACED start [TailnetService]
- * when the feature is on and a key exists; both conditions are checked off the main
- * thread (DataStore read) inside a goAsync window.
+ * whenever the feature is on — and NO KEY NO LONGER EXEMPTS THE START: keyless the engine
+ * runs to NEEDS_AUTH and the Pair screen opens (release has no OFF at all). The check runs
+ * off the main thread (DataStore read) inside a goAsync window.
  */
 class TailnetBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -21,7 +22,7 @@ class TailnetBootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val settings = AppSettings(context)
-                if (settings.tailnetEnabled() && settings.tailnetKey().isNotEmpty()) {
+                if (settings.tailnetEnabled()) {
                     androidx.core.content.ContextCompat.startForegroundService(
                         context, Intent(context, TailnetService::class.java),
                     )

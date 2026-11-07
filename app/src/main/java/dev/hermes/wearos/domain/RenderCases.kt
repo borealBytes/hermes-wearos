@@ -14,13 +14,12 @@ package dev.hermes.wearos.domain
 enum class RenderCase(val id: String, val markdown: String) {
     Tables(
         "tables",
-        "Quarterly numbers, five columns (tap the table to open the viewer):\n\n" +
-            "| Region | Q1 | Q2 | Q3 | Plan |\n" +
-            "|---|---|---|---|---|\n" +
-            "| NA | 120 | 138 | 141 | +17% |\n" +
-            "| EMEA | 84 | 91 | 103 | +23% |\n" +
-            "| APAC | 41 | 55 | 62 | +51% |\n" +
-            "| LATAM | 12 | 14 | 19 | +58% |\n\n" +
+        "Harbor slips, four columns (BATCH-10: the labelled grid centers on the glass):\n\n" +
+            "| Slip | Depth | Tide | Wind |\n" +
+            "|---|---|---|---|\n" +
+            "| B-12 | 14m | rising | SW 12 |\n" +
+            "| B-14 | 12m | rising | SW 9 |\n" +
+            "| B-16 | 9m | falling | calm |\n\n" +
             "Six columns degrade to readable rows on purpose (SPEC §13.1):\n\n" +
             "| Region | Q1 | Q2 | Q3 | Plan | Owner |\n" +
             "|---|---|---|---|---|---|\n" +
@@ -42,16 +41,24 @@ enum class RenderCase(val id: String, val markdown: String) {
     ),
     Mermaid(
         "mermaid",
-        "Session handoff, rendered natively (branch 2):\n\n" +
+        "The whole voice round-trip, one diagram (BATCH-10: richer than the 3-node sketch):\n\n" +
             "```mermaid\n" +
-            "graph TD\n" +
-            "  A[watch records WAV] -->|multipart /stt| B[watchkit]\n" +
-            "  B --> C{backend}\n" +
-            "  C -->|whisper| D[faster-whisper]\n" + "  C -->|openai| E[Parakeet on the 4070]\n" +
-            "  C -->|cmd| F[any local CLI]\n" +
-            "  D --> G[text back to the watch]\n" +
-            "  E --> G\n" +
-            "  F --> G\n" +
+            "graph LR\n" +
+            "  subgraph WATCH [on the wrist]\n" +
+            "    M[mic PTT] --> V[Vosk STT offline]\n" +
+            "    V --> T[ask]\n" +
+            "  end\n" +
+            "  T -->|SSE /v1/runs| G[gateway]\n" +
+            "  G --> C{tool?}\n" +
+            "  C -->|yes, risky| A[approve on the orb flanks]\n" +
+            "  A --> X[terminal / skill]\n" +
+            "  C -->|no| R[answer stream]\n" +
+            "  X --> R\n" +
+            "  R --> S[markdown on the glass]\n" +
+            "  class M,V,T wrist;\n" +
+            "  classDef wrist fill:#2b3a67,stroke:#7aa2ff,color:#fff;\n" +
+            "  classDef dec fill:#3a2b67,stroke:#b39dff,color:#fff;\n" +
+            "  class C dec;\n" +
             "```\n",
     ),
     Pdf(
@@ -70,6 +77,16 @@ enum class RenderCase(val id: String, val markdown: String) {
             "watch says so plainly instead of eating the tap. A bare https://openrouter.ai/models\n" +
             "autolinks too.\n",
     ),
+    /** Animated GIF card (ledger row 51): the same /img route serving a gif — the watch decodes
+     *  it with ImageDecoder and animates in place (SPEC §12.14). /tmp/anim.gif is the staging
+     *  fixture docs/DEMO.md §6 copies onto the gateway box. */
+    Gif(
+        "gif",
+        "Mooring cam, compressed to a loop:\n\n" +
+            "![mooring cam loop](/tmp/anim.gif)\n\n" +
+            "Same /img route as every image card — the gif bytes ride through verbatim and the " +
+            "watch animates them on the glass.\n",
+    ),
     Media(
         "media",
         "Everything at once, worst case:\n\n" +
@@ -80,15 +97,17 @@ enum class RenderCase(val id: String, val markdown: String) {
             "See [the spec](docs/SPEC.md) §13 for the rest.\n",
     ),
     /**
-     * MEDIA EPIC fixture (owner 2026-11-02): real files that exist on the gateway box during
-     * development — one generated video (watchkit /media posters + transcodes it) and one audio
-     * clip (wav → m4a). `-e render av` + a tap each = the whole lane in one screenshot.
+     * MEDIA EPIC fixture (owner 2026-11-02; BATCH-10 rework): the comfy render rides the gif lane
+     * — owner 2026-11-07: "video media should be gifs, render in comfyui via hermes agent aurora
+     * borealis video" — so the card ANIMATES in the chat (ImageDecoder lane, shot 50's proof)
+     * instead of a static poster you must tap open. The audio clip (wav → m4a via watchkit
+     * /media) stays. `-e render av` + a tap each = the whole lane in one screenshot.
      */
     Av(
         "av",
-        "The comfy render is ready, and the sting is mixed:\n\n" +
-            "MEDIA:/run/media/user/Data/comfy/projects/hermes-wear-demo/outputs/muxed/demo-vertical-v0.6.0-song-d.mp4\n\n" +
-            "MEDIA:/tmp/medtest.wav\n\n" +
+        "The comfy aurora render is ready (it animates right here), and the sting is mixed:\n\n" +
+            "MEDIA:/tmp/opencode/aurora-vid.gif\n\n" +
+            "MEDIA:/tmp/tone.opus\n\n" +
             "Tap a card for fullscreen; back returns here.\n",
     ),
     Steps(

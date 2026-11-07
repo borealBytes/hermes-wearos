@@ -37,7 +37,17 @@ data class ChatMessage(val id: Long, val role: Role, val text: String) {
     enum class Role { User, Hermes, System }
 }
 
-data class ApprovalInfo(val runId: String, val requestId: String?, val question: String, val choices: List<String>)
+data class ApprovalInfo(
+    val runId: String,
+    val requestId: String?,
+    val question: String,
+    val choices: List<String>,
+    // BATCH-10: newer gateways run a session-authority approval store whose answer endpoint
+    // requires the EXACT triple {request_id, execution_generation, choice} — the watch learned
+    // this the hard way (400 invalid_params on a re-shoot). Both the SSE event and the run
+    // status pending_controls carry it; we thread it through and send it when known.
+    val gen: Int = 0,
+)
 
 /** Sessions-screen status: cache-served fallback + staleness hint (owner ask #2). */
 data class SessionsMeta(val stale: Boolean = false, val fetchedAtMs: Long = 0L, val error: String = "")
@@ -613,7 +623,14 @@ class ChatSession(
             }
             "approval.request" -> {
                 val q = obj.str("command") ?: obj.str("question") ?: obj.str("message") ?: "Approve this action?"
-                onApprovalArrived(ApprovalInfo(runId, obj.str("request_id") ?: obj.str("id"), q, obj.choiceNames()))
+                onApprovalArrived(
+                    ApprovalInfo(
+                        runId,
+                        obj.str("request_id") ?: obj.str("prompt_id") ?: obj.str("id"),
+                        q, obj.choiceNames(),
+                        gen = obj.num("execution_generation").toInt(),
+                    ),
+                )
             }
             "run.completed" -> finishWith(obj.str("output") ?: _state.value.live)
             "run.failed" -> finishWith("⚠️ ${obj.str("error") ?: obj.str("turn_exit_reason") ?: "run failed"}", error = true)
@@ -639,8 +656,9 @@ class ChatSession(
                 "cancelled" -> return finishWith("(cancelled)")
                 "waiting_for_approval" -> snap.approval?.let { ap ->
                     onApprovalArrived(ApprovalInfo(
-                        runId, ap.str("request_id") ?: ap.str("id"),
+                        runId, ap.str("request_id") ?: ap.str("prompt_id") ?: ap.str("id"),
                         ap.str("command") ?: "Approve?", ap.choiceNames(),
+                        gen = ap.num("execution_generation").toInt(),
                     ))
                 }
             }
@@ -699,7 +717,25 @@ class ChatSession(
         // the same request again. It resets with the next chat open (see openChat path above).
         Notifs.cancelApproval(app, info.runId)
         scope.launch {
-            try { api().respondApproval(info.runId, choice, info.requestId) }
+            try {
+                try {
+                    api().respondApproval(info.runId, choice, info.requestId, info.gen)
+                } catch (e: ApiException) {
+                    // BATCH-10: a session-authority gateway answers 400 invalid_params unless the
+                    // body carries the exact {request_id, execution_generation, choice} triple.
+                    // One retry from a FRESH status snapshot (which normalizes prompt_id + gen from
+                    // pending_controls) covers events that predate those fields.
+                    if (e.code != 400) throw e
+                    val ap = try { api().runStatus(info.runId).approval } catch (_: Exception) { null }
+                    if (ap == null) throw e
+                    api().respondApproval(
+                        info.runId, choice,
+                        ap.str("request_id") ?: ap.str("id"),
+                        ap.num("execution_generation").toInt(),
+                    )
+                    Log.i(TAG, "approval retry-from-snapshot ok run=${info.runId}")
+                }
+            }
             catch (e: Exception) { finishWith("⚠️ approval failed: ${e.message}", error = true) }
         }
     }
@@ -728,7 +764,8 @@ class ChatSession(
                     }
                     val names = ap?.choiceNames() ?: listOf("approve", "deny")
                     api().respondApproval(runId, if (approve) names.first() else names.last(),
-                        ap?.str("request_id") ?: ap?.str("id"))
+                        ap?.str("request_id") ?: ap?.str("prompt_id") ?: ap?.str("id"),
+                        ap?.num("execution_generation")?.toInt() ?: 0)
                     Log.i(TAG, "approval $runId answered via status fallback approve=$approve")
                 }
             } catch (e: Exception) {

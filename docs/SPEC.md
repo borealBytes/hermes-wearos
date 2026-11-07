@@ -1423,6 +1423,50 @@ every `/media` URL the watch requests. `WearApp.loadMediaPrefs` rehydrates at bo
 the poster card, the playing fullscreen player, and the session restored on back; the emulator
 UI pass shows the full Media settings page and the knob→server round trip end to end.
 
+## 18. DISTRIBUTION — every PR ships an APK; @rc rolls; tags are the release (owner doctrine, 2026-11-06)
+
+Three lanes, one build contract. Every lane runs `gradle :app:assembleRelease` with the
+ci.yml pins (temurin JDK 17 · gradle 8.13 · platforms;android-35 · build-tools;35.0.0) and
+zipalign+apksigner CI-side — the tailnet node rides the committed AAR (§11.4), so CI has no
+Go/NDK leg anywhere. One deliberate asymmetry: the PR lane assembles with
+`-x lintVitalRelease`, because the release-target fatal-lint gate is a judgment the @rc and
+v-tag lanes enforce verbatim (as of this writing it aborts on
+`InvalidFragmentVersionForActivityResult` — `androidx.wear` resolves fragment 1.2.4; the fix
+is an explicit fragment ≥ 1.3.0 dependency in app/, tracked there, not here). A preview you
+can install should not be hostage to a gate whose whole job is guarding the Release.
+
+| Lane | Trigger | Signed with | Where it lands | Verify |
+|---|---|---|---|---|
+| **PR preview** | any PR to main (`pr-apk.yml`) | **ephemeral CI debug key** — keytool mints a fresh keypair in-job; the release secrets are never read | workflow artifact `wearos-pr<N>` (APK + SHA256SUMS.txt, 30 d retention); one idempotent marker-comment on the PR carries the exact run id + sha256 | `sha256sum -c SHA256SUMS.txt` |
+| **Rolling @rc** | every push to main (`apk-release.yml`, `preview` job) | **real release keystore** — same cert as the v-tags | one mutable GitHub **prerelease** on the moving tag `@rc`: the tag is force-moved to the new main SHA and the assets replaced in place (`overwrite_files`) — no cruft pile-up | `gh attestation verify` + `sha256sum -c` |
+| **Release** | `v*` tag (unchanged — the shipped v0.6/v0.7 chain) | real release keystore | GitHub Release on the version tag, SLSA-attested | same |
+
+**Who signs what, and why it matters.** One key (`HERMES_KEYSTORE_B64`, header of
+apk-release.yml) defines the upgrade chain: Play ↔ @rc ↔ v-tags all carry its certificate, so
+each replaces the previous without an uninstall. PR previews deliberately sit OUTSIDE that
+chain: same applicationId `dev.hermes.wearos` + different signature ⇒ uninstall-before-swap,
+and every re-run mints a new key, so a preview is a try-it, never an upgrade path. That is
+the honest trade that lets the APK-on-every-PR rule exist without ever exposing — or risking
+rotation of — the release key in a PR-scope job.
+
+**@rc is a moving target by design.** It answers "what does current main feel like on my
+wrist?" and nothing else: it can be rewritten under you by the next merge (job-level
+concurrency serializes back-to-back merges so two runs never fight over the tag), it is
+`prerelease: true` + `make_latest: false` so it never poses as Latest, and its one stable
+asset name (`hermes-wearos-@rc.apk`) always means "latest main". Consumers wanting stability
+pin tags. Docs/markdown-only pushes don't even trigger the build (`paths-ignore` on main
+pushes; a real release commit always edits VERSION, so tags are never gated by it, and
+`workflow_dispatch` remains the escape hatch).
+
+**Verify commands (copy-paste):**
+
+```bash
+gh run download <run-id> -n wearos-pr<N> --repo borealBytes/hermes-wearos -D wearos-pr<N>  # PR preview
+cd wearos-pr<N> && sha256sum -c SHA256SUMS.txt                                              # every lane
+gh attestation verify --repo borealBytes/hermes-wearos hermes-wearos-@rc.apk # @rc + v-tags
+apksigner verify --print-certs <apk>   # who signed it: release key vs CI debug key
+```
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist

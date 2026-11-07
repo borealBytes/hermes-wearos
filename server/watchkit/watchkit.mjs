@@ -37,6 +37,8 @@
  *        JPEG frame for the inline card; &probe=1 → {duration_s,width,height,kind}. img_roots apply.
  *   POST /render/mermaid  → image/png  {code, width, format?}  (mmdc, .cache/ renders)
  *   POST /stt/whisper     → {text}     multipart "audio" wav/webm ≤10MB     (faster-whisper CPU)
+ *   GET  /stt/vosk-model  → small-en-us zip (~40MB), gateway-cached, Range-resumable — the watch's
+ *        in-app "install offline model" streams from here (bearer; health reports stt.vosk_model).
  *   WS   /stt/stream      ← BINARY mic audio from the watch (Ogg/Opus · ADTS AAC · legacy PCM —
  *        (bearer)            format sniffed from the first bytes), TEXT {"end":true}
  *                          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
@@ -52,6 +54,7 @@
  * Keeping it warm (persistent worker/stdin loop) is a deliberate TODO, not a bug.
  */
 import http from 'node:http';
+import https from 'node:https';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { attachSttStream, sttEngineStatus } from './stt_stream_ws.mjs';
@@ -100,6 +103,7 @@ const TMP_DIR = path.join(CACHE_DIR, 'tmp');
 const NPM_CACHE = path.join(CACHE_DIR, 'npm');          // npx package cache
 const PUPPETEER_CACHE = path.join(CACHE_DIR, 'puppeteer'); // chromium download
 const MODELS_DIR = path.join(WK_DIR, '.models');
+const VOSK_MODEL = 'vosk-model-small-en-us-0.15'; // served at GET /stt/vosk-model, cached in .models/
 const VENV_PY = path.join(WK_DIR, '.venv', 'bin', 'python');
 const TRANSCRIBER = path.join(WK_DIR, 'whisper_transcribe.py');
 const PUPPETEER_CFG = path.join(CACHE_DIR, 'puppeteer.json');
@@ -1112,6 +1116,52 @@ async function handleMedia(req, res, ip, params) {
   }
 }
 
+// ── /stt/vosk-model ────────────────────────────────────────────────────────
+// The watch installs its OFFLINE engine from here: Settings ▸ Voice in ▸ install. One canonical
+// copy of the small-en-us zip lives in .models/ (fetched from alphacephei on first request and
+// cached forever); every watch re-streams it from THIS box over the tailnet bearer it already
+// has — no CDN dependency on the wrist, and a factory reset re-pulls from a familiar endpoint.
+// sendFile gives resume (Range) for free, which matters on a 40 MB pull over flaky watch wifi.
+const VOSK_ZIP = path.join(MODELS_DIR, `${VOSK_MODEL}.zip`);
+const VOSK_URL = `https://alphacephei.com/vosk/models/${VOSK_MODEL}.zip`;
+let voskFetch = null; // in-flight single-flight so N watches trigger one download
+
+function voskModelStatus() {
+  try { const s = fs.statSync(VOSK_ZIP); return { ready: true, size: s.size }; }
+  catch { return { ready: false, size: null }; }
+}
+
+function fetchVoskModel() {
+  if (fs.existsSync(VOSK_ZIP)) return Promise.resolve(VOSK_ZIP);
+  if (voskFetch) return voskFetch;
+  voskFetch = new Promise((resolve, reject) => {
+    const get = (url, hops, doneHops) => https.get(url, { timeout: 30_000 }, (r) => {
+      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && hops > 0) {
+        r.resume();
+        return get(new URL(r.headers.location, url).toString(), hops - 1, doneHops + 1);
+      }
+      if (r.statusCode !== 200) { r.resume(); return reject(new Error(`origin ${r.statusCode}`)); }
+      const part = `${VOSK_ZIP}.part`;
+      r.pipe(fs.createWriteStream(part))
+        .on('finish', () => { fs.renameSync(part, VOSK_ZIP); resolve(VOSK_ZIP); })
+        .on('error', (e) => { fs.rmSync(part, { force: true }); reject(e); });
+    }).on('error', reject).on('timeout', () => get.destroy(new Error('origin timeout')));
+  })
+    .then((p) => { logLine({ ev: 'vosk-model', ep: 'fetch', status: 200, bytes: fs.statSync(p).size }); voskFetch = null; return p; })
+    .catch((e) => { voskFetch = null; throw e; });
+  return voskFetch;
+}
+
+async function handleVoskModel(req, res, ip) {
+  const t0 = Date.now();
+  try {
+    await fetchVoskModel(); // waits out a cold fetch (single-flight across concurrent watches)
+    return sendFile(req, res, VOSK_ZIP, 'application/zip', { 'X-Vosk-Model': VOSK_MODEL });
+  } catch (e) {
+    return done(res, sendErr(res, 502, `vosk model fetch failed: ${String(e.message || e).slice(0, 200)}`), t0, ip, 'vosk-model', 502);
+  }
+}
+
 // ── /stt/whisper ───────────────────────────────────────────────────────────
 async function handleStt(req, res, ip) {
   const t0 = Date.now();
@@ -1402,7 +1452,7 @@ const server = http.createServer(async (req, res) => {
       // BATCH-4 #9: the watch's Settings shows WHICH engine would answer a streamed ask.
       return send(res, 200, JSON.stringify({
         status: 'ok', version: VERSION, uptime_s: Math.round((Date.now() - START_MS) / 1000),
-        stt: sttEngineStatus(cfg, VENV_PY, WK_DIR),
+        stt: { ...sttEngineStatus(cfg, VENV_PY, WK_DIR), vosk_model: voskModelStatus() },
       }));
     }
     const auth = req.headers.authorization || '';
@@ -1489,6 +1539,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url === '/render/mermaid') return await handleRender(req, res, ip);
     if (req.method === 'POST' && url === '/stt/whisper') return await handleStt(req, res, ip);
+    if ((req.method === 'GET' || req.method === 'HEAD') && url === '/stt/vosk-model') return await handleVoskModel(req, res, ip);
     return done(res, sendErr(res, 404, 'not found'), Date.now(), ip, url.slice(1), 404);
   } catch (e) {
     logLine({ ev: 'req', ip, ep: url, status: 500, ms: 0, err: String(e?.message || e) });

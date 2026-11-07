@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -646,7 +647,21 @@ private fun ApprovalCard(info: ApprovalInfo, onApprove: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text("⚠ Approve?", style = MaterialTheme.typography.body1, color = Color(0xFFF5C518))
-        Text(info.question, style = MaterialTheme.typography.caption1, fontSize = 13.sp)
+        // BATCH-10 (owner 2026-11-07: "approval in session should show some of the text"): the
+        // question IS the parked command (gateway `command` field) — surface it in a chip so the
+        // approver reads what they're green-lighting, mono like the desktop park card, 3 lines.
+        Text(
+            info.question,
+            style = MaterialTheme.typography.caption1.scaled(),
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colors.onBackground.copy(alpha = 0.12f))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        )
         // BATCH-4 #5: the ACTION moved to the orb flanks (✅ left / ❌ right, bottom-only — see
         // MainActivity.ApprovalFlank). The card is pure context now; in-flow OK/No buttons here
         // were exactly the "permanently hanging" pair the owner vetoed next to a fresh flank pair.
