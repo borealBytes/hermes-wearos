@@ -199,7 +199,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | — (new, 2026-11 round) | `35-splash-film.gif` (REAL looping intro film, cut from the shipped asset — superseded `.png`), `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png`, `47-about-screen.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy, About | refreshed |
 | hero film | RE-CUT complete (`demo-vertical-v0.6.0-raw.mp4`, 20 beats, 149 s) — owner scores + uploads, then README YouTube link swap | yes | refreshed (owner upload pending) |
 | `demo-walkthrough.gif` | RE-CUT from the new film's keyframes; committed as **`demo-walkthrough-v0.6.0.gif`** (version in the name — README links the current one; old GIF purged) | — | refreshed |
-| `21-session-search.png` | re-shot | honest: query is `harbors ` with IME up; results = 2 seeded wear-demo rows | refreshed |
+| `21-session-search.png` | re-shot (batch-10, post world-prune) | claim REFRESHED: query `harbor`, `Search · 14`, watch-tagged brief + [Harbor]-bracketed rows; IME up at type time (query lands via `-e search` for the shot) | refreshed |
 | `11-gateways.png` | re-shot (from the r7d film raw — live registry); 42 shows the same registry a beat later | alt re-worded to pixels | refreshed |
 | `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5); ● marks the live agent | refreshed |
 | — (new, batch 9 / v0.7.0) | `48-media-cards.png`, `49-video-player.png`, `50-gif-card.gif` (MOTION artifact, screen-recorded), `51-video-pinched.png`, `52-audio-player.png`, `53-handoff-adopted.png`, `54-tool-activity.png`, `55-tailnet-status.png`; re-shots of `08`/`11`/`42`/`47` | NEW README rows in the feature grid + handoff lead-in + tailnet img in §Networking + `wifi(wlan0)`/pixelation alt refresh | refreshed |
@@ -223,8 +223,8 @@ Tailscale console pair awaits the owner's noVNC login (`/tmp/opencode/rs/console
 png`); karaoke 39, gif 50, desktop-watch 44/45/46 and the final 21 await the sglang lane — the
 owner's comfyui h3 batch holds the gateway's turn semaphore (runs park `queued`; cancel the
 head via `POST /v1/runs/<id>/stop`). [Update: 39/50/44/45/46 all shipped — see the batch-10
-log below; only the final `21` re-shoot from that list remains, deliberately last so the
-pruned world is what it photographs.]
+log below; the final `21` re-shoot was deliberately left last so the
+pruned world is what it photographs — and it now has.]
 
 **Batch-10 wave (2026-11-07, the owner-rework round):** five asks — approvals-levels shot,
 richer + centered mermaid, approval card shows the parked command, 4-column centered table,
@@ -248,8 +248,10 @@ the deterministic card lane). Docs-VM:
 plugin/config shots re-plumbed to the DESKTOP-IN-WEB ticket lane (`webapp_open` in
 capture.sh) — the Wear Kit PANE itself is desktop-APP-only, now stated in that README. Hero:
 `demo-walkthrough-v0.8.0.gif` (splash first → 16 beats → end card; v0.7.0 purged per §9).
-World hygiene: 13 probe-junk sessions archived through the feature itself; the 24-row
-archive (the 23/24 story) untouched.
+World hygiene: 13 probe-junk sessions archived through the feature itself (the `run_e23ae…`
+raw-id chat went the same way — 14 total); the archive story rows untouched. Final `21`
+re-shot on the pruned world in the SAME wave: `Search · 14` on `harbor`, watch-tag +
+[Harbor] brackets legible — PASS.
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
