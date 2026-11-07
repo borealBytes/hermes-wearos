@@ -70,6 +70,16 @@ enum class RenderCase(val id: String, val markdown: String) {
             "watch says so plainly instead of eating the tap. A bare https://openrouter.ai/models\n" +
             "autolinks too.\n",
     ),
+    /** Animated GIF card (ledger row 51): the same /img route serving a gif — the watch decodes
+     *  it with ImageDecoder and animates in place (SPEC §12.14). /tmp/anim.gif is the staging
+     *  fixture docs/DEMO.md §6 copies onto the gateway box. */
+    Gif(
+        "gif",
+        "Mooring cam, compressed to a loop:\n\n" +
+            "![mooring cam loop](/tmp/anim.gif)\n\n" +
+            "Same /img route as every image card — the gif bytes ride through verbatim and the " +
+            "watch animates them on the glass.\n",
+    ),
     Media(
         "media",
         "Everything at once, worst case:\n\n" +
