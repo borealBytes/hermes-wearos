@@ -18,10 +18,10 @@ S = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs",
 CLAIMS = {
  "01-orb-cluster.png": "A watch chat shows a circular dial overlay: a large central red orb with a white stop square, ringed by small circular lane buttons including a keyboard, a red-struck speaker, a settings gear, and a pink brain icon.",
  "02-chat-markdown.png": "A watch chat reply shows a paragraph in which the single word 'tide' is BOLD, above a four-item bulleted list with dot bullets about harbor conditions (Water level, Wind, Two slips, Fog).",
- "02b-chat-table.png": "A watch chat reply renders a markdown table titled 'Slips' with a header row 'Slip' and 'Depth', a rule under the headers, and data rows B-12 14m, B-14 12m, B-16 9m.",
+ "02b-chat-table.png": "A watch chat shows a markdown table with a centered header row 'Slip' 'Depth' 'Tide' 'Wind' over a horizontal rule and three data rows beginning with B-12, B-14 and B-16.",
  "03-image-card.png": "A watch chat shows an inline image card rendering a bar chart titled '3-DAY WATER TEMP F' with three blue bars labelled Fri 61, Sat 60 and Sun 59.",
  "04-viewer-zoom.png": "A full-screen image viewer shows an aurora photo (green and purple ribbons over a dark tree line) filling the frame, with a circular X close chip at the top center and the caption 'Aurora over the breakwater' at the bottom.",
- "05-mermaid.png": "A watch chat reply shows a rendered diagram card with three light-colored nodes labelled 'Watch', 'Gateway' and 'watchkit' connected left-to-right by arrows.",
+ "05-mermaid.png": "A watch chat answer shows a rendered diagram card on a white canvas: at the left a blue node group labelled 'on the wrist' containing 'mic PTT' and 'Vosk STT offline' boxes, an edge labelled 'SSE /v1/runs' into a 'gateway' box, and a purple diamond with an arrow to a box labelled 'approve on the orb flanks'.",
  "06-ptt-overlay.png": "A voice-capture screen on the watch shows a microphone chip beside 'tap orb again · pause sends', a large live transcript word 'tide', a 'keyboard' escape pill, and a big red orb with the engraved girl portrait ringed in red at the bottom.",
  "07-stop-running.png": "A watch chat shows a live run: a blue user prompt about writing four hundred words, a yellow 'thinking...' status line, and a red circular button containing a white stop-square glyph.",
  "08-sessions.png": "A Sessions screen titled 'Sessions · 30' with a search field, a row of filter chips, and session rows below.",
@@ -49,7 +49,7 @@ CLAIMS = {
  "30-settings-lane.png": "A dark home titled 'Ask Hermes — tap the orb to talk' shows the engraved avatar orb at the bottom-center surrounded by an open ring of circular lane buttons: green checkmark, keyboard, speaker, person, gear, list, and a brain icon.",
  "31-notify-plain.png": "A watch notification list shows a card titled 'wear-demo brief' at 22:16 with body 'Harbor tonight: 8°C, wind SW 12 km/h, aurora KP 6 — the plot is in the chat.', beneath a spirit avatar marked with a blue bell badge; a second 'Hermes tailnet' card below has its hostname and IP lines covered by mosaic bands.",
  "32-notify-approval.png": "An expanded watch notification shows the text 'Send the buyer reply to Hannah?' with '(draft ready)' and below it full-width pill buttons labeled 'Approve', 'Deny', and 'Open session'.",
- "33-approval-card.png": "A watch chat shows a pending approval: a yellow 'terminal…' chip with a wrench icon under the prompt text, and at the bottom three round buttons in a row: a green checkmark, a red-ringed orb with a white stop square, and a red X.",
+ "33-approval-card.png": "A watch chat shows a pending approval: a yellow Approve heading at top, below it a dark rounded chip containing the mono command text 'Run rm -rf /tmp/scratch?', and at the bottom three round buttons in a row: a green checkmark, a dark spirit-orb with a drawn girl portrait, and a red X.",
  "34-approval-approved.png": "A watch chat shows a run continuing after approval: a yellow 'running...' status line, no approve or deny buttons, and a plain round avatar orb at the bottom.",
  "35-splash-film.gif": "A circular-masked cinematic splash art frame: an antique silver pocket watch floating over dark blue night clouds and stars, its lid closed (the glow arrives later in the clip; the gate only sees frame zero).",
  "36-splash-picker.png": "A Display settings page ('‹ all settings', heading Display) shows 'Markdown rendering' toggled on, 'Launch splash' with the Video chip highlighted blue next to Static, a 'Pick media' button, and the caption 'Media: built-in'.",
@@ -64,7 +64,7 @@ CLAIMS = {
  "45-notify-desktop-settled.png": "A round watch screen shows a notification list where a card titled 'Clean the scratch dir' has body text 'Answer ready on the desktop · open to read'.",
  "46-attention-pair.png": "Two round watch frames side by side: the left shows a chat with a user question bubble above an answer and a red-ringed spirit orb, captioned 'LIVE ON GLASS · SPOKEN, NO NOTIFY'; the right shows a notification list with a card whose body says 'Answer ready on the desktop', captioned 'OFF THE WRIST · NOTIFIED, SILENT'.",
  "47-about-screen.png": "An About settings page shows 'stt model: present' with a green check, 'version: v0.8.0', a 'MIT · borealBytes' line, a 'hermes-wearos — this repo' link row, and 'made by' / 'author' lines.",
- "48-media-cards.png": "A watch chat shows generated media as inline cards: a video card 'clip.mp4' with a colorful aurora-swirl poster frame and 'tap to play · fullscreen', and below it an audio card 'tone.opus' with a music-note icon and 'tap to listen'.",
+ "48-media-cards.png": "A watch chat shows generated media as inline cards: a photo card of a green and violet aurora over a night lake with a small GIF chip at its lower left, and below it a rounded audio card labelled 'tap to listen'.",
  "49-video-player.png": "A full-screen video player shows a moving aurora-swirl frame (green and purple rings) with media3 transport controls: a rewind-5 chip, a white pause circle, a forward-15 chip, a progress bar, a '🔊 60%' volume readout beside the bar, and '00:02 · 00:06' at the bottom.",
  "50-gif-card.gif": "A round watch frame of a chat screen mid-answer: an animated GIF card (a magenta frame with a rainbow radial burst and a 'GIF' chip in its corner) sits above text explaining that the gif bytes ride the same /img route as every image card, with the spirit-face orb glowing red at the bottom.",
  "51-video-pinched.png": "A full-screen video player shows the aurora-swirl clip magnified far past its original size: giant smooth green, blue and purple bands filling the whole frame with no controls visible.",
@@ -76,6 +76,7 @@ CLAIMS = {
  "58-voicein-downloading.png": "A Voice-in settings page shows the offline model row mid-install reading 'downloading 39% · 16 MB of 41 MB' below the gateway engine pills.",
  "59-voicein-installed.png": "A Voice-in settings page shows the offline model section reading 'installed · works offline' below the gateway engine pills.",
  "55-tailnet-status.png": "A Tailnet status page shows the section 'Status' with 'tailnet up' and two lines whose hostname and peer-IP segments are covered by mosaic bands, a 'Use tailnet' label, and a 'Node name' field below.",
+ "56-approval-modes.png": "A watch dialog titled 'Approvals' shows stacked mode buttons: a highlighted blue '● inherit' with hint 'what the agent does by default', a dark 'manual' button with hint 'you answer every approval', and a partially visible 'smart' button below.",
 }
 
 def ask(name, claim):

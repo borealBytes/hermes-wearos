@@ -29,7 +29,7 @@ only tailnet write, and `tailscale funnel` from the VM node fronts the door).
 
 | Shot | State | Truth |
 |---|---|---|
-| `61-vm-plugins-page.png` | fresh install | real `hermes dashboard` web UI, wearos card = the ONLY user-source plugin; the web card legitimately says "No dashboard tab" |
+| `61-vm-plugins-page.png` | fresh install | the wearos plugin row in the DESKTOP-IN-WEB plugins list (Settings ▸ Plugins) — `hermes webapp`, not the old `hermes dashboard` UI (owner rule 2026-11-07) |
 | `62-vm-wizard-red.png` | no tailscale login, no credential | verbatim `hermes watch setup` JSON, red lights + their fix hints |
 | `63-vm-wizard-green.png` | joined tailnet + funnel, NO watch | all green except `devices_online: 0 paired` — honest |
 | `64-vm-pairing-ceremony.png` | pairing simulated over curl | mint PIN → watch knocks `POST /pair/claim` → `hermes watch pair <PIN>` claims → packet collected ONCE (second GET = 410) |
@@ -84,15 +84,19 @@ leaves the tailnet as it found it (the node + its key expire in 24 h regardless)
 
 ## Known limitations (documented, not hidden)
 
-* The web DASHBOARD plugin card has no config form ("No dashboard tab" — see
-  shot 61); the real form lives in the DESKTOP/webapp surface. Shot 66 proves it:
-  run `hermes serve`, mint a one-use webapp ticket with `hermes webapp --no-open
-  --skip-build` (bundle built once by `hermes webapp --build-only`; the git
-  installer ships no prebuilt bundle), decline the provider setup screen, Settings
-  ▸ Plugins ▸ wearos.
+* **Plugin/config doc shots ride the DESKTOP-IN-WEB lane** (`hermes webapp`), not the old
+  `hermes dashboard` web UI (owner rule 2026-11-07). Mechanics, as encoded in
+  `capture.sh::webapp_open`: run `hermes serve` (the loopback serve itself is a headless
+  stub — its web UI is disabled and a non-loopback bind 400s the Host guard), mint a
+  ONE-USE 60 s ticket with `hermes webapp --no-open --skip-build` (bundle built once by
+  `hermes webapp --build-only`; the git installer ships no prebuilt bundle), decline the
+  provider setup screen, Settings ▸ Plugins ▸ wearos. The old dashboard card only ever
+  said "No dashboard tab" — one more reason it is not the proof surface.
 * The Desktop Wear Kit PANE (checklist + enable checkboxes,
-  `hermes-plugin/desktop/plugin.js`) is a right-sidebar layout pane; adding it to
-  the layout is a drag-and-drop action — capture.sh stops at the settings form.
+  `hermes-plugin/desktop/plugin.js`) is a right-sidebar layout pane of the **desktop APP
+  shell only** — the dist-webapp renderer does NOT carry it, and adding a pane to the
+  layout is a drag-and-drop action. So the web lane stops at the settings form (shot 66);
+  the pane shot comes from the running Desktop app itself.
 * `watchkit_token`/`gateway_api_key` are null in the packet: the docs VM runs no
   watchkit and its `wear` profile has no API_SERVER_KEY — a genuinely fresh box
   would look the same.

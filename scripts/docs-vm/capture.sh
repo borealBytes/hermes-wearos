@@ -18,10 +18,11 @@
 # text via render_terminal.py (see README — honesty rule).
 #
 # Shot order on purpose:
-#   61 plugins page (web dashboard, no account)   62 wizard RED (fresh, pre-credential)
+#   61 plugins page (DESKTOP-IN-WEB — `hermes webapp`, no account)   62 wizard RED (fresh, pre-credential)
 #   63 wizard GREEN but devices_online (joined, funneled, no watch — honest)
-#   64 pairing ceremony over curl (claim door)    65 wizard ALL GREEN + device row
-#   66 webapp Wear Kit page (Desktop-workspace surface)
+#   64 pairing ceremony over curl (claim door)   65 wizard ALL GREEN + device row
+#   66 webapp plugin config form (green state — the Wear Kit PANE itself is Desktop
+#      APP only; the dist-webapp renderer has no Wear Kit surface)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -91,8 +92,44 @@ fi
 RPORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
 python3 -m http.server "$RPORT" --bind 127.0.0.1 --directory "$WORK" >/dev/null 2>&1 &
 RSERVER=$!
-cleanup(){ kill "$TUNNEL" "$RSERVER" 2>/dev/null || true; }
+cleanup(){ kill "$TUNNEL" "$RSERVER" ${WEBFWD:+"$WEBFWD"} 2>/dev/null || true; }
 trap cleanup EXIT
+
+# Opens the REAL desktop-in-web (`hermes webapp`) — the new dashboard. Owner rule
+# (2026-11-07): plugin/config doc shots ride this lane, NOT the old `hermes dashboard`
+# web UI. Mechanics: the loopback `serve` is a headless stub (its web UI is disabled);
+# `hermes webapp` spawns a per-call gateway on a random port behind a ONE-USE 60 s
+# ticket link. Call, capture while the page lives, then `webapp_close`. Leaves $WEBFWD
+# (the ssh -L pid) for the caller's trap. Echoes 0 on success.
+webapp_open(){
+  local WEBTXT GPORT
+  WEBTXT=$($SSH 'export PATH=$HOME/.local/bin:$PATH
+    hermes dashboard --stop >/dev/null 2>&1 || pkill -f "hermes dashboard" || true
+    pkill -f "hermes serve" || true
+    sleep 2
+    setsid nohup hermes serve >/tmp/serve.log 2>&1 < /dev/null &
+    sleep 8
+    hermes webapp --no-open --skip-build 2>&1 | tail -4' || true)
+  GPORT=$(printf '%s' "$WEBTXT" | sed -nE 's|.*http://127.0.0.1:([0-9]+).*|\1|p' | head -1)
+  [ -n "$GPORT" ] || { echo "capture.sh: no sign-in link from hermes webapp — limitation noted in README"; printf '%s\n' "$WEBTXT"; return 1; }
+  setsid nohup ssh $SSHOPTS -o ServerAliveInterval=30 -N \
+    -L 127.0.0.1:19120:127.0.0.1:"$GPORT" docs@127.0.0.1 >/dev/null 2>&1 < /dev/null &
+  WEBFWD=$!; sleep 2
+  playwright-cli goto "http://127.0.0.1:19120/webapp/launch$(printf '%s' "$WEBTXT" | sed -nE 's|.*launch(#ticket=[^ "]*).*|\1|p' | head -1)" >/dev/null 2>&1; sleep 6
+  # first run lands on the provider-setup screen — decline like any keyboard user
+  playwright-cli eval "[...document.querySelectorAll('button,a')].find(b=>/choose a provider later/i.test(b.textContent))?.click()" >/dev/null 2>&1 || true
+  sleep 3
+  return 0
+}
+webapp_close(){ kill "${WEBFWD:-}" 2>/dev/null || true; WEBFWD=""; }
+webapp_click(){ # webapp_click <visible-text> — click the first button/link whose label starts with it
+  playwright-cli snapshot > "$WORK/.snap" 2>&1
+  local R
+  R=$(grep -o "button \"$1[^\"]*\" \[ref=[^]]*\]" "$WORK/.snap" | head -1 | sed -E 's/.*ref=([^]]*)\]/\1/' || true)
+  [ -n "$R" ] || R=$(grep -o "link \"$1[^\"]*\" \[ref=[^]]*\]" "$WORK/.snap" | head -1 | sed -E 's/.*ref=([^]]*)\]/\1/' || true)
+  [ -n "$R" ] && playwright-cli click "$R" >/dev/null 2>&1 && sleep 1 && return 0
+  echo "capture.sh: webapp step '$1' not found — see $WORK/.snap"; return 1
+}
 
 # ── SET A ──────────────────────────────────────────────────────────────────────
 # Deterministic fresh state: log the (ephemeral) node out — logout also tears the
@@ -113,19 +150,25 @@ $SSH 'export PATH=$HOME/.local/bin:$PATH; hermes watch setup 2>&1' | redact > "$
 shoot_terminal 62-vm-wizard-red.png wizard-red \
   "docs@hermes-docs:~ \$ hermes watch setup" "hermes-docs — fresh install, no credential"
 
-say "SET A: dashboard Plugins page (wearos card)"
-playwright-cli open "$DASH/plugins?profile=default" >/dev/null 2>&1 || \
-  playwright-cli goto "$DASH/plugins?profile=default" >/dev/null 2>&1
-playwright-cli resize 1360 900 >/dev/null 2>&1
-sleep 3
-# telemetry banner, if this build shows it, gets declined like any user would, so it
-# never appears in the shot
-playwright-cli eval "[...document.querySelectorAll('button')].find(b=>/^(No thanks|Dismiss)$/.test(b.textContent.trim()))?.click()" >/dev/null 2>&1 || true
-sleep 1
-# center the wearos card in the viewport, then shoot
-playwright-cli eval "(()=>{const els=[...document.querySelectorAll('*')].filter(e=>e.children.length===0&&e.textContent.trim()==='wearos');if(els[0])els[0].closest('li').scrollIntoView({block:'center'});return !!els[0]})()"
-sleep 1
-shot 61-vm-plugins-page.png ""
+say "SET A: Plugins page in the DESKTOP-IN-WEB (wearos card — the new dashboard, not the old web UI)"
+if $SSH 'test -d ~/.hermes/hermes-agent/apps/desktop/dist-webapp' && webapp_open; then
+  playwright-cli resize 1360 900 >/dev/null 2>&1
+  webapp_click "Open settings" || true
+  webapp_click "Plugins" || true
+  shot 61-vm-plugins-page.png ""
+  webapp_close
+else
+  echo "capture.sh: webapp unavailable — falling back to the old dashboard for 61 (stale UI!)"
+  playwright-cli open "$DASH/plugins?profile=default" >/dev/null 2>&1 || \
+    playwright-cli goto "$DASH/plugins?profile=default" >/dev/null 2>&1
+  playwright-cli resize 1360 900 >/dev/null 2>&1
+  sleep 3
+  playwright-cli eval "[...document.querySelectorAll('button')].find(b=>/^(No thanks|Dismiss)$/.test(b.textContent.trim()))?.click()" >/dev/null 2>&1 || true
+  sleep 1
+  playwright-cli eval "(()=>{const els=[...document.querySelectorAll('*')].filter(e=>e.children.length===0&&e.textContent.trim()==='wearos');if(els[0])els[0].closest('li').scrollIntoView({block:'center'});return !!els[0]})()"
+  sleep 1
+  shot 61-vm-plugins-page.png ""
+fi
 
 if $ONLY_A; then
   $SSH 'mv ~/.hermes/.env.setb ~/.hermes/.env 2>/dev/null || true'
@@ -198,37 +241,19 @@ say "SET B: wizard again — all green, 1 device paired"
 shoot_terminal 65-vm-wizard-paired.png wizard-paired \
   "docs@hermes-docs:~ \$ hermes watch setup" "hermes-docs — after pairing"
 
-say "SET B: webapp Wear Kit page (Desktop-workspace surface)"
-if $SSH 'test -d ~/.hermes/hermes-agent/apps/desktop/dist-webapp'; then
-  WEBTXT=$($SSH 'export PATH=$HOME/.local/bin:$PATH
-    hermes dashboard --stop >/dev/null 2>&1 || pkill -f "hermes dashboard" || true
-    sleep 2
-    setsid nohup hermes serve >/tmp/serve.log 2>&1 < /dev/null &
-    sleep 8
-    hermes webapp --no-open --skip-build 2>&1 | tail -4' || true)
-  GPORT=$(printf '%s' "$WEBTXT" | sed -nE 's|.*http://127.0.0.1:([0-9]+).*|\1|p' | head -1)
-  if [ -n "$GPORT" ]; then
-    setsid nohup ssh $SSHOPTS -o ServerAliveInterval=30 -N \
-      -L 127.0.0.1:19120:127.0.0.1:"$GPORT" docs@127.0.0.1 >/dev/null 2>&1 < /dev/null &
-    WEBFWD=$!; sleep 2
-    playwright-cli goto "http://127.0.0.1:19120/webapp/launch$(printf '%s' "$WEBTXT" | sed -nE 's|.*launch(#ticket=[^ "]*).*|\1|p' | head -1)" >/dev/null 2>&1; sleep 6
-    # first run lands on the provider-setup screen — decline like any keyboard user
-    playwright-cli eval "[...document.querySelectorAll('button,a')].find(b=>/choose a provider later/i.test(b.textContent))?.click()" >/dev/null 2>&1 || true
-    sleep 3
-    # Settings drawer → Plugins → wearos = the real config_schema form (the rich
-    # plugin-config surface; the web dashboard card only says 'No dashboard tab')
-    for step in "Open settings" "Plugins" "wearos"; do
-      playwright-cli snapshot > "$WORK/.snap" 2>&1
-      R=$(grep -o "button \"$step[^\"]*\" \[ref=[^]]*\]" "$WORK/.snap" | head -1 | sed -E 's/.*ref=([^]]*)\]/\1/' || true)
-      [ -n "$R" ] && playwright-cli click "$R" >/dev/null 2>&1 && sleep 1 || \
-        { echo "capture.sh: webapp step '$step' not found — see $WORK/.snap"; break; }
-    done
-    shot 66-vm-webapp-plugin-settings.png ""
-    kill "$WEBFWD" 2>/dev/null || true
-  else
-    echo "capture.sh: no sign-in link from hermes webapp — limitation noted in README"
-    printf '%s\n' "$WEBTXT"
-  fi
+say "SET B: webapp Wear Kit config (desktop-in-web, green state)"
+# Honest limit (owner 2026-11-07): the WEAR KIT pane lives in the Desktop APP shell
+# only — the dist-webapp renderer has no Wear Kit surface. What the web DOES have is
+# the real plugin config form (config_schema), which is what this shot proves.
+if $SSH 'test -d ~/.hermes/hermes-agent/apps/desktop/dist-webapp' && webapp_open; then
+  playwright-cli resize 1360 900 >/dev/null 2>&1
+  # Settings drawer → Plugins → wearos = the real config_schema form (the rich
+  # plugin-config surface; the old web dashboard card only said 'No dashboard tab')
+  webapp_click "Open settings" || true
+  webapp_click "Plugins" || true
+  webapp_click "wearos" || true
+  shot 66-vm-webapp-plugin-settings.png ""
+  webapp_close
 else
   echo "capture.sh: webapp bundle missing (hermes webapp --build-only failed?) — 66 skipped"
 fi

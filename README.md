@@ -6,20 +6,20 @@ tools, memory, cron jobs, and your files — answers on your wrist, out loud, be
 leaves the glass.
 
 <p align="center">
-  <img src="docs/screens/35-splash-film.gif" width="280" alt="The shipped splash film, circle-masked and looping: the pocket-watch lid springs open, eclipse light pours out, and Hermes rises through it — the real intro movie on your wrist, not a still"/>
+  <img src="docs/demo/demo-walkthrough-v0.8.0.gif" width="280" alt="The v0.8.0 walkthrough: the shipped splash film opens inside the watch circle, then sixteen captioned beats walk the features — orb dial, streaming markdown, a four-column table, image card, mermaid diagram, push-to-talk, model picker, the in-session approval card, the approval-mode sheet, a settled-answer notification, the desktop-watch mirror card, the comfy-generated aurora card, an animated GIF, About, tailnet status, sessions — closing on the wordmark"/>
 </p>
 
 <p align="center">
   <sub>▶ <a href="https://www.youtube.com/shorts/eSGy7jFHi18">the v0.7.0 tour</a> (1080×1920, scored by the owner's agent, captured live with no edits to the answers) ·
-  <a href="https://youtu.be/Cd4Y_ESQoQ0">the v0.6.0 full tour is here</a><br/>
-  <b>v0.8 tour — coming with the release</b> (this hero film is the shipped splash until then)<br/>
+  <a href="https://youtu.be/Cd4Y_ESQoQ0">the v0.6.0 full tour is here</a> ·
+  the v0.8 tour video lands with the release — the GIF above already walks it<br/>
   Splash art: <a href="docs/art-selfportrait.webp">her self-portrait</a> — engraved by the on-gateway
   image agent from its own idea of itself; it flashes for a beat on cold start, then gets out of your way.</sub>
 </p>
 
-<!-- TODO(v0.8-tour): the hero GIF/MP4 is being re-cut for the v0.8 plugin-era release — swap the
-     v0.7.0 YouTube link above for the v0.8 tour and refresh the walkthrough GIF when the release
-     train posts them. Do not delete the v0.7 line before that. -->
+<!-- TODO(v0.8-tour): the v0.8 walkthrough GIF is LIVE as the hero (splash-first, 16 feature
+     beats). When the release train posts the v0.8 tour video, swap it into the YouTube line
+     above. Do not delete the v0.7 line before that. -->
 
 <br clear="all"/>
 
@@ -76,7 +76,7 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/07-stop-running.png" width="180"/> | <img src="docs/screens/16-edit-resend.png" width="180"/> |
 | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. | **Edit & resend** — tap any sent prompt: the sheet quotes it back with **Edit & resend** (and Copy); the edited copy goes out as a fresh run while the original thread stays intact. |
 | <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/02b-chat-table.png" width="180"/> |
-| **Streaming markdown**, rendered for a round screen: headings, bold, italics, bullets, numbered lists, and tap-to-expand code chips — with math in real unicode (`E = mc²`, subscripts), because LaTeX doesn't render on 1.4 inches. | **Real tables from plain markdown** — bold header, hairline rule, aligned cells, no pipe vomit; wider tables degrade to readable rows instead of a grid you can't parse. |
+| **Streaming markdown**, rendered for a round screen: headings, bold, italics, bullets, numbered lists, and tap-to-expand code chips — with math in real unicode (`E = mc²`, subscripts), because LaTeX doesn't render on 1.4 inches. | **Real tables from plain markdown** — labelled grids up to four columns, center-aligned so the header names sit on the glass, hairline rule, no pipe vomit; five or more columns degrade to readable rows instead of a grid you can't parse. |
 | <img src="docs/screens/14a-fontscale-min.png" width="180"/> | <img src="docs/screens/14b-fontscale-max.png" width="180"/> |
 | **Pinch to scale text — the full range, honestly captured.** At the minimum (×0.75) whole paragraphs sit per line. | Same chat at the maximum (×1.6) — one glanceable line at a time. Transcript type scales; images, charts, and cards keep their own size; double-tap resets to 1.0. |
 | <img src="docs/screens/12-keyboard.png" width="180"/> | <img src="docs/screens/29-full-reply.png" width="180"/> |
@@ -84,15 +84,17 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
 | **Images at full resolution** — the morning brief's 3-day weather plot lands inline, full-res from the gateway image lane; cards and skill charts mix into the answer flow. Tap any card to open the viewer. | **Zoom viewer** — double-tap jumps to 2.5× (pinch works too), drag to pan, close with the ✕ chip or the back button. |
 | <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/27-commands-overlay.png" width="180"/> |
-| **Mermaid diagrams render** — flowchart answers come back as pictures, via a gateway render helper (and cached): the prompt chip above, the rendered card below, real skill data inside the nodes. | **Slash commands and skills** — flick the ⌘ lane for a searchable overlay: the gateway's command catalog, your agent's **skills** (this wear-demo agent lists `/compact`, `/academic-paper`, `/academic-pipeline`…), and watch-local actions; an unrecognized `/text` just goes to the agent as a prompt. |
+| **Mermaid diagrams render** — flowchart answers come back as pictures, via a gateway render helper (and cached): the whole voice round-trip — mic, Vosk, gateway, the approval diamond, the answer lane — as one colored, subgraphed diagram on the glass, tap to zoom. | **Slash commands and skills** — flick the ⌘ lane for a searchable overlay: the gateway's command catalog, your agent's **skills** (this wear-demo agent lists `/compact`, `/academic-paper`, `/academic-pipeline`…), and watch-local actions; an unrecognized `/text` just goes to the agent as a prompt. |
 | <img src="docs/screens/25-model-picker.png" width="180"/> | <img src="docs/screens/26-model-picked.png" width="180"/> |
 | **Per-chat model picker** — the 🧠 lane lists what your gateway exposes (default, provider back-ends, counts) and the header says the scope: *this chat only*. Every other chat keeps its own model. | **Picked = routed** — the toast names the exact id (`gpt-6-luna`), the next reply rides that model, and the gateway's usage log carries one call under it. The watch never bakes model names in; it lists what the gateway lists. |
 | <img src="docs/screens/28-browser-opened.png" width="180"/> | <img src="docs/screens/54-tool-activity.png" width="180"/> |
 | **Links are links** — a markdown link in an answer is blue, underlined, tappable; here the watch's browser renders the repo's GitHub org profile, at full width, on the wrist. | **See what the tools did** — every run that touches a tool carries a collapsible activity card: step count, per-tool commands, done ✓. The desktop's verbosity box, on your wrist, persisted in the transcript. |
 | <img src="docs/screens/33-approval-card.png" width="180"/> | <img src="docs/screens/34-approval-approved.png" width="180"/> |
-| **Approvals, in-session** — a gated tool call (here `rm` + `ls`) pauses the run and shows the *full command* on a card: OK / No, no app-switching, no terminal. | **Tap OK — the run resumes** — the tool executes mid-run and the settled answer arrives in the same thread, seconds later. |
+| **Approvals, in-session** — a gated tool call pauses the run and the card rides with it: yellow heading, the *exact parked command* in a mono chip, and the answer on the orb flanks — ✅ left, ❌ right, no app-switching, no terminal. | **Tap OK — the run resumes** — the tool executes mid-run and the settled answer arrives in the same thread, seconds later. |
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/21-session-search.png" width="180"/> |
 | **Sessions, from your wrist** — every session your agent has, newest first, with a scrolling chip row to filter in one tap (`all` / per-agent / `💻 computer` — desktop-and-web lanes — / `archived`); one-tap new. | **Voice-or-type search, every session, every agent** — one query hits the gateway's full-text index; results come back across all your agents with the matching line quoted and the hit bracketed. |
+| <img src="docs/screens/56-approval-modes.png" width="180"/> | |
+| **The approval level is yours, per chat** — Manual answers every prompt yourself, Smart auto-approves while you're away and asks when the chat is on your glass, Inherit defers to the agent default (SPEC §12.9). | |
 | <img src="docs/screens/22-session-sheet.png" width="180"/> | <img src="docs/screens/23-archived-chip.png" width="180"/> |
 | **Long-press any session row** — ⑂ fork it into your agent and keep talking, 🗃 archive it off-canvas, or 🗑 delete behind a real double-tap confirm. | **Archived is not gone** — the 🗃 chip row filter shows the off-canvas pile; holding a row there gives ♻️ back. |
 | <img src="docs/screens/24-unarchive.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
@@ -102,7 +104,7 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/30-settings-lane.png" width="180"/> |
 | **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together; ● marks the live agent. | **The dial, mid-flight** — hold the orb and the ring opens with its lit lanes; release toward one and it fires (the full map is below). The ⚙ lane is why Settings is never more than a flick. |
 | <img src="docs/screens/48-media-cards.png" width="180"/> | <img src="docs/screens/49-video-player.png" width="180"/> |
-| **Generated video and audio play in chat** — when the desktop can render a clip, so can the wrist: `MEDIA:` lines and media-extension links land as cards (tap to play · fullscreen), inline in the answer flow exactly like images. | **Full-screen player, bezel-steered** — media3 transport with skip chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — the 60 % here came off that exact code path over adb). Close the sheet, and the bezel is system volume again. |
+| **Generated media rides the answer** — when the desktop can render, so can the wrist: this comfy aurora clip arrived as a `MEDIA:` line and landed as an inline card *that animates in the thread* (GIF chip on the corner), the mixed sting right below it — tap any card for fullscreen. | **Full-screen player, bezel-steered** — media3 transport with skip chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — the 60 % here came off that exact code path over adb). Close the sheet, and the bezel is system volume again. |
 | <img src="docs/screens/50-gif-card.gif" width="180" alt="A chat image card playing an animated GIF: test-pattern bars cycling under a GIF chip, recorded off the watch and circle-masked — real motion, real pixels"/> | <img src="docs/screens/51-video-pinched.png" width="180"/> |
 | **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This frame is a screen recording, circle-masked: the bars are moving. | **Pinch-to-zoom video** — the same zoom lane the image viewer has, living inside the player itself: pinch to 3×, drag to pan, double-tap toggles fit↔2.5×, and taps still raise the transport. |
 | <img src="docs/screens/52-audio-player.png" width="180"/> | **Audio gets the same front door** — an Opus clip from the gateway's media pipeline opens a full-screen sheet with the media3 transport; the bezel steers its volume exactly like video's. |
