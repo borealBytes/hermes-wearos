@@ -5,11 +5,20 @@ The Hermes-side of [hermes-wearos](../README.md): install once, pair a watch wit
 tailnet** with its embedded Tailscale node — no LAN transport, no phone relay, no
 reusable keys lying around. Everything after pairing rides the tunnel (SPEC §11.4).
 
+The easy path on a real box, end to end:
+
 ```bash
 hermes plugins install wearos     # catalog entry → pinned, reviewed SHA
+hermes watch enable --agents all  # one command flips the plugin on for every profile
 hermes watch setup                # wizard: tailscaled → credential → MagicDNS → funnel
 hermes watch pair                 # or: /pair <PIN> in any Hermes chat surface
 ```
+
+1. Install the APK from [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest)
+   (CI-built, SHA256SUMS + attestation) onto the watch.
+2. Open it on the watch — it shows a **6-digit PIN**.
+3. Say or type `/pair <PIN>` to Hermes — boom, paired. The repo is
+   [borealBytes/hermes-wearos](https://github.com/borealBytes/hermes-wearos).
 
 ## Installed — what it looks like, and where config lives
 
@@ -19,8 +28,9 @@ version, an `enabled` chip, the description, and Disable / Remove controls.
 ![The wearos card on the Hermes dashboard Plugins page](../docs/screens/60-plugin-card.png)
 
 The card is a management tile ("No dashboard tab" is the core UI saying this plugin
-doesn't ship a *web-dashboard* page — the Wear Kit's read-only page lives in the
-Desktop workspace: paired devices + readiness lights, from `watch_status`).
+doesn't ship a *web-dashboard* page — the Wear Kit's page lives in the Desktop
+workspace: a 4-step install checklist (APK → per-profile enable → watch PIN → `/pair`),
+paired devices, and readiness lights).
 
 **The config editor is in the Desktop app: Settings ▸ Plugins ▸ wearos.** The form is
 generated from `config_schema` below, descriptions included. Three things about that
@@ -30,9 +40,12 @@ page that read confusingly until you know core's model:
   agent with its own `plugins.enabled` list, settings block, and `.env`. The chip row
   picks which profile you're editing; a profile where the plugin isn't enabled shows
   *"No plugin has settings yet"* — enable it there first (the toggle on the plugin's
-  card, or the `plugins:` block in that profile's `config.yaml`). One plugin instance
-  pairs every watch for the whole gateway, so enable it wherever you want `watch_*`
-  tools and `/pair` to answer — enabling it for *all* profiles is fine and normal.
+  card, or the `plugins:` block in that profile's `config.yaml`) — or skip that drop-down
+  dance entirely: **`hermes watch enable --agents all`** (or the Wear Kit pane's step-2
+  checkboxes, ENABLE ALL on top) toggles it for every profile in one move. One plugin
+  instance pairs every watch for the whole gateway, so enable it wherever you want
+  `watch_*` tools and `/pair` to answer — enabling it for *all* profiles is fine and
+  normal.
 - **Secret fields render blank even when set** — they are never echoed back
   ("leave blank to keep the current value"). `type: secret` values live in the active
   profile's `.env` and are read through Hermes's `get_secret`; they never appear in
@@ -52,6 +65,35 @@ plugins:
       settings:
         gateway_profile: wear-demo
 ```
+
+### Enabling it per profile — `watch_enable` / `hermes watch enable`
+
+The confusing single-select profile drop-down in core has a replacement: one verb (and a
+checklist in the Desktop pane) that toggles the wearos plugin **per profile**, idempotently:
+
+```bash
+hermes watch enable --agents all                # default: every profile (named + default root)
+hermes watch enable --agents wear,wear-demo     # or a comma list
+hermes watch enable --agents wear --disable     # remove it from that profile again
+```
+
+The same surface is a tool — `watch_enable {"agents": ["wear","wear-demo"] | "all",
+"enable": true|false}` (default `true`) — answering `{enable, results:[{name, before,
+after, changed} | {name, error}]}`. What it does to each profile's `config.yaml` is a
+**minimal line-level edit**, never a YAML round-trip: your comments, key order, blank
+lines and CRLF survive. Enable adds `wearos` to `plugins.enabled` (creating the section,
+or a whole small `plugins:` block, only where absent) and creates
+`plugins.entries.wearos.settings.gateway_profile` **if missing** — a value you set is
+never overwritten. Disable removes only the list item; the settings block stays standing
+so re-enabling keeps your tuning. A profile with an unrecognizable `plugins:` shape is
+reported unchanged rather than rewritten. Edits take effect when that profile's agent
+(re)loads plugins.
+
+Where the profile inventory comes from: `watch_status` gained one additive key —
+`profiles: [{name, enabled, has_config}]` — so the pane's step-2 checklist rides the
+status call it already makes (no second round-trip, and the existing status consumers are
+untouched). It also mirrors `apk_release_url`, because the Desktop SDK gives panes no
+plugin-config door.
 
 If the plugin shows an **"Agent + Desktop"** badge, it ships two halves: the agent half
 (this Python package, per profile, as above) and the desktop half (`desktop/plugin.js`,
@@ -195,4 +237,4 @@ ephemeral claim door). Host modules resolve from `~/.hermes/hermes-agent` or
 | `tailscale.py` | stdlib-only Management API client (key mint/expire, DNS, ACL + funnel attr) |
 | `media.py` | in-process media lane (porting; sidecar is the documented fallback) |
 | `tests/` | pytest suite (state machine, claim API over real HTTP, ACL detect, registry) |
-| `desktop/plugin.js` | Wear Kit page: devices, PIN, readiness lights |
+| `desktop/plugin.js` | Wear Kit page: 4-step install checklist (APK → per-profile enable → watch PIN → `/pair`) + paired devices + readiness lights. The hero is an inline SVG wordmark, not `./wearkit-hero.png`: the app evaluates `plugin.js` from a blob: URL and serves no sibling assets, so a relative `<img>` would 404 |

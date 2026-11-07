@@ -397,6 +397,481 @@ def _profile_home(profile: str) -> Optional[Path]:
     return None
 
 
+# ── profile enablement (watch_enable / `hermes watch enable`) ─────────────────
+# The pane's checklist and the CLI share ONE engine: a MINIMAL LINE-LEVEL edit of
+# each profile's config.yaml. No yaml round-trip — a dump would silently drop the
+# user's comments, blank lines, key order and quoting; the anchor walker below
+# touches only the item it must add/remove, or appends one small block when the
+# section is absent. Shapes handled are exactly what core and the README document:
+#
+#   plugins:            plugins:                plugins:
+#     enabled:            enabled: [a]            enabled: {}      /  (no plugins: at all)
+#     - a               (no enabled key)
+#
+# Anything less recognizable (a scalar value where our list belongs) is reported
+# as a refusal, not a rewrite: the file is the user's, and we only ever hold an
+# anchor we actually understand.
+_PLUGINS = "wearos"                    # the id as written in plugins.enabled
+DEFAULT_GATEWAY_PROFILE = "wear"       # entries.settings.gateway_profile default
+RELEASES_LATEST = "https://github.com/borealBytes/hermes-wearos/releases/latest"
+# Same pattern as hermes_constants.PROFILE_ID_RE / hermes_cli.profiles (import-time
+# fallback for hosts where that module is unresolvable; the host copy still wins).
+_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# hermes_constants._PROFILE_IDENTITY_MARKERS — mirrored so the pane checklist sees
+# exactly the profiles `hermes profile list` sees (ghost dirs carry none of these).
+_PROFILE_IDENTITY_MARKERS = ("config.yaml", ".env", "SOUL.md", "profile.yaml",
+                             "auth.json", "state.db")
+_DELETED_MARK = ".deleted"  # hermes_constants._DELETED_PROFILES_DIR
+
+
+def _hermes_root() -> Optional[Path]:
+    """HERMES_HOME through the host's own resolver (env-sandboxable, memoized),
+    falling back to the raw env var; None when neither answers."""
+    try:
+        from hermes_constants import get_default_hermes_root
+        return Path(get_default_hermes_root())
+    except Exception:
+        env = str(os.environ.get("HERMES_HOME", "") or "").strip()
+        return Path(env) if env else None
+
+
+def _line_indent(line: str) -> int:
+    stripped = line.rstrip("\r\n")
+    return len(stripped) - len(stripped.lstrip(" \t"))
+
+
+def _line_content(line: str) -> str:
+    return line.rstrip("\r\n").strip()
+
+
+def _after_comment(value: str) -> str:
+    """YAML: a '#' opens a comment only at line start or after whitespace."""
+    for i, ch in enumerate(value):
+        if ch == "#" and (i == 0 or value[i - 1] in " \t"):
+            return value[:i].strip()
+    return value.strip()
+
+
+def _unquote(item: str) -> str:
+    if len(item) >= 2 and item[0] == item[-1] and item[0] in "\"'":
+        return item[1:-1]
+    return item
+
+
+def _split_eol(text: str) -> tuple[list, str]:
+    """Lines keeping their terminators, plus the file's dominant newline (CRLF
+    survives the patch). The caller works on the normalized COPY and returns the
+    ORIGINAL text untouched whenever nothing changed — no trailing-newline diffs."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    if not text:
+        return [], nl
+    return [ln if ln.endswith(("\n", "\r\n")) else ln + nl
+            for ln in text.splitlines(keepends=True)], nl
+
+
+def _plugins_span(lines: list) -> Optional[dict]:
+    """Locate the top-level ``plugins:`` block → {at, lo, hi}. hi excludes the
+    trailing blank/comment run so inserts land after the last real line (a comment
+    sitting there belongs to the NEXT top-level key). None when the key is absent
+    or carries a nontrivial inline value (no safe spot for children)."""
+    for i, ln in enumerate(lines):
+        c = _line_content(ln)
+        if c.startswith("#"):
+            continue
+        if _line_indent(ln) != 0 or not c.startswith("plugins:"):
+            continue
+        value = _after_comment(c[len("plugins:"):])
+        if value not in ("", "{}", "[]"):
+            return None  # `plugins: <scalar>` — no safe spot for children; refuse, don't rewrite
+        j = i + 1
+        while j < len(lines):
+            cj = _line_content(lines[j])
+            if cj == "" or cj.startswith("#") or _line_indent(lines[j]) > 0:
+                j += 1
+                continue
+            break
+        k = j
+        while k > i + 1:
+            tail = _line_content(lines[k - 1])
+            if tail == "" or tail.startswith("#"):
+                k -= 1
+            else:
+                break
+        return {"at": i, "lo": i + 1, "hi": k, "value": value}
+    return None
+
+
+def _find_key(lines: list, lo: int, hi: int, key: str) -> Optional[tuple]:
+    """(idx, indent, inline_value) of the first ``key:`` in the block span — only
+    ever called with spans that already exclude parent siblings, so no cross-section
+    matches are reachable."""
+    for j in range(lo, hi):
+        c = _line_content(lines[j])
+        if c == "" or c.startswith("#") or _line_indent(lines[j]) < 1:
+            continue
+        if c.startswith(key + ":"):
+            rest = c[len(key) + 1:]
+            if rest == "" or rest[0] in " \t":
+                return (j, _line_indent(lines[j]), _after_comment(rest))
+    return None
+
+
+def _child_span(lines: list, idx: int, hi: int) -> tuple:
+    """Half-open span of the block under the key at idx (lines strictly deeper than
+    the key, plus interior blanks/comments; trailing blanks/comments trimmed)."""
+    ind = _line_indent(lines[idx])
+    j = idx + 1
+    while j < hi:
+        c = _line_content(lines[j])
+        if c == "" or c.startswith("#") or _line_indent(lines[j]) > ind:
+            j += 1
+            continue
+        break
+    k = j
+    while k > idx + 1:
+        tail = _line_content(lines[k - 1])
+        if tail == "" or tail.startswith("#"):
+            k -= 1
+        else:
+            break
+    return idx + 1, k
+
+
+def _first_child_indent(lines: list, lo: int, hi: int) -> int:
+    """Indent of the first real child line in a block span (style reuse), 0 if none."""
+    for j in range(lo, hi):
+        c = _line_content(lines[j])
+        if c != "" and not c.startswith("#"):
+            return _line_indent(lines[j])
+    return 0
+
+
+def _block_items(lines: list, anchor: int, hi: int) -> tuple:
+    """([ (idx, dash_indent, value) ... ], end_idx) for the block sequence under the
+    key at anchor. PyYAML style (dashes at the key indent) and deeper-indent style
+    both read; a blank/comment ends the run conservatively; complex items (nested
+    maps) are consumed whole and contribute their first line's value."""
+    items: list = []
+    key_indent = _line_indent(lines[anchor])
+    j = anchor + 1
+    while j < hi:
+        c = _line_content(lines[j])
+        if c == "" or c.startswith("#") or _line_indent(lines[j]) < key_indent:
+            break
+        if not (c == "-" or c.startswith("- ")):
+            break
+        items.append((j, _line_indent(lines[j]), _after_comment(c[1:].strip())))
+        j += 1
+        while j < hi and _line_content(lines[j]) != "" and _line_indent(lines[j]) > items[-1][1]:
+            j += 1  # continuation lines of this item — opaque to us
+    return items, j
+
+
+def _flow_items(value: str) -> Optional[list]:
+    """Items of an inline ``[a, b]`` list; None when the value isn't flow."""
+    v = _after_comment(value)
+    if not (v.startswith("[") and v.endswith("]")):
+        return None
+    inner = v[1:-1].strip()
+    return [p.strip() for p in inner.split(",")] if inner else []
+
+
+def _rewrite_key_line(lines: list, idx: int, key: str, new_value: str, nl: str) -> None:
+    """Replace the inline value on a key line, keeping its indent and trailing comment."""
+    old = lines[idx].rstrip("\r\n")
+    m = re.match(r"^([ \t]*" + re.escape(key) + r":[ \t]*)([^#]*?)([ \t]*#[^\r\n]*)?$", old)
+    head = m.group(1) if m else " " * _line_indent(lines[idx]) + key + ": "
+    comment = (m.group(3) or "") if m else ""
+    if new_value and not head.endswith((" ", "\t")):
+        head = head.rstrip() + " "
+    if not new_value:
+        head = head.rstrip()
+    lines[idx] = head + new_value + comment + nl
+
+
+def _new_plugins_block(nl: str, gateway_profile: str) -> str:
+    return "".join([
+        "plugins:" + nl,
+        "  enabled:" + nl,
+        "  - " + _PLUGINS + nl,
+        "  entries:" + nl,
+        "    " + _PLUGINS + ":" + nl,
+        "      settings:" + nl,
+        f"        gateway_profile: {gateway_profile}" + nl,
+    ])
+
+
+def _ensure_enabled_item(lines: list, span: dict, enable: bool, nl: str) -> bool:
+    """True when lines changed. Item style follows the list already there; a fresh
+    list lands PyYAML-style (dash at the key's indent)."""
+    en = _find_key(lines, span["lo"], span["hi"], "enabled")
+    if en is None:
+        if not enable:
+            return False
+        child = _first_child_indent(lines, span["lo"], span["hi"]) or 2
+        lines[span["hi"]:span["hi"]] = [
+            " " * child + "enabled:" + nl,
+            " " * child + "- " + _PLUGINS + nl,
+        ]
+        return True
+    j, ind, value = en
+    if value == "[]":
+        _rewrite_key_line(lines, j, "enabled", "", nl)
+    if value in ("", "{}", "[]"):
+        items, end = _block_items(lines, j, span["hi"])
+        hit = next((it for it in items if _unquote(it[2]) == _PLUGINS), None)
+        if enable and hit is None:
+            dash = items[0][1] if items else ind
+            lines.insert(end if items else j + 1, " " * dash + "- " + _PLUGINS + nl)
+            return True
+        if not enable and hit is not None:
+            del lines[hit[0]]
+            return True
+        return False
+    flow = _flow_items(value)
+    if flow is not None:
+        has = any(_unquote(p) == _PLUGINS for p in flow)
+        if enable == has:
+            return False
+        keep = flow + [_PLUGINS] if enable else [p for p in flow if _unquote(p) != _PLUGINS]
+        _rewrite_key_line(lines, j, "enabled", "[" + ", ".join(keep) + "]", nl)
+        return True
+    # bare scalar (`enabled: wearos`) — the ONLY value that counts as listed
+    if _unquote(value) == _PLUGINS and not enable:
+        _rewrite_key_line(lines, j, "enabled", "[]", nl)
+        return True
+    return False
+
+
+def _ensure_entries(lines: list, span: dict, gateway_profile: str, nl: str) -> bool:
+    """Create plugins.entries.wearos.settings.gateway_profile at whatever depth is
+    missing — never overwrite a value the user already set."""
+    ent = _find_key(lines, span["lo"], span["hi"], "entries")
+    if ent is None:
+        child = _first_child_indent(lines, span["lo"], span["hi"]) or 2
+        lines[span["hi"]:span["hi"]] = [
+            " " * child + "entries:" + nl,
+            " " * (child + 2) + _PLUGINS + ":" + nl,
+            " " * (child + 4) + "settings:" + nl,
+            " " * (child + 6) + f"gateway_profile: {gateway_profile}" + nl,
+        ]
+        return True
+    j, ind, value = ent
+    if value == "{}":
+        _rewrite_key_line(lines, j, "entries", "", nl)
+    if value not in ("", "{}"):
+        return False  # `entries: <scalar>` — not ours to fix
+    clo, chi = _child_span(lines, j, span["hi"])
+    wr = _find_key(lines, clo, chi, _PLUGINS)
+    child = _first_child_indent(lines, clo, chi) or (ind + 2)
+    if wr is None:
+        lines[j + 1:j + 1] = [
+            " " * child + _PLUGINS + ":" + nl,
+            " " * (child + 2) + "settings:" + nl,
+            " " * (child + 4) + f"gateway_profile: {gateway_profile}" + nl,
+        ]
+        return True
+    w, wind, wval = wr
+    if wval == "{}":
+        _rewrite_key_line(lines, w, _PLUGINS, "", nl)
+    if wval not in ("", "{}"):
+        return False
+    slo, shi = _child_span(lines, w, chi)
+    st = _find_key(lines, slo, shi, "settings")
+    schild = _first_child_indent(lines, slo, shi) or (wind + 2)
+    if st is None:
+        lines[w + 1:w + 1] = [
+            " " * schild + "settings:" + nl,
+            " " * (schild + 2) + f"gateway_profile: {gateway_profile}" + nl,
+        ]
+        return True
+    s, sind, sval = st
+    if sval == "{}":
+        _rewrite_key_line(lines, s, "settings", "", nl)
+    if sval not in ("", "{}"):
+        return False
+    glo, ghi = _child_span(lines, s, shi)
+    if _find_key(lines, glo, ghi, "gateway_profile") is not None:
+        return False  # user's value survives
+    lines[s + 1:s + 1] = [" " * ((sind + 2)) + f"gateway_profile: {gateway_profile}" + nl]
+    return True
+
+
+def enablement_patch(text: str, enable: bool,
+                     gateway_profile: str = DEFAULT_GATEWAY_PROFILE) -> tuple:
+    """(new_text, changed) — add/remove ``wearos`` from plugins.enabled in config.yaml
+    TEXT, and on enable make sure plugins.entries.wearos.settings.gateway_profile
+    exists (created with ``gateway_profile``, never overwritten). Pure line-level edit:
+    comments, spacing, key order and CRLF survive; disable leaves the settings block
+    standing (re-enabling keeps the user's tuning). Idempotent both ways; unrecognized
+    shapes report unchanged rather than rewritten."""
+    lines, nl = _split_eol(text)
+    span = _plugins_span(lines)
+    if span is None:
+        if not enable:
+            return text, False
+        if any(_line_indent(ln) == 0 and _line_content(ln).startswith("plugins:")
+               for ln in lines):
+            return text, False  # a scalar `plugins:` exists — refuse, never duplicate the key
+        base = "".join(lines)
+        glue = nl if base.strip() else ""
+        return base + glue + _new_plugins_block(nl, gateway_profile), True
+    changed = False
+    if span["value"]:  # `plugins: {}` / `plugins: []` — promote the empty inline node
+        _rewrite_key_line(lines, span["at"], "plugins", "", nl)
+        changed = True
+    changed |= _ensure_enabled_item(lines, span, enable, nl)
+    if enable:
+        span = _plugins_span(lines)  # an insertion above shifted the indices
+        changed |= _ensure_entries(lines, span, gateway_profile, nl)
+    if not changed:
+        return text, False
+    return "".join(lines), True
+
+
+def _wearos_enabled(text: str) -> bool:
+    """The checkbox truth for the pane: is wearos LISTED in plugins.enabled? (the
+    settings block alone never counts — enablement is the list)."""
+    lines, _ = _split_eol(text)
+    span = _plugins_span(lines)
+    if span is None:
+        return False
+    en = _find_key(lines, span["lo"], span["hi"], "enabled")
+    if en is None:
+        return False
+    j, ind, value = en
+    if value in ("", "{}", "[]"):
+        items, _end = _block_items(lines, j, span["hi"])
+        return any(_unquote(v) == _PLUGINS for _, _, v in items)
+    flow = _flow_items(value)
+    if flow is not None:
+        return any(_unquote(p) == _PLUGINS for p in flow)
+    return _unquote(value) == _PLUGINS
+
+
+def _profile_config_path(name: str) -> tuple[Optional[Path], str]:
+    """(config.yaml path, error) for a profile ON THIS MACHINE — default = the root
+    config, named = ``<root>/profiles/<name>`` ONLY when the host's own listing gates
+    it as live (valid id, identity marker, no tombstone — ghost dirs can't be adopted)."""
+    name = str(name or "").strip().lower()
+    root = _hermes_root()
+    if root is None:
+        return None, "cannot resolve HERMES_HOME from this process"
+    if name == "default":
+        return root / "config.yaml", ""
+    if name not in {p.name for p in _named_profile_dirs(root)}:
+        return None, f"no profile {name!r} on this machine"
+    return root / "profiles" / name / "config.yaml", ""
+
+
+def _named_profile_dirs(root: Path) -> list:
+    """Live named-profile dirs under ``<root>/profiles`` — the same gate hermes_cli.profiles
+    uses (never ``default``, id-grammar legal, identity marker, not tombstoned): cron/log
+    ghost shells must not surface in the pane checklist (#95188 lesson)."""
+    try:
+        children = sorted((root / "profiles").iterdir(), key=lambda p: p.name)
+    except OSError:
+        return []
+    out = []
+    for child in children:
+        try:
+            if child.name == "default" or not _PROFILE_ID_RE.fullmatch(child.name):
+                continue
+            if not child.is_dir():
+                continue
+            if not any((child / m).is_file() for m in _PROFILE_IDENTITY_MARKERS):
+                continue
+            if (root / "profiles" / _DELETED_MARK / child.name).exists():
+                continue
+            out.append(child)
+        except OSError:
+            pass
+    return out
+
+
+def _all_profile_names() -> list:
+    """Every profile on the box: default (root config) + each live profiles/<dir>."""
+    root = _hermes_root()
+    if root is None:
+        return []
+    return ["default"] + [p.name for p in _named_profile_dirs(root)]
+
+
+def _parse_agents(agents) -> list:
+    """["wear","wear-demo"] | "wear,wear-demo" | "all" (also None/"" → all)."""
+    if agents is None or (isinstance(agents, str) and not agents.strip()):
+        return _all_profile_names()
+    if isinstance(agents, str):
+        parts = [p.strip().lower() for p in agents.split(",") if p.strip()]
+        return _all_profile_names() if "all" in parts else parts
+    if isinstance(agents, (list, tuple)):
+        out: list = []
+        for part in agents:
+            out.extend(p.strip().lower() for p in str(part).split(",") if p.strip())
+        return out
+    return []
+
+
+def _profile_inventory() -> list:
+    """[{name, enabled, has_config}] — the pane's step-2 checklist data; it rides
+    watch_status (the call the pane already makes) rather than a second tool round-trip."""
+    out = []
+    for name in _all_profile_names():
+        path, _err = _profile_config_path(name)
+        if path is None:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        except OSError:
+            text = ""
+        out.append({"name": name, "enabled": _wearos_enabled(text), "has_config": bool(text)})
+    return out
+
+
+def _write_config(path: Path, text: str) -> None:
+    """Atomic in-place write; keeps the file's mode (config.yaml holds secret-adjacent
+    routing and is often 0600 — and new files get that mode, not the umask's 0644)."""
+    try:
+        mode = path.stat().st_mode & 0o777
+    except OSError:
+        mode = 0o600
+    tmp = path.with_name(path.name + ".wearos.tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:  # newline='' → CRLF intact
+        fh.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def apply_enablement(names: list, enable: bool) -> list:
+    """The engine behind BOTH the watch_enable tool and `hermes watch enable`.
+    Per profile: {name, before, after, changed} — or {name, error}."""
+    gp = str(_cfg("gateway_profile", DEFAULT_GATEWAY_PROFILE) or DEFAULT_GATEWAY_PROFILE)
+    results = []
+    for raw in names:
+        name = str(raw or "").strip().lower()
+        path, err = _profile_config_path(name)
+        if path is None:
+            results.append({"name": name or str(raw), "error": err})
+            continue
+        try:
+            before_text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        except OSError as exc:
+            results.append({"name": name, "error": f"cannot read config.yaml: {exc}"})
+            continue
+        after_text, changed = enablement_patch(before_text, enable, gateway_profile=gp)
+        if changed:
+            try:
+                _write_config(path, after_text)
+            except OSError as exc:
+                results.append({"name": name, "error": f"cannot write config.yaml: {exc}"})
+                continue
+        results.append({"name": name,
+                        "before": _wearos_enabled(before_text),
+                        "after": _wearos_enabled(after_text),
+                        "changed": changed})
+    return results
+
+
 def gateway_fqdn() -> str:
     """This box's ts.net FQDN via the local socket. Measured on 1.102.3: the field is
     Self.DNSName (capitals — AGENTS.md's old `.Self.DnsName` reads null); no
@@ -678,7 +1153,23 @@ def _fix_serve() -> None:
 # ── tools ─────────────────────────────────────────────────────────────────────
 def _tool_watch_status(args: dict, **kw) -> str:
     devices = _CTX.state.get(STATE_DEVICES) or {}
-    return json.dumps({"checks": tailnet_state(), "devices": devices}, indent=2)
+    return json.dumps({
+        "checks": tailnet_state(),
+        "devices": devices,
+        # Additive (pane install-checklist): `profiles` drives the per-profile enable
+        # checkboxes — the inventory rides THIS call (the pane already makes it) rather
+        # than a second round-trip; `apk_release_url` mirrors the plugin config because
+        # the SDK gives panes no config door (see desktop/plugin.js).
+        "profiles": _profile_inventory(),
+        "apk_release_url": str(_cfg("apk_release_url", RELEASES_LATEST) or RELEASES_LATEST),
+    }, indent=2)
+
+
+def _tool_watch_enable(args: dict, **kw) -> str:
+    enable = args.get("enable", True)
+    enable = True if enable is None else bool(enable)
+    results = apply_enablement(_parse_agents(args.get("agents")), enable)
+    return json.dumps({"enable": enable, "results": results}, indent=2)
 
 
 def _tool_watch_pair(args: dict, **kw) -> str:
@@ -718,6 +1209,23 @@ _TOOLS = (
         "type": "object",
         "properties": {"code": {"type": "string", "description": "6-digit PIN shown on the watch (omit to mint one here)"}},
     }, _tool_watch_pair, "🔗"),
+    ("watch_enable", {
+        "type": "object",
+        "properties": {
+            "agents": {
+                "type": ["array", "string"],
+                "items": {"type": "string"},
+                "description": 'Profiles to toggle: ["wear","wear-demo"], a comma list '
+                               '"wear,wear-demo", or "all" — every profile on this machine '
+                               "(named profiles + the default root config).",
+            },
+            "enable": {
+                "type": "boolean",
+                "description": "true (default) lists wearos in the profile's plugins.enabled; "
+                               "false removes it (the settings block is left standing).",
+            },
+        },
+    }, _tool_watch_enable, "🔌"),
 )
 
 
@@ -745,12 +1253,37 @@ def _watch_cli_setup(sub) -> None:
     p = watch_sub.add_parser("pair", help="claim the watch's PIN (or mint one with --show)")
     p.add_argument("code", nargs="?", help="6-digit PIN from the watch")
     p.add_argument("--show", action="store_true", help="mint a plugin-side PIN instead of claiming")
+    e = watch_sub.add_parser("enable",
+                             help="turn the wearos plugin on/off per profile "
+                                  "(idempotent, comment-preserving config.yaml edits)")
+    e.add_argument("--agents", default="all", metavar="NAMES",
+                   help='profiles to toggle: "wear,wear-demo", or "all" (default — '
+                        "every profile on this machine)")
+    e.add_argument("--disable", action="store_true",
+                   help="remove wearos from plugins.enabled instead of adding it")
     watch_sub.add_parser("status", help="tailnet readiness checklist + devices")
     s = watch_sub.add_parser("setup", help="wizard: tailscaled → credential → MagicDNS → funnel → serve")
     s.add_argument("--fix", choices=["credential", "funnel", "serve"], default=None)
     s.add_argument("--yes", action="store_true",
                    help="approve the printed preview (currently: --fix funnel PATCHes the ACL)")
     watch_sub.add_parser("devices", help="paired watch records")
+
+
+def _cli_enable(args) -> None:
+    names = _parse_agents(getattr(args, "agents", "all"))
+    enable = not bool(getattr(args, "disable", False))
+    results = apply_enablement(names, enable)
+    for r in results:
+        if r.get("error"):
+            print(f"  ✗ {r['name']} — {r['error']}")
+        elif r.get("changed"):
+            print(f"  {'✓ enabled' if enable else '− disabled'} · {r['name']}")
+        else:
+            print(f"  · {r['name']} — already {'enabled' if r['after'] else 'off'}")
+    touched = sum(1 for r in results if r.get("changed"))
+    print(f"{len(results)} profile(s) inspected, {touched} changed — each profile picks "
+          "the plugin up when its agent (re)loads plugins. The Wear Kit pane drives the "
+          "same verb (watch_enable).")
 
 
 def _cli_pair(args) -> None:
@@ -786,6 +1319,9 @@ def _watch_cli_run(args) -> None:
     if cmd == "pair":
         _cli_pair(args)
         return
+    if cmd == "enable":
+        _cli_enable(args)
+        return
     if cmd == "devices":
         print(json.dumps(_CTX.state.get(STATE_DEVICES) or {}, indent=2))
         return
@@ -820,7 +1356,7 @@ def register(ctx) -> None:
                          description="Pair a Wear OS watch to Hermes with its 6-digit PIN",
                          args_hint="<123456>")
     ctx.register_cli_command(
-        name="watch", help="Hermes Wear Kit (pair, status, setup, devices)",
+        name="watch", help="Hermes Wear Kit (pair, enable, status, setup, devices)",
         setup_fn=_watch_cli_setup, handler_fn=_watch_cli_run,
         description="One-command Wear OS watch pairing over your own tailnet.",
     )

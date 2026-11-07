@@ -13,9 +13,12 @@ description: >-
   pre-authorized, tagged Tailscale auth key and hands the watch its enrollment packet, so
   the watch's embedded tsnet node joins YOUR tailnet and every call rides the tunnel
   forever after (tailnet-only doctrine, SPEC §11.4). Registers watch_send / watch_status /
-  watch_pair tools, /pair, a `hermes watch` CLI (pair/status/setup/devices), a
-  load-time readiness pass, and a Desktop Wear Kit page. The Wear OS APK is a
-  CI-built GitHub Release with build provenance — never a bundled binary.
+  watch_pair / watch_enable tools, /pair, a `hermes watch` CLI
+  (pair/enable/status/setup/devices — `hermes watch enable --agents all` flips the plugin
+  on for every profile with comment-preserving config edits), a load-time readiness pass,
+  and a Desktop Wear Kit page (4-step install checklist + per-profile enable checkboxes).
+  The Wear OS APK is a CI-built GitHub Release with build provenance — never a bundled
+  binary.
 author: "Clay (borealBytes)"
 kind: standalone
 platforms:
@@ -35,6 +38,7 @@ provides_tools:
   - watch_send
   - watch_status
   - watch_pair
+  - watch_enable
 # No provides_hooks: hermes-agent 0.23 removed the gateway:startup plugin hook (its
 # VALID_HOOKS has no gateway-scoped lifecycle event); the claim door + readiness first
 # pass come up at load on a daemon thread instead (see register() in __init__.py).
