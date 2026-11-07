@@ -123,7 +123,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 13 | Stop a running answer | `07-stop-running.png` | S08 | shot ✓ |
 | 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | shot ✓ |
 | 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 · capture: ask via `-e text` (editor swipes = handwriting junk), blue-cluster CENTROID tap, GitHub `borealBytes/hermes-wearos` page rendered on the watch | shot ✓ |
-| 16 | Approval card **in-session** — re-shoot to show the ORB FLANKS (✅ left ❌ right), card scrolled off; `34-approval-approved.png` DROPPED (owner 2026-11-07: "I'm not sure what that is supposed to be — drop it"; its beat folded into the 33 caption) | `33-approval-card.png` re-shoot | S33 · `-e approval_demo 1`, scroll card off-glass, capture flanks | ⚠ re-shoot pending (watch serial rotated) |
+| 16 | Approval card **in-session** — flanks shot (owner 2026-11-07 re-shoot): mid-stream park (long-count `-e text` + `-e approval_demo 1` — flanks are gated on run-live AND chat-at-bottom, MainActivity:1699, so the streaming tail pushes the card off-glass by itself; a post-finish swipe trips the card-rescue re-center instead). ✅ left / ❌ right centroids proven by pixel analysis | `33-approval-card.png` re-shot | S33 | shot ✓ (2026-11-07) |
 | 17 | Sessions list (wear-demo rows; batch-9 re-shot — the chip row now includes the 💻 computer lane filter) | `08-sessions.png` | S17 | shot ✓ |
 | 18 | Session search `harbor` | `21-session-search.png` | S21 | shot ✓ |
 | 19 | Long-press sheet + fork | `22-session-sheet.png` | S22 | shot ✓ |
@@ -158,7 +158,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
 | 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` | S47 · batch-9 re-shot (v0.7.0 version line; About is the owner-blessed identity-whitelist page) | shot ✓ |
 
-| 50 | MEDIA EPIC — generated video/audio play in chat (cards inline, tap→fullscreen media3 player; watchkit `/media` pre-shrink) (SPEC §17, §12.14) · batch-10 re-shot: the video card is now the comfy **aurora gif** rendered via the gateway agent — it ANIMATES inline (GIF chip), audio sting below · **2026-11-07: video cell is now `49-video-player.gif` (animated recording, circle-masked); single-frame bridge committed, real `adb screenrecord` re-capture pending watch reconnect** | `48-media-cards.png`, `49-video-player.gif` (re-capture pending), `52-audio-player.png` | S48a, S48b, S48c · `-e render av` (aurora-vid.gif from `/p/comfyui` agent, mp4→gif via repo ffmpeg) · `-e play_url` + `screenrecord` | shot ✓ (gif re-rec pending) |
+| 50 | MEDIA EPIC — generated video/audio play in chat (cards inline, tap→fullscreen media3 player; watchkit `/media` pre-shrink) (SPEC §17, §12.14) · batch-10 re-shot: the video card is now the comfy **aurora gif** rendered via the gateway agent — it ANIMATES inline (GIF chip), audio sting below · **2026-11-07 re-capture done: `49-video-player.gif` is a real 30-frame screenrecord (10 fps, per-frame circle mask, magenta-key transparency idx 255 disposal 2; motion diff ~27/19/19 RGB mean-abs; ⟲5-rewind trick — a finished clip shows the controller reliably, and PinchPlayerView swallows keyevents while the controller is hidden; `-e volume -8` fired mid-rec lands the 🔊 60 % readout on two frames). NOTE: `-e play_url` drives the AUDIO-only ExoPlayer stub — no player UI; fullscreen video must be reached by tapping a media card. The render-av fixture expired in gateway /tmp — the watchkit `.cache/media` pre-shrink was the recovery path** | `48-media-cards.png`, `49-video-player.gif`, `52-audio-player.png` | S48a, S48b, S48c · media card from `/p/comfyui` agent (aurora mp4→gif via repo ffmpeg), tap ▶ chip (uiautomator-measured) | shot ✓ (2026-11-07) |
 | 51 | Animated GIFs decode ON THE WRIST (ImageDecoder→AnimatedImageDrawable via public Drawable.Callback; watchkit `/img` passes gif verbatim) (SPEC §12.14) | `50-gif-card.gif` (screen-recorded, circle-masked — the splash-film precedent for motion artifacts) | S50 | shot ✓ |
 | 52 | Pinch-to-zoom VIDEO — PinchPlayerView intercepts the 2nd finger, MediaZoom parity clamp, double-tap fit↔2.5× | `51-video-pinched.png` (capture: `-e media_zoom 2.4` fires the double-tap's own `animateScale` — adb can't inject two fingers) | S51 | shot ✓ |
 | 53 | BEZEL VOLUME — player binds the rotary while on screen; 5 % detents, haptic tick, fading 🔊 readout; unbind = system volume again | readout visible in `49-video-player.png` (60 %, driven by `-e volume -8` through the exact key path the bezel fires) | rides S48b | shot ✓ |
@@ -339,6 +339,15 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
 - **Motion artifacts:** `screenrecord --time-limit 3`, pull, crop the card box (measure rows by
   saturation, don't eyeball — one crop missed and shipped the prompt bubble), circle-mask every
   frame, one GIF @10 fps, `disposal=2` — 0.3 MB for 26 frames.
+- **Approval-flanks shot (2026-11-07):** the ✅/❌ orbs require `approval pending AND chat at
+  bottom` (MainActivity flanks gate) — park the approval MID-STREAM (`-e text` a slow count, then
+  `-e approval_demo 1` ~1 s in); the streaming tail scrolls the card off-glass by itself. A
+  post-finish swipe instead trips the card-rescue re-center and you shoot the card again.
+- **Video-player shot:** reach fullscreen by TAPPING the media card's ▶ chip (uiautomator-measured
+  coords) — `-e play_url` is the audio-only ExoPlayer stub, no player UI. While the controller is
+  hidden, PinchPlayerView swallows adb keyevents: start the rec off a ⟲5-rewind (chrome shows
+  ~3.5 s at playback end). If the gateway-side fixture expired, the watchkit `.cache/media`
+  pre-shrink of the same clip is the recovery source.
 - **Multi-frame cells (owner 2026-11-07):** a pair/composite image carries ONLY circle-masked
   watch frames on a transparent ground — NO burned-in labels ("the text belongs in the README
   cell, not the image"), and every frame inside a composite gets the same circle mask as a solo
