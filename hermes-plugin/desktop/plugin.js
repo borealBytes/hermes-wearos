@@ -180,7 +180,7 @@ function WearKitPane() {
               className: 'text-(--ui-text-tertiary)',
               children: profiles.length
                 ? 'Enable all, then uncheck who should NOT talk to the watch.'
-                : 'no profiles yet — is the agent half loaded for this gateway?'
+                : 'no profiles yet — the gateway behind this window still runs the pre-pane plugin: restart Hermes Desktop (or open a new chat), then Rescan.'
             }),
             jsxs('div', { className: 'flex flex-col gap-1', children: enableRows })
           ]
