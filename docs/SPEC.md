@@ -1461,8 +1461,8 @@ pushes; a real release commit always edits VERSION, so tags are never gated by i
 **Verify commands (copy-paste):**
 
 ```bash
-gh run download <run-id> -n wearos-pr<N> --repo borealBytes/hermes-wearos   # PR preview
-sha256sum -c SHA256SUMS.txt                                                 # every lane
+gh run download <run-id> -n wearos-pr<N> --repo borealBytes/hermes-wearos -D wearos-pr<N>  # PR preview
+cd wearos-pr<N> && sha256sum -c SHA256SUMS.txt                                              # every lane
 gh attestation verify --repo borealBytes/hermes-wearos hermes-wearos-@rc.apk # @rc + v-tags
 apksigner verify --print-certs <apk>   # who signed it: release key vs CI debug key
 ```

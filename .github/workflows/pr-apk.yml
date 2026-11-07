@@ -13,8 +13,11 @@
 #
 # Artifact: wearos-pr<N> = the APK + SHA256SUMS.txt, 30 days. Fetch + verify:
 #
-#   gh run download <run-id> -n wearos-pr<N> --repo borealBytes/hermes-wearos
-#   sha256sum -c SHA256SUMS.txt
+#   gh run download <run-id> -n wearos-pr<N> --repo borealBytes/hermes-wearos -D wearos-pr<N>
+#   cd wearos-pr<N> && sha256sum -c SHA256SUMS.txt
+#
+# (The -D keeps the -97 MB APK out of your cwd and dodges a false-positive traversal
+# check some distro-packaged gh builds inherited from GHSA-2m9h-r57g-45pj.)
 #
 # A marker-comment on the PR carries the exact run id and sha256 — ONE comment per PR,
 # updated on every push (idempotent upsert via gh api, no third-party comment action).
@@ -75,13 +78,18 @@ jobs:
       # downloaded file always identifies the commit it came from.
       # Same single-APK assertion as the release lane. Named pr<N>-<short sha> so a
       # downloaded file always identifies the commit it came from.
+      # ⚠ GITHUB_SHA on pull_request events is the SYNTHETIC refs/pull/N/merge commit,
+      # not the branch head (proven on the first green run: 019a26c pushed, e8de8ec
+      # stamped). Stamp the real head from the event payload so the filename and the
+      # comment point at a commit anyone can check out.
       - name: Stage APK
         id: stage
         env:
           PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          short="${GITHUB_SHA::7}"
+          short="${HEAD_SHA::7}"
           mkdir -p dist
           shopt -s nullglob
           apks=(app/build/outputs/apk/release/*.apk)
@@ -167,8 +175,8 @@ jobs:
           **Get it** (artifact kept 30 days; this comment is updated on every push):
 
           \`\`\`bash
-          gh run download ${RUN} -n wearos-pr${PR} --repo borealBytes/hermes-wearos
-          sha256sum -c SHA256SUMS.txt
+          gh run download ${RUN} -n wearos-pr${PR} --repo borealBytes/hermes-wearos -D wearos-pr${PR}
+          cd wearos-pr${PR} && sha256sum -c SHA256SUMS.txt
           \`\`\`
 
           - \`${APK}\`
