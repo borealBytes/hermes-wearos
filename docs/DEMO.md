@@ -218,13 +218,21 @@ through img_roots); **35 needs no re-shoot** (film asset unchanged since its gif
 launch re-recorded as proof it still plays); 33 ships the REAL gated card (classic terminal…
 chip, run approved via `-e approve` for the frame; the `approval_demo` inject is the simplified
 narrative variant); tailnet pages redact the FQDN + peer-IP bands with OCR-measured boxes
-(55/31; re-scan zero hits); `17` now pins the ●-marked blue wear-demo pill. **Pending:** the
-Tailscale console pair awaits the owner's noVNC login (`/tmp/opencode/rs/console-login-needed.
-png`); karaoke 39, gif 50, desktop-watch 44/45/46 and the final 21 await the sglang lane — the
-owner's comfyui h3 batch holds the gateway's turn semaphore (runs park `queued`; cancel the
-head via `POST /v1/runs/<id>/stop`). [Update: 39/50/44/45/46 all shipped — see the batch-10
-log below; the final `21` re-shoot was deliberately left last so the
-pruned world is what it photographs — and it now has.]
+(55/31; re-scan zero hits); `17` now pins the ●-marked blue wear-demo pill.
+
+**Close-out state (2026-11-07, blitz tip `5d9562a`):** every agent-doable deliverable shipped —
+39/50/44/45/46 and the final `21` all PASS on the pruned world (the sglang lane drained
+mid-wave; 33/34 re-shot from a real gated run). What remains is OWNER-ONLY, in order:
+(1) score + upload `/tmp/opencode/vid/demo-vertical-v0.8.0-raw.mp4` (silent, 24 beats,
+141.3 s), then swap the README hero-film line to the v0.8 tour link; (2) the Tailscale-console
+pair shot — the camoufox tab parked on the login screen for the owner's manual noVNC login
+(`/tmp/opencode/rs/console-login-needed.png`); (3) the Wear Kit PANE v2 shot — needs the
+owner's **Rescan** click in the Desktop app (plugin state untouched since Nov 6 13:16 = no
+rescan yet). The karaoke MOTION take is NOT a loose end: the watch stays muted by owner
+doctrine, so beat 14 of the film (and shot 39) ship as stills for good. Docs VM intentionally
+left RUNNING (`capture.sh --only-a` re-runnable without spending a key; `run.sh --destroy`
+when done). Old-media purge per §9: the v0.6 /tmp master is deleted; v0.7's is kept until the
+v0.8 upload lands, then the v0.7 README link retires too.
 
 **Batch-10 wave (2026-11-07, the owner-rework round):** five asks — approvals-levels shot,
 richer + centered mermaid, approval card shows the parked command, 4-column centered table,
