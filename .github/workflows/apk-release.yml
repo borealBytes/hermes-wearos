@@ -23,12 +23,28 @@
 # Pins below are verbatim from ci.yml: temurin JDK 17 · gradle 8.13 via setup-gradle
 # (no wrapper committed) · platforms;android-35 + build-tools;35.0.0 (compileSdk 35,
 # AGP 8.7.3 per gradle/libs.versions.toml).
+#
+# BUILD POLICY (owner doctrine 2026-11-06, SPEC §18): every PR to main builds an APK
+# (pr-apk.yml, ephemeral CI debug key — that lane never reads the secrets above);
+# merging to main rolls a preview; a version tag is the real Release. This file grew
+# the middle lane: a `preview` job that builds EXACTLY like the tag Release (same
+# gradle task, same real keystore) and publishes a ROLLING GitHub prerelease on the
+# moving tag @rc. ⚠ @rc is overwritten by every merge — its tag is force-moved to the
+# new main SHA and its assets replaced in place. Consumers wanting stability pin tags.
+# The `release` job (v* / dispatch) is behaviorally UNCHANGED — the shipped v0.6/v0.7
+# chain — now explicitly gated so branch pushes don't run it.
+#
+# paths-ignore below gates branch pushes only in effect: a version bump ALWAYS edits
+# VERSION (scripts/release.sh), so a real release commit can never be all-docs; and
+# workflow_dispatch stays available as the escape hatch for any edge tag.
 
 name: APK Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*']           # real Releases — unchanged
+    branches: [main]       # rolling @rc preview — new
+    paths-ignore: ['docs/**', '*.md', '**/*.md']
   workflow_dispatch: # version then comes from the VERSION file
 
 permissions:
@@ -37,8 +53,11 @@ permissions:
   attestations: write  # upload the attestation
 
 jobs:
+  # Tag pushes (v*) and manual dispatch only. github.ref_type is 'tag' for exactly
+  # the pushes the shipped chain used; branch pushes fall through to `preview`.
   release:
     name: Build + publish release APK
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     runs-on: ubuntu-latest
     env:
       HERMES_KEYSTORE_B64: ${{ secrets.HERMES_KEYSTORE_B64 }}
@@ -147,6 +166,155 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          body_path: dist/release-notes.md
+          files: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+
+  # ── ROLLING @rc ─────────────────────────────────────────────────────────────────
+  # Same build, same keystore, same attestation as the tag Release — but published to
+  # ONE mutable prerelease on the moving tag @rc. Two facts about softprops that this
+  # job handles explicitly (verified against v2 action.yml + README):
+  #   1. The action REUSES an existing tag — it never moves one. So we force-move
+  #      @rc ourselves (git push -f) before publishing; target_commitish only seeds
+  #      creation and races.
+  #   2. Inputs are snake_case on v2/v3: make_latest / overwrite_files /
+  #      fail_on_unmatched_files. (camelCase makeLatest passes as INPUT_MAKELATEST
+  #      and is silently ignored — the flags below are the real ones.)
+  # overwrite_files (default true) is set explicitly: every merge REPLACES the
+  # previous @rc assets, no cruft pile-up. make_latest: false keeps @rc out of
+  # "Latest" — GitHub also refuses latest for prereleases; belt and braces.
+  # Keystore missing ⇒ unsigned @rc (same honest skip as the release lane).
+  # ────────────────────────────────────────────────────────────────────────────────
+  preview:
+    name: Rolling @rc preview (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Back-to-back merges serialize here so two runs can't fight over the tag.
+    concurrency:
+      group: rc-preview
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    env:
+      HERMES_KEYSTORE_B64: ${{ secrets.HERMES_KEYSTORE_B64 }}
+      HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
+      HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
+      HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Resolve version stamp
+        id: ver
+        run: |
+          set -euo pipefail
+          echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+          echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble release APK
+        run: gradle --console=plain :app:assembleRelease
+
+      # Stable asset name on purpose: overwrite_files means the @rc release always
+      # carries exactly one current APK, and the name never changes under consumers.
+      - name: Stage APK
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::expected exactly 1 release APK, found ${#apks[@]}"
+            exit 1
+          fi
+          cp "${apks[0]}" dist/hermes-wearos-@rc.apk
+
+      - name: Sign APK (when HERMES_KEYSTORE_B64 is set)
+        if: env.HERMES_KEYSTORE_B64 != ''
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          printf '%s' "$HERMES_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          for apk in dist/*.apk; do
+            "$BT/zipalign" -p -f 4 "$apk" "$apk.aligned"
+            mv "$apk.aligned" "$apk"
+            "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" \
+              --ks-key-alias "$HERMES_KEY_ALIAS" \
+              --ks-pass env:HERMES_KEYSTORE_PASSWORD \
+              --key-pass env:HERMES_KEY_PASSWORD \
+              -- "$apk"
+            "$BT/apksigner" verify -- "$apk"
+          done
+          rm -f "$RUNNER_TEMP/release.jks" dist/*.idsig
+
+      - name: Emit SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- *.apk > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.apk
+
+      # The moving tag, moved HERE (the action itself never relocates an existing tag).
+      # Lightweight tag at the pushed SHA — checkout left us detached on exactly it.
+      # GITHUB_TOKEN's contents:write can force-move refs/tags; the token push does
+      # not retrigger workflows (no loop with this file's own push trigger).
+      - name: Move @rc to this commit
+        run: |
+          set -euo pipefail
+          git tag -f '@rc'
+          git push -f origin '@rc'
+
+      - name: Preview notes
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHORT: ${{ steps.ver.outputs.short }}
+        run: |
+          set -euo pipefail
+          cat > dist/release-notes.md <<EOF
+          Rolling preview @rc — main@$SHORT (VERSION v$VERSION). Every merge to main
+          rebuilds this prerelease, force-moves the @rc tag to the new tip, and replaces
+          the assets below in place: what sits here is current main, installable, nothing more.
+          Want stability? Pin a v tag — that is the only immutable lane (SPEC §18).
+
+          Signed with the REAL release keystore (same cert as the v-tag Releases), so @rc
+          rides the upgrade chain: it upgrades any release-key-signed build, and the next
+          v tag upgrades @rc. Built the same way as the real Release: gradle
+          :app:assembleRelease (temurin 17 / gradle 8.13 / android-35 pins), CI-side
+          zipalign+apksigner, SLSA build provenance attested.
+
+          Verify (after downloading every asset from THIS release):
+
+          ~~~
+          gh attestation verify --repo ${GITHUB_REPOSITORY} hermes-wearos-@rc.apk
+          sha256sum -c SHA256SUMS.txt
+          apksigner verify --print-certs hermes-wearos-@rc.apk   # release key, not a CI debug key
+          ~~~
+          EOF
+
+      - name: Publish rolling @rc prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: '@rc'
+          target_commitish: ${{ github.sha }}
+          name: 'Preview @rc · v${{ steps.ver.outputs.version }} · ${{ steps.ver.outputs.short }}'
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          fail_on_unmatched_files: false
           body_path: dist/release-notes.md
           files: |
             dist/*.apk

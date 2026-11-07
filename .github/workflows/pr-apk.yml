@@ -1,0 +1,180 @@
+# PR Preview APK — owner doctrine (SPEC §18): every PR to main ships an INSTALLABLE
+# preview. This lane builds `:app:assembleRelease` and signs it with an EPHEMERAL
+# CI-GENERATED debug keystore — keytool mints a fresh key in-job, then zipalign +
+# apksigner (same build-tools pin as every other lane). The release keystore secrets
+# (HERMES_KEYSTORE_*) are NEVER READ here.
+#
+# Honest caveat, on the record: PR previews are CI-debug-signed, NOT release-key-signed.
+# Same applicationId (dev.hermes.wearos) + different signature ⇒ install over a
+# release/@rc build needs an uninstall first, and every re-run mints a NEW key, so a
+# preview is for trying, never for upgrading. The upgrade chain (Play ↔ @rc ↔ v-tags)
+# all share the real key — see apk-release.yml; SPEC §18.
+#
+# Artifact: wearos-pr<N> = the APK + SHA256SUMS.txt, 30 days. Fetch + verify:
+#
+#   gh run download <run-id> -n wearos-pr<N> --repo borealBytes/hermes-wearos
+#   sha256sum -c SHA256SUMS.txt
+#
+# A marker-comment on the PR carries the exact run id and sha256 — ONE comment per PR,
+# updated on every push (idempotent upsert via gh api, no third-party comment action).
+#
+# Pins verbatim from ci.yml / apk-release.yml: temurin JDK 17 · gradle 8.13 via
+# setup-gradle (no wrapper committed) · platforms;android-35 + build-tools;35.0.0
+# (compileSdk 35, AGP 8.7.3 per gradle/libs.versions.toml). No SLSA attestation here
+# on purpose: a throwaway key riding a 30-day artifact is a preview, not a trust
+# anchor — attestations ride @rc and the v-tags.
+
+name: PR APK
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write   # marker-comment upsert (GITHUB_TOKEN, same-repo PRs)
+
+concurrency:
+  group: pr-apk-${{ github.ref }}
+  cancel-in-progress: true   # a new push supersedes the in-flight build
+
+jobs:
+  preview:
+    name: Build CI-signed preview APK
+    runs-on: ubuntu-latest
+    outputs:
+      apk: ${{ steps.stage.outputs.apk }}
+      sha256: ${{ steps.sums.outputs.sha256 }}
+      short: ${{ steps.stage.outputs.short }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Assemble release APK
+        run: gradle --console=plain :app:assembleRelease
+
+      # Same single-APK assertion as the release lane. Named pr<N>-<short sha> so a
+      # downloaded file always identifies the commit it came from.
+      - name: Stage APK
+        id: stage
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA::7}"
+          mkdir -p dist
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::expected exactly 1 release APK, found ${#apks[@]}"
+            exit 1
+          fi
+          name="hermes-wearos-pr${PR}-${short}.apk"
+          cp "${apks[0]}" "dist/${name}"
+          echo "apk=${name}" >> "$GITHUB_OUTPUT"
+          echo "short=${short}" >> "$GITHUB_OUTPUT"
+
+      # The whole point of this lane: an EPHEMERAL keytool keystore, born and dead in
+      # this job. Canonical debug credentials (android/androiddebugkey) so anyone can
+      # recognize the signer; apksigner verify proves zipalign + signature.
+      - name: Sign APK with an ephemeral CI debug key
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/ci-preview.jks" \
+            -alias androiddebugkey -storepass android -keypass android \
+            -keyalg RSA -keysize 2048 -validity 3650 \
+            -dname "CN=hermes-wearos CI preview (ephemeral), O=none, C=US"
+          for apk in dist/*.apk; do
+            "$BT/zipalign" -p -f 4 "$apk" "$apk.aligned"
+            mv "$apk.aligned" "$apk"
+            "$BT/apksigner" sign --ks "$RUNNER_TEMP/ci-preview.jks" \
+              --ks-key-alias androiddebugkey \
+              --ks-pass env:PREVIEW_STOREPASS \
+              --key-pass env:PREVIEW_STOREPASS \
+              -- "$apk"
+            "$BT/apksigner" verify -- "$apk"
+          done
+          rm -f "$RUNNER_TEMP/ci-preview.jks" dist/*.idsig
+        env:
+          PREVIEW_STOREPASS: android
+
+      - name: Emit SHA256SUMS.txt
+        id: sums
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- *.apk > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+          echo "sha256=$(awk '{print $1; exit}' dist/SHA256SUMS.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wearos-pr${{ github.event.pull_request.number }}
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+          retention-days: 30
+
+  # One idempotent comment per PR (matched on the HTML marker below), carrying the
+  # exact gh invocation for THIS run. Needs no checkout: pure gh api on the token.
+  pr-comment:
+    name: Preview comment on the PR
+    needs: preview
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      RUN: ${{ github.run_id }}
+      APK: ${{ needs.preview.outputs.apk }}
+      SHA256: ${{ needs.preview.outputs.sha256 }}
+      SHORT: ${{ needs.preview.outputs.short }}
+    steps:
+      - name: Upsert marker comment
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/comment.md"
+          cat > "$body" <<EOF
+          <!-- hermes-pr-apk -->
+          ## 📱 Preview APK for this PR
+
+          **What is this?** A CI build of this PR's current head that installs on a
+          Wear OS watch today, so reviewers can try the change without building. It is
+          signed with a throwaway CI debug key — not the release key — so it is a
+          try-it, not an upgrade path: if the watch already carries a release or @rc
+          build, uninstall it first (same package id, different signature).
+
+          **Get it** (artifact kept 30 days; this comment is updated on every push):
+
+          \`\`\`bash
+          gh run download ${RUN} -n wearos-pr${PR} --repo borealBytes/hermes-wearos
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`
+
+          - \`${APK}\`
+          - sha256 \`${SHA256}\`
+          - commit \`${SHORT}\` · gradle :app:assembleRelease · zipalign+apksigner CI-side
+          EOF
+          api="repos/${GITHUB_REPOSITORY}/issues"
+          existing="$(gh api "${api}/${PR}/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- hermes-pr-apk -->")) | .id' \
+            | head -n1 || true)"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "${api}/comments/${existing}" -f body="$(cat "$body")" \
+              --jq '.html_url'
+          else
+            gh api -X POST "${api}/${PR}/comments" -f body="$(cat "$body")" \
+              --jq '.html_url'
+          fi
