@@ -205,6 +205,24 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | hero GIF | re-cut as **`demo-walkthrough-v0.7.0.gif`** (v0.6.0 GIF purged per §9); master `demo-vertical-v0.7.0-raw.mp4` scored and UPLOADED by the owner — README hero links [youtube.com/shorts/eSGy7jFHi18](https://www.youtube.com/shorts/eSGy7jFHi18) (v0.7.0 tour; the v0.6.0 full tour stays linked) (never committed) | alt text lists the new beats | refreshed |
 | weights section | numbers re-measured (106 MB APK incl. the gomobile tailnet node) | table matches `unzip -l` of the shipped debug APK | refreshed |
 
+**v0.8 plugin-era re-shoot wave (2026-11-06/07):** every screen re-captured against the live
+watch + fresh wear-demo world (two Harbor briefs + aurora + mooring seeded; desk noise archived
+via the feature itself). Per-family commits: `bb8086d` sessions (08/09/21/22/23/24), `95fd3c3`
+chat + voice (02b/03/04/05/06/07/12/16/25/26/27/29/33/34/37/38/40 + the voice-in quartet
+56-59, now gated), `ed4b79e` settings (01/10/11/14a/14b/15/18/19/36/42/43/47/55), `186af52`
+media family on /tmp fixtures + notifications (48/49/51/52/53 + 31/32 + 30), `4799c9b` README
+restructure + 41 pair + `tools/demo/pair.py`. Notes: the `av` render fixture moved to
+`/tmp/clip.mp4` + `/tmp/tone.opus` (the paths §6 stages — the old machine-local path 403'd
+through img_roots); **35 needs no re-shoot** (film asset unchanged since its gif cut — cold
+launch re-recorded as proof it still plays); 33 ships the REAL gated card (classic terminal…
+chip, run approved via `-e approve` for the frame; the `approval_demo` inject is the simplified
+narrative variant); tailnet pages redact the FQDN + peer-IP bands with OCR-measured boxes
+(55/31; re-scan zero hits); `17` now pins the ●-marked blue wear-demo pill. **Pending:** the
+Tailscale console pair awaits the owner's noVNC login (`/tmp/opencode/rs/console-login-needed.
+png`); karaoke 39, gif 50, desktop-watch 44/45/46 and the final 21 await the sglang lane — the
+owner's comfyui h3 batch holds the gateway's turn semaphore (runs park `queued`; cancel the
+head via `POST /v1/runs/<id>/stop`).
+
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
 **Device hardening (every capture session, in order):**
