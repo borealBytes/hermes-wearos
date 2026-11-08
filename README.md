@@ -64,6 +64,11 @@ your own server. Replies stream over your tailnet (through the watch's own node)
 third-party relay, and the cache on the watch is encrypted and bounded. It's the "own your stack"
 demo that lives on your wrist.
 
+**The watch app is open source forever — MIT, this repo, no CLA, no open-core.** I publish a CI-built
+APK because that's kind; but reading every line it runs, rebuilding it without me, and modifying it
+for a watch I've never held are the intended path, not a tolerated one. That's the whole point of
+making it yours.
+
 ## What you get on the wrist
 
 One shipped capability per row — every image below is a real capture in
@@ -308,7 +313,7 @@ whose whole job is a four-step checklist:
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
    [repo](https://github.com/borealBytes/hermes-wearos).
-2. **Enable Wear Kit for your agents** — one checkbox per profile, plus an **Enable all** button
+2. **Enable Wear Kit for your agents** — one checkbox per profile, plus an **Enable all** row
    on top (enable all, then uncheck who should *not* talk to the watch — the CLI equivalent is
    `hermes watch enable --agents all`).
 3. **Open the app on the watch** — it greets you with a big 6-digit PIN (5-minute window, single
@@ -318,10 +323,15 @@ whose whole job is a four-step checklist:
 
 Below the checklist: the paired-device list and the **readiness lights** (tailscaled, credential,
 MagicDNS, funnel) — every red light names its fix verb, and `hermes watch setup` prints the same
-list as JSON. A desktop row stuck on *"copying…"* is core's pending-sync state: hit **Rescan**
-on the pane and it lands. The web dashboard shows the same plugin as a plain management tile
+list as JSON. The pane talks to the plugin's own REST half (`dashboard/plugin_api.py` mounted at
+`/api/plugins/wearos/*`, read pane-side with `ctx.rest`) — and that mount is **hot**: installing or
+updating the plugin makes the backend answer the very next request, no app restart. (A pane only
+needs the card's **Rescan** to pick up fresh JS; a row stuck on *"copying…"* is core's
+pending-sync state, and Rescan lands it too.) The checkbox writes the same `config.yaml` ledger
+core's card toggle edits one agent at a time — and it's the same list `hermes watch enable` drives.
+The web dashboard shows the same plugin as a plain management tile
 (Disable / Remove, *"No dashboard tab"* — honestly: this plugin's page is the Desktop pane, not
-a web page).
+a web page; `/api/plugins/wearos/*` is an API namespace, not a tab).
 
 The real config form (Settings ▸ Plugins ▸ wearos) is generated from the plugin's `config_schema`,
 descriptions included; secret fields render blank even when set — they are never echoed back. Full

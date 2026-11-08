@@ -3,15 +3,21 @@
 // prototype writes, no core-UI reach-ins. `hermes plugins validate` enforces this.
 //
 // The pane is a 4-step install checklist, then the read-only status half (paired devices +
-// readiness lights from watch_status). Two surface facts shaped it, both measured against
-// the app source:
+// readiness lights). Three surface facts shaped it, all measured against the installed
+// core (v0.23.0) — the first draft guessed wrong on #2 and that guess is why:
 //   · No sibling assets. The loader evaluates plugin.js from a blob: URL (runtime-loader.ts:
 //     "a relative path cannot resolve against the blob: base"), and nothing serves files next
 //     to the published plugin.js — so <img src="./wearkit-hero.png"> would 404. The hero is an
 //     inline SVG wordmark instead: zero assets, works everywhere.
-//   · Panes get no plugin-config door, so watch_status mirrors apk_release_url (and the
-//     profile inventory) into its tool result; the URL below is only the config default's
-//     mirror, for the first paint before the agent answers.
+//   · There is NO tool-call door for panes. `host` (src/sdk/index.ts:558) has no callTool,
+//     and the gateway RPC table has no generic tools.call — plugin TOOLS only answer inside
+//     an agent turn. The real door is per-plugin REST: `ctx.rest('/status')` →
+//     GET /api/plugins/wearos/status (api/plugins.ts pluginRest), served by our
+//     dashboard/plugin_api.py — and core's own hot-mount test proves that route answers on
+//     the FIRST request after install/update: no app restart, ever.
+//   · Panes get no plugin-config door, so /status mirrors apk_release_url (and the profile
+//     inventory) in its answer; the URL below is only the config default's mirror, for the
+//     first paint before the backend answers.
 import { atom, host, haptic, useValue } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect } from 'react'
@@ -21,23 +27,35 @@ const REPO_URL = 'https://github.com/borealBytes/hermes-wearos'
 
 const $status = atom(null)
 const $busy = atom(false)
+const $error = atom('')
 
-// watch_status answers with the readiness checklist, paired devices, the profile
+// The ctx handed to register() owns the namespace-scoped REST door; capture it once.
+let api = null
+const rest = (path, opts) => {
+  if (!api) return Promise.reject(new Error('wearos: register() has not run'))
+  return api.rest(path, opts)
+}
+
+// /status answers with the readiness checklist, paired devices, the profile
 // inventory (checkbox state) and the configured Releases URL — same JSON the CLI prints.
 async function refresh() {
   try {
-    $status.set(await host.callTool('watch_status', {}))
-  } catch {
-    /* agent half not answering (or just got enabled elsewhere) — keep the last view */
+    $status.set(await rest('/status'))
+    $error.set('')
+  } catch (error) {
+    // Keep the last view, but SAY what's wrong — a silent catch here once read
+    // as "no profiles" forever. 404 ⇒ the gateway hasn't mounted the backend
+    // half yet (older install pinned under this window): Rescan fixes it, no restart.
+    $error.set(String((error && error.message) || error))
   }
 }
 
-// One toggle = one watch_enable call = the same line-level config.yaml patch the CLI runs.
+// One toggle = one POST = the same line-level config.yaml patch the CLI runs.
 async function toggle(agents, on) {
   haptic('tap')
   $busy.set(true)
   try {
-    await host.callTool('watch_enable', { agents, enable: on })
+    await rest('/enable', { method: 'POST', body: { agents, enable: on } })
     await refresh()
   } catch (error) {
     host.notify({ kind: 'error', message: `wearos: enable failed — ${String(error)}` })
@@ -48,14 +66,13 @@ async function toggle(agents, on) {
 
 function showPin() {
   haptic('tap')
-  host
-    .callTool('watch_pair', {})
+  rest('/pin')
     .then(result => {
       if (result && result.pin) {
         host.notify({ kind: 'info', message: `pair with PIN ${result.pin} (5 min): /pair ${result.pin}` })
       }
     })
-    .catch(() => host.notify({ kind: 'error', message: 'wearos: no PIN — is the agent half loaded?' }))
+    .catch(error => host.notify({ kind: 'error', message: `wearos: no PIN — ${String(error)}` }))
 }
 
 function Step({ done, n, title, children }) {
@@ -80,6 +97,7 @@ function Step({ done, n, title, children }) {
 function WearKitPane() {
   const status = useValue($status)
   const busy = useValue($busy)
+  const error = useValue($error)
   useEffect(() => {
     refresh()
     const timer = setInterval(refresh, 10_000) // pairing completes while you watch this pane
@@ -150,6 +168,13 @@ function WearKitPane() {
           children: 'HERMES WEAR KIT'
         })
       }),
+      // The REST half speaks for itself — one honest line beats a mystery checklist.
+      error
+        ? jsx('div', {
+            className: 'text-xs text-(--ui-text-danger)',
+            children: `backend not answering: ${error} — hit Rescan on the Wear Kit card (no restart needed: the route hot-mounts).`
+          })
+        : null,
       jsx(Step, {
         done: devices.length > 0,
         n: 1,
@@ -165,7 +190,8 @@ function WearKitPane() {
               children: 'GitHub Releases' // CI-built APK + SHA256SUMS + provenance
             }),
             ' and open it on the watch. Repo: ',
-            jsx('a', { className: 'underline', href: REPO_URL, rel: 'noreferrer', target: '_blank', children: 'borealBytes/hermes-wearos' })
+            jsx('a', { className: 'underline', href: REPO_URL, rel: 'noreferrer', target: '_blank', children: 'borealBytes/hermes-wearos' }),
+            ' — open source forever: the Release build is a courtesy, inspecting, building and modifying it yourself is the whole point of it being yours.'
           ]
         })
       }),
@@ -179,8 +205,10 @@ function WearKitPane() {
             jsx('div', {
               className: 'text-(--ui-text-tertiary)',
               children: profiles.length
-                ? 'Enable all, then uncheck who should NOT talk to the watch.'
-                : 'no profiles yet — the gateway behind this window still runs the pre-pane plugin: restart Hermes Desktop (or open a new chat), then Rescan.'
+                ? 'Enable all, then uncheck who should NOT talk to the watch. Same ledger as the card\u2019s one-at-a-time Agent toggle.'
+                : error
+                  ? 'waiting on the backend — see the line above.'
+                  : 'no profiles on this gateway yet.'
             }),
             jsxs('div', { className: 'flex flex-col gap-1', children: enableRows })
           ]
@@ -228,6 +256,7 @@ export default {
   id: 'wearos',
   name: 'Wear Kit',
   register(ctx) {
+    api = ctx
     ctx.register({
       id: 'wearos-pane',
       area: 'panes',

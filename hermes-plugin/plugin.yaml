@@ -1,6 +1,10 @@
 # Hermes Wear Kit — catalog entry points at this directory (subdir: hermes-plugin).
-# Manifest surface verified against hermes-agent v0.22.5 (hermes_cli/plugins_manifest.py
-# _KNOWN_MANIFEST_FIELDS; capabilities probe in hermes_cli/plugin_validate.py).
+# Manifest surface verified against hermes-agent v0.23.0 (hermes_cli/plugins_manifest.py
+# _KNOWN_MANIFEST_FIELDS; capabilities probe in hermes_cli/plugin_validate.py). The
+# desktop pane reads dashboard/plugin_api.py via ctx.rest (hot-mounted — core's own
+# test_plugin_api_hot_mount proves the first request serves without an app restart);
+# the pane has NO tool-call door (measured: src/sdk/index.ts `host` has none), which is
+# why this backend half exists at all.
 # Admission-rule mapping: secrets via config_schema only (rule 11); disclosures in
 # README.md (rule 13); requires_hermes floor re-checked against the release current at
 # PR time (rule 14); zero committed binaries inside this subdir (rule 17 — the
@@ -8,17 +12,20 @@
 name: wearos
 version: 0.1.0
 description: >-
-  Hermes Wear Kit — one-command Wear OS client for your Hermes gateway. The watch shows a
-  6-digit PIN; say or type it to Hermes on any surface; the plugin mints a single-use,
-  pre-authorized, tagged Tailscale auth key and hands the watch its enrollment packet, so
-  the watch's embedded tsnet node joins YOUR tailnet and every call rides the tunnel
-  forever after (tailnet-only doctrine, SPEC §11.4). Registers watch_send / watch_status /
-  watch_pair / watch_enable tools, /pair, a `hermes watch` CLI
-  (pair/enable/status/setup/devices — `hermes watch enable --agents all` flips the plugin
-  on for every profile with comment-preserving config edits), a load-time readiness pass,
-  and a Desktop Wear Kit page (4-step install checklist + per-profile enable checkboxes).
-  The Wear OS APK is a CI-built GitHub Release with build provenance — never a bundled
-  binary.
+  ⌚ Pairs the Hermes Wear OS watch app with this gateway. The Wear OS app (the open-source
+  repo borealBytes/hermes-wearos — link below) is a standalone Wear Compose client: the
+  watch shows a 6-digit PIN, you say /pair 123456 to Hermes on any surface, and this plugin
+  hands the watch its Tailscale enrollment packet — a single-use, pre-authorized,
+  tag-restricted key. From then on the watch's OWN embedded tailnet node carries every call:
+  no phone app, no relay, no LAN fallback (tailnet-only, SPEC §11.4). What you get on the
+  wrist: streaming chat with markdown/images/mermaid/video, push-to-talk with on-device or
+  gateway STT, in-session approvals, body tools. This plugin = the provisioning + pairing
+  half (keys, PIN ledger, claim door, per-agent enablement); the watch APK = the resident.
+  The APK ships as a CI-built GitHub Release with SHA256SUMS and provenance — never a
+  bundled binary — and the app is open source forever: inspecting, building and modifying
+  it yourself is the whole point of it being yours. Enable per agent with the checkboxes on
+  the Wear Kit pane (core's card toggle flips the same config.yaml ledger, one agent at a
+  time); `hermes watch` CLI covers pair/enable/status/setup/devices.
 author: "Clay (borealBytes)"
 kind: standalone
 platforms:
@@ -31,7 +38,9 @@ tags:
   - tailscale
   - pairing
   - devices
-requires_hermes: ">=0.22.0"
+# Floor raised for the desktop data plane: ctx.rest + hot-mounted plugin_api are
+# MEASURED on v0.23.0 (2026.9.24); v0.22 is unverified for them, so we don't claim it.
+requires_hermes: ">=0.23.0"
 # Stdlib-only (urllib, no pip deps); mermaid rendering arrives in media.py — keep it so,
 # or declare python_dependencies with oldest-workable floor + upper bound (rule 10).
 provides_tools:

@@ -90,15 +90,19 @@ reported unchanged rather than rewritten. Edits take effect when that profile's 
 (re)loads plugins.
 
 Where the profile inventory comes from: `watch_status` gained one additive key —
-`profiles: [{name, enabled, has_config}]` — so the pane's step-2 checklist rides the
-status call it already makes (no second round-trip, and the existing status consumers are
-untouched). It also mirrors `apk_release_url`, because the Desktop SDK gives panes no
-plugin-config door.
+`profiles: [{name, enabled, has_config}]` — mirrored the same way into the pane's REST
+half (below). It also mirrors `apk_release_url`, because the Desktop SDK gives panes no
+plugin-config door. And the pane does not call tools at all: the SDK's `host` has no
+tool-call door (measured v0.23.0), so `dashboard/plugin_api.py` exposes the same JSON at
+`/api/plugins/wearos/{status,enable,pin}` and the pane reads it with `ctx.rest`. That
+mount is HOT — install or update answers the next request, no app restart; Rescan (or
+reopening the app) only refreshes the pane JS itself.
 
 If the plugin shows an **"Agent + Desktop"** badge, it ships two halves: the agent half
 (this Python package, per profile, as above) and the desktop half (`desktop/plugin.js`,
-the Wear Kit page, copied into the app itself — profile-independent). A desktop row
-stuck on *"copying…"* is core's pending-sync state: hit **Rescan** on that page (or
+the Wear Kit page, copied into the app itself — profile-independent, plus its backend
+`dashboard/plugin_api.py`). A desktop row stuck on *"copying…"* is core's pending-sync
+state: hit **Rescan** on that page (or
 restart the app) and the pane lands.
 
 ### Config options (`plugin.yaml` → `config_schema`)
@@ -142,7 +146,8 @@ The Wear OS APK is **not bundled here**: it ships as a CI-built GitHub Release
 - MagicDNS on (wizard checks and links the console). Funnel used only for the pairing
   door: the gateway node's MagicDNS name (e.g. `box.tailb12aa5.ts.net`) serving `/pair/*`
   — `hermes watch setup --fix serve` prints the exact line to type on the watch.
-- `requires_hermes >= 0.22` (floor re-measured at PR time).
+- `requires_hermes >= 0.23` — the pane data plane (`ctx.rest` + hot-mounted
+  `plugin_api.py`) is measured on v0.23.0 (2026.9.24); floor re-measured at PR time.
 
 ## The claim door (pairing API — the watch client is built against exactly this)
 
@@ -231,10 +236,11 @@ ephemeral claim door). Host modules resolve from `~/.hermes/hermes-agent` or
 
 | File | Role |
 |---|---|
-| `plugin.yaml` | manifest (capabilities verified against hermes-agent v0.22.5) |
+| `plugin.yaml` | manifest (capabilities verified against hermes-agent v0.23.0) |
 | `__init__.py` | pairing state machine, claim + registry, tools, `/pair`, `hermes watch` |
 | `claim_server.py` | the funnel claim door (stdlib ThreadingHTTPServer, 127.0.0.1) |
 | `tailscale.py` | stdlib-only Management API client (key mint/expire, DNS, ACL + funnel attr) |
 | `media.py` | in-process media lane (porting; sidecar is the documented fallback) |
-| `tests/` | pytest suite (state machine, claim API over real HTTP, ACL detect, registry) |
+| `dashboard/manifest.json` + `dashboard/plugin_api.py` | the pane's data plane: FastAPI router hot-mounted at `/api/plugins/wearos/*` (`GET /status`, `POST /enable`, `GET /pin`). Exists because the desktop SDK has no tool-call door for panes — measured. Reuses the gateway's loaded plugin instance by file identity, preferring the `_CTX`-bound module. fastapi is core's runtime, not a pip dep (rule 10) |
+| `tests/` | pytest suite (state machine, claim API over real HTTP, ACL detect, registry, pane routes incl. the sys.modules alias trap) |
 | `desktop/plugin.js` | Wear Kit page: 4-step install checklist (APK → per-profile enable → watch PIN → `/pair`) + paired devices + readiness lights. The hero is an inline SVG wordmark, not `./wearkit-hero.png`: the app evaluates `plugin.js` from a blob: URL and serves no sibling assets, so a relative `<img>` would 404 |
