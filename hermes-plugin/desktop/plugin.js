@@ -144,7 +144,15 @@ function WearKitPane() {
             disabled: busy,
             onChange: e => toggle([p.name], e.target.checked)
           }),
-          jsx('span', { children: p.name })
+          jsx('span', { children: p.name }),
+          // An agent can hold its OWN copy, frozen at the SHA it was installed with
+          // (core moves it only via the card's 'Update to pin'). Say so, plainly.
+          p.update_available
+            ? jsxs('span', {
+                className: 'text-[10px] text-(--ui-text-danger)',
+                children: ['own copy @ ', p.pin, ' — Update to pin on the card']
+              })
+            : null
         ]
       }, p.name)
     )

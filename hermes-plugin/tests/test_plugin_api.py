@@ -15,6 +15,7 @@ second copy of the plugin is ever exec'd here.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -54,11 +55,40 @@ def test_status_shape(wearos, api):
     payload = api.status()
     assert set(payload) == {"checks", "devices", "profiles", "apk_release_url", "door"}
     assert payload["devices"] == {}  # clean sandbox
-    # Empty sandbox: default (root config, no file yet) and nothing else.
-    assert payload["profiles"] == [{"name": "default", "enabled": False, "has_config": False}]
+    # Empty sandbox: default (root config, no file yet) and nothing else; no
+    # install-metadata → no pin claims at all.
+    assert payload["profiles"] == [{"name": "default", "enabled": False, "has_config": False,
+                                    "pin": None, "own_copy": False, "update_available": False}]
     assert payload["checks"]["tailscaled"]["ok"] is True
     assert payload["apk_release_url"].startswith("https://")
     assert payload["door"] == {"listening": False}  # door not started in tests
+
+
+def test_inventory_reports_stale_per_agent_pins(wearos, api, tmp_path):
+    """Core freezes a per-profile install at its copied SHA; the pane must show it."""
+    root_rev = "cafe1234" + "0" * 32
+    own_rev = "deadbeef" + "1" * 32
+    root_meta = tmp_path / "plugins"
+    (root_meta).mkdir()
+    (root_meta / ".install-metadata.json").write_text(
+        json.dumps({"wearos": {"revision": root_rev, "pinned": True}}), encoding="utf-8")
+    ls = tmp_path / "profiles" / "lightshow"          # stale own copy (identity marker needed)
+    (ls / "plugins").mkdir(parents=True)
+    (ls / "config.yaml").write_text("model: x\n", encoding="utf-8")
+    (ls / "plugins" / ".install-metadata.json").write_text(
+        json.dumps({"wearos": {"revision": own_rev, "pinned": True}}), encoding="utf-8")
+    fresh = tmp_path / "profiles" / "upwork"          # own copy AT root rev → not stale
+    (fresh / "plugins").mkdir(parents=True)
+    (fresh / "config.yaml").write_text("model: x\n", encoding="utf-8")
+    (fresh / "plugins" / ".install-metadata.json").write_text(
+        json.dumps({"wearos": {"revision": root_rev, "pinned": True}}), encoding="utf-8")
+
+    by_name = {p["name"]: p for p in api.status()["profiles"]}
+    assert by_name["default"] == {"name": "default", "enabled": False, "has_config": False,
+                                  "pin": "cafe1234", "own_copy": False, "update_available": False}
+    assert by_name["lightshow"]["update_available"] is True and by_name["lightshow"]["pin"] == "deadbeef"
+    assert by_name["lightshow"]["own_copy"] is True
+    assert by_name["upwork"]["update_available"] is False and by_name["upwork"]["pin"] == "cafe1234"
 
 
 def test_enable_round_trip(wearos, api, tmp_path):

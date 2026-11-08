@@ -812,9 +812,29 @@ def _parse_agents(agents) -> list:
     return []
 
 
+def _revision_ledgers(root: Path) -> tuple:
+    """(root revision, {profile: revision}) straight from core's own
+    .install-metadata.json ledgers. An agent with a per-profile copy freezes at
+    the SHA it was installed with (core updates it only via the card's
+    'Update to pin') — without this the pane shows one plugin wearing three
+    versions and every reader blames us."""
+    def _rev(meta: Path) -> Optional[str]:
+        try:
+            entry = (json.loads(meta.read_text(encoding="utf-8")).get("wearos") or {})
+        except (OSError, ValueError):
+            return None
+        return str(entry.get("revision") or "") or None
+    return _rev(root / "plugins" / ".install-metadata.json"), {
+        p.name: _rev(p / "plugins" / ".install-metadata.json") for p in _named_profile_dirs(root)
+    }
+
+
 def _profile_inventory() -> list:
-    """[{name, enabled, has_config}] — the pane's step-2 checklist data; it rides
-    watch_status (the call the pane already makes) rather than a second tool round-trip."""
+    """[{name, enabled, has_config, pin, own_copy, update_available}] — the pane's
+    step-2 checklist data; it rides watch_status (the call the pane already makes)
+    rather than a second tool round-trip."""
+    root = _hermes_root()
+    root_rev, per_profile = (_revision_ledgers(root) if root else (None, {}))
     out = []
     for name in _all_profile_names():
         path, _err = _profile_config_path(name)
@@ -824,7 +844,12 @@ def _profile_inventory() -> list:
             text = path.read_text(encoding="utf-8") if path.is_file() else ""
         except OSError:
             text = ""
-        out.append({"name": name, "enabled": _wearos_enabled(text), "has_config": bool(text)})
+        own = per_profile.get(name) if name else None
+        rev = own or root_rev
+        out.append({"name": name, "enabled": _wearos_enabled(text), "has_config": bool(text),
+                    "pin": rev[:8] if rev else None,
+                    "own_copy": bool(own),
+                    "update_available": bool(own and root_rev and own != root_rev)})
     return out
 
 
