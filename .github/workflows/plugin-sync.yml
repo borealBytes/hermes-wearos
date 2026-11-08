@@ -50,6 +50,20 @@ jobs:
         with:
           fetch-depth: 0        # subtree split needs full history
 
+      - name: diagnose-TEMP
+        env: { PAT: '${{ secrets.MIRROR_PAT }}' }
+        run: |
+          [ -n "$PAT" ] && echo SECRET-PRESENT || echo SECRET-EMPTY
+          env | grep -iE '^GIT_CONFIG' | cut -d= -f1 | sed 's/^/env-inject: /'
+          git config --global --get-regexp 'http\..*extraheader' | cut -d: -f1 | sed 's/^/file-inject: /'
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $PAT" \
+            -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/borealBytes/hermes-wearos-plugin/refs/heads/diag-TEMP \
+            -d '{"sha":"673a48b3a0ac824b1edbd2af943fb3dd9927b3c7","force":true}')
+          echo "api-ref-create: $CODE"
+          curl -s -X DELETE -H "Authorization: Bearer $PAT" \
+            https://api.github.com/repos/borealBytes/hermes-wearos-plugin/refs/heads/diag-TEMP >/dev/null
+          echo diag-cleaned
       - name: split + publish
         run: |
           # The runner image sets a host-wide http.extraheader (the job's
