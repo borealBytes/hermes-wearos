@@ -168,6 +168,33 @@ function WearKitPane() {
           children: 'HERMES WEAR KIT'
         })
       }),
+      // The about block the plugin-card paragraph can't have: core renders description as
+      // a single plain-text node (no whitespace-pre-line, no markdown) — so typography
+      // lives HERE, where we own the JSX.
+      jsxs('div', {
+        className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2 text-xs',
+        children: [
+          jsx('div', {
+            className: 'font-medium text-(--ui-text-secondary)',
+            children: '⌚ One watch. Your tailnet. No middleman.'
+          }),
+          jsxs('div', {
+            className: 'text-(--ui-text-tertiary)',
+            children: [
+              'The watch app is ',
+              jsx('a', { className: 'underline', href: REPO_URL, rel: 'noreferrer', target: '_blank', children: 'borealBytes/hermes-wearos' }),
+              ' — this plugin is its pairing + provisioning half.'
+            ]
+          }),
+          jsx('div', { className: 'text-(--ui-text-tertiary)', children: '• PIN on the glass → say /pair → enrolled' }),
+          jsx('div', { className: 'text-(--ui-text-tertiary)', children: '• every call rides the watch\u2019s own node — no relay, no phone app' }),
+          jsx('div', { className: 'text-(--ui-text-tertiary)', children: '• enable below, per agent — same ledger as the card\u2019s toggle' }),
+          jsx('div', {
+            className: 'font-medium text-(--ui-text-secondary)',
+            children: 'Open source forever: the Release APK is a courtesy — making it yours is the point.'
+          })
+        ]
+      }),
       // The REST half speaks for itself — one honest line beats a mystery checklist.
       error
         ? jsx('div', {
@@ -191,7 +218,7 @@ function WearKitPane() {
             }),
             ' and open it on the watch. Repo: ',
             jsx('a', { className: 'underline', href: REPO_URL, rel: 'noreferrer', target: '_blank', children: 'borealBytes/hermes-wearos' }),
-            ' — open source forever: the Release build is a courtesy, inspecting, building and modifying it yourself is the whole point of it being yours.'
+            ' — CI-built Release, open source, MIT.'
           ]
         })
       }),

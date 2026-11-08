@@ -12,20 +12,17 @@
 name: wearos
 version: 0.1.0
 description: >-
-  ⌚ Pairs the Hermes Wear OS watch app with this gateway. The Wear OS app (the open-source
-  repo borealBytes/hermes-wearos — link below) is a standalone Wear Compose client: the
-  watch shows a 6-digit PIN, you say /pair 123456 to Hermes on any surface, and this plugin
-  hands the watch its Tailscale enrollment packet — a single-use, pre-authorized,
-  tag-restricted key. From then on the watch's OWN embedded tailnet node carries every call:
-  no phone app, no relay, no LAN fallback (tailnet-only, SPEC §11.4). What you get on the
-  wrist: streaming chat with markdown/images/mermaid/video, push-to-talk with on-device or
-  gateway STT, in-session approvals, body tools. This plugin = the provisioning + pairing
-  half (keys, PIN ledger, claim door, per-agent enablement); the watch APK = the resident.
-  The APK ships as a CI-built GitHub Release with SHA256SUMS and provenance — never a
-  bundled binary — and the app is open source forever: inspecting, building and modifying
-  it yourself is the whole point of it being yours. Enable per agent with the checkboxes on
-  the Wear Kit pane (core's card toggle flips the same config.yaml ledger, one agent at a
-  time); `hermes watch` CLI covers pair/enable/status/setup/devices.
+  ⌚ Pairs the Hermes Wear OS watch app with this gateway — over the watch's OWN tailnet
+  node: no phone app, no relay, no LAN fallback (tailnet-only, SPEC §11.4). Pairing: the
+  watch shows a 6-digit PIN → you say /pair 123456 on any surface → the plugin's single-use
+  tagged Tailscale key enrolls it. On the wrist after that: streaming markdown chat,
+  images/mermaid/video, push-to-talk, in-session approvals, body tools. 𝗧𝗵𝗶𝘀 𝗽𝗮𝗻𝗲'𝘀 𝘀𝘁𝗲𝗽
+  𝟮 𝗶𝘀 𝘁𝗵𝗲 𝘀𝘄𝗶𝘁𝗰𝗵 — one checkbox per agent (core's card dropdown+toggle flips the same
+  config.yaml ledger, one agent at a time). 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲 𝗳𝗼𝗿𝗲𝘃𝗲𝗿: the CI-built GitHub
+  Release APK (SHA256SUMS + provenance) is a courtesy — reading every line it runs,
+  building it yourself, modifying it for a watch I've never held is the intended path.
+  That's the whole point of it being yours. Repo: borealBytes/hermes-wearos · CLI:
+  `hermes watch pair · enable · status · setup`
 author: "Clay (borealBytes)"
 kind: standalone
 platforms:
