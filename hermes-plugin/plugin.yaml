@@ -12,10 +12,11 @@
 name: wearos
 version: 0.1.0
 description: >-
-  ⌚ Pairs the Hermes Wear OS watch app (borealBytes/hermes-wearos) over the watch's OWN
-  tailnet node — PIN on the glass, /pair, done; no phone app, no relay. Enable per agent
-  with the checkboxes on the Wear Kit pane. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲 𝗳𝗼𝗿𝗲𝘃𝗲𝗿: the Release APK is a
-  courtesy — making it yours is the point.
+  ⌚ Pairs the Hermes Wear OS watch app over the watch's OWN tailnet node — PIN on the
+  glass, /pair, done; no phone app, no relay. Enable per agent with the checkboxes on the
+  Wear Kit pane. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲 𝗳𝗼𝗿𝗲𝘃𝗲𝗿 — the Release APK ships from
+  https://github.com/borealBytes/hermes-wearos/releases, and building it yourself is the
+  point.
 author: "Clay (borealBytes)"
 kind: standalone
 platforms:
