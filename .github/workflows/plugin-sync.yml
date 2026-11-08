@@ -52,7 +52,10 @@ jobs:
 
       - name: split + publish
         run: |
-          git subtree version >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq git-subtree; }
+          # ubuntu-latest (24.04) ships git-subtree INSIDE git — the old apt
+          # package is gone, so probe for the command, not the package. The
+          # apt fallback stays for older/odd runners (22.04 had git-subtree).
+          git subtree --help >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq git-subtree; }
           if [ "${{ github.event_name }}" = pull_request ]; then
             SRC=refs/remotes/origin/pr${{ github.event.pull_request.number }}-head
             git fetch origin "+refs/pull/${{ github.event.pull_request.number }}/head:${SRC}"
