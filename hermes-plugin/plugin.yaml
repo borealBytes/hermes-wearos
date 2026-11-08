@@ -14,9 +14,8 @@ version: 0.1.0
 description: >-
   ⌚ Pairs the Hermes Wear OS watch app over the watch's OWN tailnet node — PIN on the
   glass, /pair, done; no phone app, no relay. Enable per agent with the checkboxes on the
-  Wear Kit pane. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲 𝗳𝗼𝗿𝗲𝘃𝗲𝗿 — check out the repo for the full walkthrough of
-  the app: https://github.com/borealBytes/hermes-wearos (Releases carry the APK with
-  SHA256SUMS + provenance; building it yourself is the point).
+  Wear Kit pane. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲 𝗳𝗼𝗿𝗲𝘃𝗲𝗿 — full walkthrough in the repo:
+  https://github.com/borealBytes/hermes-wearos
 author: "Clay (borealBytes)"
 kind: standalone
 platforms:
