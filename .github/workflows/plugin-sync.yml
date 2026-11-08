@@ -54,8 +54,10 @@ jobs:
         run: |
           # The runner image sets a host-wide http.extraheader (the job's
           # GITHUB_TOKEN) that BEATS the URL-embedded PAT — GitHub then sees
-          # "github-actions[bot]" and 403s the push (measured live). Clear it
-          # so the MIRROR URL's own credential is the only one sent.
+          # "github-actions[bot]" and 403s the push (measured live). The
+          # injection is via GIT_CONFIG_COUNT/KEY_0/VALUE_0 ENV VARS, not a
+          # gitconfig file — so zero the count (file unset kept as a belt).
+          export GIT_CONFIG_COUNT=0
           git config --global --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
           # ubuntu-latest (24.04) ships git-subtree INSIDE git — the old apt
           # package is gone, so probe for the command, not the package. The
@@ -81,6 +83,7 @@ jobs:
           # the mirror repo and gets a 404 querying borealBytes/hermes-wearos.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          export GIT_CONFIG_COUNT=0
           git config --global --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
           OPEN=$(gh pr list --repo borealBytes/hermes-wearos --state open --json number -q '.[].number' | tr '\n' ' ')
           git ls-remote --heads "$MIRROR" 'refs/heads/pr-*' | sed 's|.*refs/heads/||' | while read -r b; do
