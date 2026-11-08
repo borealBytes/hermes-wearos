@@ -1,0 +1,52 @@
+# DRAFT — PR target: NousResearch/hermes-agent  →  plugin-catalog/wearos.yaml
+# (Copy the block below that line into the PR. sha MUST become the full 40-char SHA of
+# the hermes-wearos commit that finalizes the plugin; rule 2. Category argued as
+# `platform` (device is a chat surface — the Home Assistant pattern); `tools` is the
+# reviewer-pushback fallback, per handoff §7.6.)
+---
+name: wearos
+subdir: hermes-plugin
+version: "0.1.0"
+repo: https://github.com/borealBytes/hermes-wearos
+sha: "0000000000000000000000000000000000000000"  # swap: full SHA of the plugin-finalizing commit (rule 2)
+description: >-
+  Hermes Wear Kit — one-command Wear OS client for your Hermes gateway. The watch shows a
+  6-digit PIN (5-min TTL, single-claim); say or type it to Hermes on any surface; the
+  plugin mints a single-use, pre-authorized, Tailscale-tagged enrollment key and hands the
+  watch its packet, so the watch's embedded tsnet node joins YOUR tailnet and every call
+  afterwards rides the tunnel — no LAN transport, no phone relay, no reusable keys.
+  Registers watch_send / watch_status / watch_pair tools, /pair, a `hermes watch` CLI
+  (pair|status|setup|devices) — only the second catalog entry ever to declare a command
+  verb — a gateway:startup readiness hook, and a Desktop Wear Kit page. The Wear OS APK is
+  NOT bundled: CI-built GitHub Release with SHA256SUMS + Actions build provenance.
+  Disclosure — calls api.tailscale.com (devices, DNS prefs, ACL read; key mint/expire at
+  pairing); PATCHes the tailnet ACL only behind an explicit preview→approve; exposes
+  /pair/* via Tailscale Funnel on the gateway box (pairing door only — real traffic rides
+  the tailnet); stores the Tailscale token/OAuth secret + a 0600 device registry under the
+  profile's plugin-data; may offer (never auto-run) the official tailscaled installer,
+  pinned + checksummed, when the host has none; the optional media lane still uses the
+  documented watchkit Node sidecar.
+maintainer: borealBytes
+tier: community
+category: platform
+requires_hermes: ">=0.22.0"
+docs_url: https://github.com/borealBytes/hermes-wearos/tree/main/hermes-plugin
+platforms:
+  - linux
+  - macos
+image: https://github.com/borealBytes/hermes-wearos/raw/<SHA>/docs/screens/55-tailnet-status.png
+screenshots:
+  - https://github.com/borealBytes/hermes-wearos/raw/<SHA>/docs/screens/11-gateways.png
+  - https://github.com/borealBytes/hermes-wearos/raw/<SHA>/docs/screens/55-tailnet-status.png
+capabilities:
+  provides_tools:
+    - watch_send
+    - watch_status
+    - watch_pair
+  provides_hooks:
+    - gateway:startup
+  provides_commands:
+    - watch
+    - pair
+  provides_middleware: []
+  requires_env: []

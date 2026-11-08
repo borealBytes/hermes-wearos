@@ -112,10 +112,10 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 2 | Launcher icon = orb spirit | `13-launcher-icon.png` | S00 (open + close) | shot ✓ |
 | 3 | Voice PTT → STT (on-watch Vosk) | `06-ptt-overlay.png` | S06 | shot ✓ |
 | 4 | Skill call + streaming markdown (aurora/weather brief) | `02-chat-markdown.png` | S02→S07 | shot ✓ |
-| 5 | Markdown table | `02b-chat-table.png` | S07b (2 s) | shot ✓ |
+| 5 | Markdown table (batch-10 re-shot: FOUR labelled columns, center-aligned cells — `Slip/Depth/Tide/Wind` harbor fixture; the six-column degradation rides below) | `02b-chat-table.png` | S07b (2 s) · `-e render tables` + rim-scroll to center the grid | shot ✓ |
 | 6 | Image card — **3-day weather plot** inline | `03-image-card.png` | S03 | shot ✓ |
 | 7 | Image viewer: pinch-zoom + pan | `04-viewer-zoom.png` | S04 | shot ✓ |
-| 8 | Mermaid via watchkit render | `05-mermaid.png` | S05 | shot ✓ |
+| 8 | Mermaid via watchkit render (batch-10 re-shot: the WHOLE voice round-trip — `graph LR`, wrist subgraph, classDef colors, approval diamond — not the 3-node sketch) | `05-mermaid.png` | S05 · `-e render mermaid` | shot ✓ |
 | 9 | ⌘ commands/skills overlay (`/compact` + SKILLS rows visible) | `27-commands-overlay.png` | S27 | shot ✓ |
 | 10 | Model picker stage 1 (providers) | `25-model-picker.png` NEW | S25 | shot ✓ |
 | 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 · capture: gpt-6-luna pick TOAST (`model-26c`), answer proven: `Reply with exactly: luna-online` → `finish run=… error=false len=11`; restored to gateway default after | shot ✓ |
@@ -123,7 +123,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 13 | Stop a running answer | `07-stop-running.png` | S08 | shot ✓ |
 | 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | shot ✓ |
 | 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 · capture: ask via `-e text` (editor swipes = handwriting junk), blue-cluster CENTROID tap, GitHub `borealBytes/hermes-wearos` page rendered on the watch | shot ✓ |
-| 16 | Approval card **in-session** + Approve tap | `33-approval-card.png` NEW, `34-approval-approved.png` NEW | S33, S34 | shot ✓ |
+| 16 | Approval card **in-session** — flanks shot (owner 2026-11-07 re-shoot): mid-stream park (long-count `-e text` + `-e approval_demo 1` — flanks are gated on run-live AND chat-at-bottom, MainActivity:1699, so the streaming tail pushes the card off-glass by itself; a post-finish swipe trips the card-rescue re-center instead). ✅ left / ❌ right centroids proven by pixel analysis | `33-approval-card.png` re-shot | S33 | shot ✓ (2026-11-07) |
 | 17 | Sessions list (wear-demo rows; batch-9 re-shot — the chip row now includes the 💻 computer lane filter) | `08-sessions.png` | S17 | shot ✓ |
 | 18 | Session search `harbor` | `21-session-search.png` | S21 | shot ✓ |
 | 19 | Long-press sheet + fork | `22-session-sheet.png` | S22 | shot ✓ |
@@ -158,13 +158,14 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | 48 | THE POCKET LIFELINE — the off-screen buzz survives Samsung's cached-process freeze (WorkManager chain, shared cursor, no dupes at handoff) | no own shot: proven through `44-notify-desktop-approval.png` + `45-notify-desktop-settled.png`, both captured app-BACKGROUNDED (settle card additionally survived 4 min screen-off darkness) | rides S44a/S44b | rides 44/45 |
 | 49 | Settings ▸ About page (version, STT model presence, push status — the diagnostics page itself, not just the tail row) | `47-about-screen.png` | S47 · batch-9 re-shot (v0.7.0 version line; About is the owner-blessed identity-whitelist page) | shot ✓ |
 
-| 50 | MEDIA EPIC — generated video/audio play in chat (cards inline, tap→fullscreen media3 player; watchkit `/media` pre-shrink) (SPEC §17, §12.14) | `48-media-cards.png`, `49-video-player.png`, `52-audio-player.png` | S48a, S48b, S48c | shot ✓ |
+| 50 | MEDIA EPIC — generated video/audio play in chat (cards inline, tap→fullscreen media3 player; watchkit `/media` pre-shrink) (SPEC §17, §12.14) · batch-10 re-shot: the video card is now the comfy **aurora gif** rendered via the gateway agent — it ANIMATES inline (GIF chip), audio sting below · **2026-11-07 re-capture done: `49-video-player.gif` is a real 30-frame screenrecord (10 fps, per-frame circle mask, magenta-key transparency idx 255 disposal 2; motion diff ~27/19/19 RGB mean-abs; ⟲5-rewind trick — a finished clip shows the controller reliably, and PinchPlayerView swallows keyevents while the controller is hidden; `-e volume -8` fired mid-rec lands the 🔊 60 % readout on two frames). NOTE: `-e play_url` drives the AUDIO-only ExoPlayer stub — no player UI; fullscreen video must be reached by tapping a media card. The render-av fixture expired in gateway /tmp — the watchkit `.cache/media` pre-shrink was the recovery path** | `48-media-cards.png`, `49-video-player.gif`, `52-audio-player.png` | S48a, S48b, S48c · media card from `/p/comfyui` agent (aurora mp4→gif via repo ffmpeg), tap ▶ chip (uiautomator-measured) | shot ✓ (2026-11-07) |
 | 51 | Animated GIFs decode ON THE WRIST (ImageDecoder→AnimatedImageDrawable via public Drawable.Callback; watchkit `/img` passes gif verbatim) (SPEC §12.14) | `50-gif-card.gif` (screen-recorded, circle-masked — the splash-film precedent for motion artifacts) | S50 | shot ✓ |
 | 52 | Pinch-to-zoom VIDEO — PinchPlayerView intercepts the 2nd finger, MediaZoom parity clamp, double-tap fit↔2.5× | `51-video-pinched.png` (capture: `-e media_zoom 2.4` fires the double-tap's own `animateScale` — adb can't inject two fingers) | S51 | shot ✓ |
 | 53 | BEZEL VOLUME — player binds the rotary while on screen; 5 % detents, haptic tick, fading 🔊 readout; unbind = system volume again | readout visible in `49-video-player.png` (60 %, driven by `-e volume -8` through the exact key path the bezel fires) | rides S48b | shot ✓ |
 | 54 | FLAWLESS HAND-OFF — desktop chat adopted on the wrist, gateway-first backfill, one-column promote, NO fork (SPEC §12.13) | `53-handoff-adopted.png` (capture: seeded `desk-echo-probe-7` (source=local) → `-e resume_session` → ask answered from desktop history `ORCHID`; one row) | S53 | shot ✓ |
 | 55 | Tool-activity card — collapsible per-run ledger persisted in the transcript (SPEC §12.12) | `54-tool-activity.png` (capture: real gated `uname -r` terminal run on wear-demo) | S54 | shot ✓ |
 | 56 | Tailnet status page — node FQDN + gateway peer + phase + Test, owner identity pixelated (SPEC §11.4) | `55-tailnet-status.png` (capture: emulator's own node; `tailca7ee1`/peer-IP boxes scanned then pixelated on the SQUARE before masking) | S55 | shot ✓ |
+| 57 | Approval LEVELS sheet (batch-10 new): per-chat Inherit / Manual / Smart with their honest hints — the dial's 10:40 lane opens it (SPEC §12.9) | `56-approval-modes.png` (capture: `-e approvals 1` dev door, zero code) | S56 | shot ✓ |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -177,7 +178,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `orb-dial.gif` | **RETIRED** (dial act lives in the film) | — | refreshed |
 | `01-orb-cluster.png` | re-shot (owner: empty-session minimalism — new chat, Ask Hermes + popped orb cluster, no chat content) | yes — 3:00 row ⚙ in shot | refreshed |
 | `02-chat-markdown.png` | re-shot | keep claim | refreshed |
-| `02b-chat-table.png` | re-shot | keep claim | refreshed |
+| `02b-chat-table.png` | re-shot (batch-10: harbor 4-col grid, centered cells) | claim REFRESHED (Slip/Depth/Tide/Wind + degrade note) | refreshed |
 | `03-image-card.png` | re-shot | YES → weather-plot wording | refreshed |
 | `04-viewer-zoom.png` | re-shot | keep claim | refreshed |
 | `05-mermaid.png` | re-shot | keep claim | refreshed |
@@ -195,15 +196,72 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | `17-agent-picker.png` | re-shot | names check | refreshed |
 | `21/22/23/24` sessions | re-shot | keep claims | refreshed |
 | `27-commands-overlay.png` | re-shot | aurora note | refreshed |
+| — (new, 2026-11-08) | pane v3: desktop/plugin.js data plane moved from the (nonexistent — measured) `host.callTool` to `ctx.rest` against NEW `dashboard/{manifest.json,plugin_api.py}` (`GET /status`, `POST /enable`, `GET /pin` at `/api/plugins/wearos/*`); errors now surface in the pane instead of a silent empty checklist; step 1 carries the open-source-forever line. `plugin.yaml` description rewritten to lead with "pairs the Hermes Wear OS watch app" + repo link; `requires_hermes` floor raised to >=0.23.0 (measured). Hot-mount proven by core's own test — backend answers without app restart; Rescan only refreshes JS. Gotchas pinned by tests: sys.modules can alias the plugin file under a bare `__init__` (prefer the `_CTX`-bound instance), and `_door_listening()` probes the loopback port for real — tests must fake it on a live gateway box |
 | — (new, 2026-11 round) | `35-splash-film.gif` (REAL looping intro film, cut from the shipped asset — superseded `.png`), `36-splash-picker.png`, `37-voice-output.png`, `38-volume-db.png`, `39-karaoke-follow.png`, `40-stt-source.png`, `41-edge-circle-pair.png`, `42-gateways-multi.png`, `43-agent-keys.png`, `44-notify-desktop-approval.png`, `45-notify-desktop-settled.png`, `46-attention-pair.png`, `47-about-screen.png` | NEW README rows in feature order — splash-first hero, voice suite, desktop watch, attention policy, About | refreshed |
-| hero film | RE-CUT complete (`demo-vertical-v0.6.0-raw.mp4`, 20 beats, 149 s) — owner scores + uploads, then README YouTube link swap | yes | refreshed (owner upload pending) |
+| hero film | **v0.8 cut built (2026-11-07): `demo-vertical-v0.8.0-raw.mp4`** — 24 beats / 141.3 s / 1080×1920@30, silent, `v0.8.0 · wear-demo` bug, every motion window ffprobe-fitted to the real takes (r-media 4.7 s!); batch-10 pixels throughout (4-col table, LR mermaid, real gated card + modes sheet, aurora media, GIF-card MOTION take); the attention PAIR ships as its right half (no two-watch frame); beats lost to budget: 04-viewer (lives inside r-media's pinch), 26-picked, 31-plain; karaoke still (take still pending). Silent master at `/tmp/opencode/vid/` (never committed) — owner scores + uploads, then README YouTube link swap | pills re-worded to pixels | refreshed (owner upload pending) |
 | `demo-walkthrough.gif` | RE-CUT from the new film's keyframes; committed as **`demo-walkthrough-v0.6.0.gif`** (version in the name — README links the current one; old GIF purged) | — | refreshed |
-| `21-session-search.png` | re-shot | honest: query is `harbors ` with IME up; results = 2 seeded wear-demo rows | refreshed |
+| `21-session-search.png` | re-shot (batch-10, post world-prune) | claim REFRESHED: query `harbor`, `Search · 14`, watch-tagged brief + [Harbor]-bracketed rows; IME up at type time (query lands via `-e search` for the shot) | refreshed |
 | `11-gateways.png` | re-shot (from the r7d film raw — live registry); 42 shows the same registry a beat later | alt re-worded to pixels | refreshed |
 | `17-agent-picker.png` | re-shot | agent-switch speed note (batch 5); ● marks the live agent | refreshed |
 | — (new, batch 9 / v0.7.0) | `48-media-cards.png`, `49-video-player.png`, `50-gif-card.gif` (MOTION artifact, screen-recorded), `51-video-pinched.png`, `52-audio-player.png`, `53-handoff-adopted.png`, `54-tool-activity.png`, `55-tailnet-status.png`; re-shots of `08`/`11`/`42`/`47` | NEW README rows in the feature grid + handoff lead-in + tailnet img in §Networking + `wifi(wlan0)`/pixelation alt refresh | refreshed |
-| hero GIF | re-cut as **`demo-walkthrough-v0.7.0.gif`** (v0.6.0 GIF purged per §9); master `demo-vertical-v0.7.0-raw.mp4` scored and UPLOADED by the owner — README hero links [youtube.com/shorts/eSGy7jFHi18](https://www.youtube.com/shorts/eSGy7jFHi18) (v0.7.0 tour; the v0.6.0 full tour stays linked) (never committed) | alt text lists the new beats | refreshed |
+| hero GIF | re-cut as **`demo-walkthrough-v0.8.0.gif`** (v0.7.0 GIF purged per §9): splash film FIRST (shipped-asset frames) → 16 captioned v0.8 feature beats (incl. 02b grid, 56 modes, aurora 48, animated 50) → end card; 42 s loop, 5.06 MB, `v0.8.0 · wear-demo` bug; README hero img swapped to it (35-splash-film.gif stays in the feature grid). Silent master for the v0.8 tour video rides the wave-4 trio | alt lists the beats | refreshed |
 | weights section | numbers re-measured (106 MB APK incl. the gomobile tailnet node) | table matches `unzip -l` of the shipped debug APK | refreshed |
+
+**v0.8 plugin-era re-shoot wave (2026-11-06/07):** every screen re-captured against the live
+watch + fresh wear-demo world (two Harbor briefs + aurora + mooring seeded; desk noise archived
+via the feature itself). Per-family commits: `bb8086d` sessions (08/09/21/22/23/24), `95fd3c3`
+chat + voice (02b/03/04/05/06/07/12/16/25/26/27/29/33/34/37/38/40 + the voice-in quartet
+56-59, now gated), `ed4b79e` settings (01/10/11/14a/14b/15/18/19/36/42/43/47/55), `186af52`
+media family on /tmp fixtures + notifications (48/49/51/52/53 + 31/32 + 30), `4799c9b` README
+restructure + 41 pair + `tools/demo/pair.py`. Notes: the `av` render fixture moved to
+`/tmp/clip.mp4` + `/tmp/tone.opus` (the paths §6 stages — the old machine-local path 403'd
+through img_roots); **35 needs no re-shoot** (film asset unchanged since its gif cut — cold
+launch re-recorded as proof it still plays); 33 ships the REAL gated card (classic terminal…
+chip, run approved via `-e approve` for the frame; the `approval_demo` inject is the simplified
+narrative variant); tailnet pages redact the FQDN + peer-IP bands with OCR-measured boxes
+(55/31; re-scan zero hits); `17` now pins the ●-marked blue wear-demo pill.
+
+**Close-out state (2026-11-07, blitz tip `5d9562a`):** every agent-doable deliverable shipped —
+39/50/44/45/46 and the final `21` all PASS on the pruned world (the sglang lane drained
+mid-wave; 33/34 re-shot from a real gated run). What remains is OWNER-ONLY, in order:
+(1) score + upload `/tmp/opencode/vid/demo-vertical-v0.8.0-raw.mp4` (silent, 24 beats,
+141.3 s), then swap the README hero-film line to the v0.8 tour link; (2) the Tailscale-console
+pair shot — the camoufox tab parked on the login screen for the owner's manual noVNC login
+(`/tmp/opencode/rs/console-login-needed.png`); (3) the Wear Kit PANE v2 shot — needs the
+owner's **Rescan** click in the Desktop app (plugin state untouched since Nov 6 13:16 = no
+rescan yet). The karaoke MOTION take is NOT a loose end: the watch stays muted by owner
+doctrine, so beat 14 of the film (and shot 39) ship as stills for good. Docs VM intentionally
+left RUNNING (`capture.sh --only-a` re-runnable without spending a key; `run.sh --destroy`
+when done). Old-media purge per §9: the v0.6 /tmp master is deleted; v0.7's is kept until the
+v0.8 upload lands, then the v0.7 README link retires too.
+
+**Batch-10 wave (2026-11-07, the owner-rework round):** five asks — approvals-levels shot,
+richer + centered mermaid, approval card shows the parked command, 4-column centered table,
+video media as gifs, all vision-verified; hero GIF re-cut with splash-first feature walk.
+Code: `WatchMarkdown.gridable` widened to 2–4 labelled cols (5+ still degrade), grid cells
+center-aligned, `tables` case → harbor Slip/Depth/Tide/Wind, `mermaid` case → `graph LR` with
+the wrist subgraph + classDef colors (TD was too tall for the round glass), `av` case →
+`MEDIA:/tmp/opencode/aurora-vid.gif` (comfy agent render via the gateway — the card animates
+inline), `ApprovalCard` question now a 3-line mono chip. **The re-shoot found a real bug:**
+newer session-authority gateways 400 the watch's approval POST unless the body is exactly
+`{request_id, execution_generation, choice}` — fixed end-to-end (ApprovalInfo.gen + status
+poll normalizes `pending_controls[]` + one retry-from-snapshot on 400). Shots: `02b` PASS
+(t02bJ — grid dead-center; first two frames were splash-swallowed and one re-mask read a
+stale square: masks must diff 0 against their input), `05` PASS, `48` PASS (aurora + audio
+sting), `56` PASS (NEW — `-e approvals 1`, zero code), `33` PASS — re-shot from a REAL
+gated run (batch10i, fresh chat, card scrolled center: yellow heading + mono chip with the
+exact parked command + wrench status + live stop orb; the ✅/❌ flanks hide while the card
+is fully on-glass — the app's own bottom-only rule), `34` PASS — that same run's settled
+answer after the wrist approve: parked → answered with the gen triple → `finish run
+error=false`, the fixed POST accepted FIRST TRY (retry-from-snapshot held in reserve,
+normalizer unit-proven). Docs-VM:
+plugin/config shots re-plumbed to the DESKTOP-IN-WEB ticket lane (`webapp_open` in
+capture.sh) — the Wear Kit PANE itself is desktop-APP-only, now stated in that README. Hero:
+`demo-walkthrough-v0.8.0.gif` (splash first → 16 beats → end card; v0.7.0 purged per §9).
+World hygiene: 13 probe-junk sessions archived through the feature itself (the `run_e23ae…`
+raw-id chat went the same way — 14 total); the archive story rows untouched. Final `21`
+re-shot on the pruned world in the SAME wave: `Search · 14` on `harbor`, watch-tag +
+[Harbor] brackets legible — PASS.
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
@@ -282,11 +340,47 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
 - **Motion artifacts:** `screenrecord --time-limit 3`, pull, crop the card box (measure rows by
   saturation, don't eyeball — one crop missed and shipped the prompt bubble), circle-mask every
   frame, one GIF @10 fps, `disposal=2` — 0.3 MB for 26 frames.
+- **Approval-flanks shot (2026-11-07):** the ✅/❌ orbs require `approval pending AND chat at
+  bottom` (MainActivity flanks gate) — park the approval MID-STREAM (`-e text` a slow count, then
+  `-e approval_demo 1` ~1 s in); the streaming tail scrolls the card off-glass by itself. A
+  post-finish swipe instead trips the card-rescue re-center and you shoot the card again.
+- **Video-player shot:** reach fullscreen by TAPPING the media card's ▶ chip (uiautomator-measured
+  coords) — `-e play_url` is the audio-only ExoPlayer stub, no player UI. While the controller is
+  hidden, PinchPlayerView swallows adb keyevents: start the rec off a ⟲5-rewind (chrome shows
+  ~3.5 s at playback end). If the gateway-side fixture expired, the watchkit `.cache/media`
+  pre-shrink of the same clip is the recovery source.
+- **Multi-frame cells (owner 2026-11-07):** a pair/composite image carries ONLY circle-masked
+  watch frames on a transparent ground — NO burned-in labels ("the text belongs in the README
+  cell, not the image"), and every frame inside a composite gets the same circle mask as a solo
+  shot, or on a dark table it reads square. GIFs included: transparency is per-frame
+  (magenta-key → palette index → `transparency=`/`disposal=2`).
 - **Hand-off beat:** seed the desktop-starter row straight into the wear-demo state.db (source
   `local`), adopt with `-e resume_session`, ask something only the seeded history answers.
 - **Identity scan on the SHIPPED squares** before masking: tesseract `--psm 11` + `--psm 6` sweep
   for hostname/tailnet-id/IP; blur boxes measured from cyan/gray text-band scans (psm-7 crops drift).
 - `-e add_gw` wants the full `label|api|watchkit` spec (bare URL = `add_gw BAD spec`).
+
+**Batch-10 recipes (2026-11-07, the owner-rework round):**
+
+- **Aurora gif fixture:** rendered by the GATEWAY's comfy agent (owner doctrine: never the raw
+  CLI) — `POST :8642/p/comfyui/v1/chat/completions` with the bearer from `~/.hermes/.env`; ask
+  for a short aurora-borealis timelapse saved under `/tmp/opencode/`, then mp4→gif with the repo
+  ffmpeg (`fps=12,scale=360:-2,palettegen/paletteuse`). The `av` render case points at
+  `/tmp/opencode/aurora-vid.gif` (gif ∈ IMG_EXT → the card ANIMATES inline, shot-50 lane).
+- **Approval 400 fix (real bug, found by a re-shoot):** newer session-authority gateways demand
+  the EXACT body triple `{request_id, execution_generation, choice}` on
+  `POST /v1/runs/{id}/approval` and the run-status snapshot exposes them under
+  `pending_controls[]` (`prompt_id`, `execution_generation`) — the watch now threads the gen
+  through `ApprovalInfo` and, on a 400, retries ONCE from a fresh status snapshot
+  (`approval retry-from-snapshot ok` in logcat = the proof line for shot 34).
+- **Splash swallows dev broadcasts** in the first seconds after launch: an
+  `-e render …` fired within ~4 s of `monkey … LAUNCHER 1` paints its answer UNDER the splash
+  and the screencap captures splash artwork instead (bit two captures this wave). Launch →
+  wait for a settled pid → then broadcast → capture.
+- **Table/mermaid framing:** after `-e render`, edge-swipe the list to push the fixture
+  DEAD-CENTER (round glass buries top-edge content under the clock); re-gate every mask
+  against the SQUARE it was cut from (`sampled diff px: 0`) — a stale square = stale shot.
+- **Approval-mode sheet (56):** zero code — `-e approvals 1` opens ApprovalModeDialog directly.
 
 **Batch-7 recipes (2026-11-01, the honesty round):**
 

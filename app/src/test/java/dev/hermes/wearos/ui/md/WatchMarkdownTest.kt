@@ -227,8 +227,18 @@ class WatchMarkdownTest {
         assertEquals(listOf(listOf("kotlin", "2011"), listOf("rust", "2010")), t.rows)
     }
 
+    @Test fun `labelled tables up to four columns grid, three and four included (BATCH-10)`() {
+        val three = WatchMarkdown.parse("| a | b | c |\n|---|---|---|\n| 1 | 2 | 3 |")[0] as MdBlock.Table
+        assertTrue(three.gridable)
+        val four = WatchMarkdown.parse(
+            "| Slip | Depth | Tide | Wind |\n|---|---|---|---|\n| B-12 | 14m | rising | SW 12 |",
+        )[0] as MdBlock.Table
+        assertTrue(four.gridable)
+        assertEquals(listOf("Slip", "Depth", "Tide", "Wind"), four.header)
+    }
+
     @Test fun wideHeaderlessOrStreamingTablesStayDegraded() {
-        val wide = WatchMarkdown.parse("| a | b | c |\n|---|---|---|\n| 1 | 2 | 3 |")[0] as MdBlock.Table
+        val wide = WatchMarkdown.parse("| a | b | c | d | e |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |")[0] as MdBlock.Table
         assertFalse(wide.gridable)
         val noHeader = WatchMarkdown.parse("| kotlin | 2011 |")[0] as MdBlock.Table
         assertFalse(noHeader.gridable)

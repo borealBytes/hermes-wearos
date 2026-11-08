@@ -1,0 +1,96 @@
+name: Plugin mirror sync
+
+# The Hermes plugin catalog pins borealBytes/hermes-wearos-plugin — a
+# `git subtree split` MIRROR of hermes-plugin/, 100 % published by this
+# workflow. Nobody ever pushes to the mirror by hand; it is a build artifact
+# of this directory (the plugin README's provenance banner carries the
+# doctrine; policy: research-desk handoff 2026-11-08, shape C).
+#
+# ① Merges to main touching hermes-plugin/** re-publish mirror `main` — the
+#    catalog only ever pins mirror-main SHAs.
+# ② Any open PR touching hermes-plugin/** publishes mirror branch `pr-<n>`
+#    (number-keyed, so a source-branch rename can't orphan it; PR runs use
+#    the PR-head copy of this file, so it works from the very first PR).
+# ③ The daily cron re-publishes main (a red run can strand the mirror at
+#    most a day) AND prunes `pr-*` branches whose PRs closed — GitHub does
+#    not reliably run workflows on `pull_request closed`, so the cron is the
+#    sweeper.
+#
+# Needs secret MIRROR_PAT: fine-grained PAT, single repo
+# borealBytes/hermes-wearos-plugin, Contents: read+write. A missing secret
+# reddens this job and harms nothing else.
+
+on:
+  push:
+    branches: [main]
+    paths: ['hermes-plugin/**']
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths: ['hermes-plugin/**']
+  schedule: [{ cron: '23 7 * * *' }]
+  workflow_dispatch: {}
+
+concurrency:
+  group: plugin-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read   # the prune step asks GitHub which PRs are still open
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    env:
+      # Job-level: the prune step needs the credentialed URL too (in the
+      # handoff draft MIRROR lived inside step 1 and step 3 pushed nowhere).
+      MIRROR: https://x-access-token:${{ secrets.MIRROR_PAT }}@github.com/borealBytes/hermes-wearos-plugin.git
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # subtree split needs full history
+
+      - name: split + publish
+        run: |
+          # actions/checkout wrote http.https://github.com/.extraheader (the
+          # job's GITHUB_TOKEN, Basic) into the CHECKOUT's .git/config — key
+          # scoped to the HOST, so it rides every github.com URL from this job
+          # and beats the URL-embedded PAT (runner GIT_TRACE_CURL, 2026-11-08:
+          # GitHub sees github-actions[bot] -> 403). Drop it LOCALLY (local is
+          # the top of the precedence chain — a global override would lose).
+          git config --local --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
+          # ubuntu-latest (24.04) ships git-subtree INSIDE git — the old apt
+          # package is gone, so probe for the command, not the package. The
+          # apt fallback stays for older/odd runners (22.04 had git-subtree).
+          git subtree --help >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq git-subtree; }
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            SRC=refs/remotes/origin/pr${{ github.event.pull_request.number }}-head
+            git fetch origin "+refs/pull/${{ github.event.pull_request.number }}/head:${SRC}"
+            git subtree split --prefix=hermes-plugin "${SRC}" -b out
+            git push -f "$MIRROR" "out:refs/heads/pr-${{ github.event.pull_request.number }}"
+          else
+            # push(main) / schedule / dispatch: actions/checkout only promises
+            # remote-tracking refs on a detached HEAD — split from the fetched
+            # origin/main, the freshest main in every one of those events.
+            git subtree split --prefix=hermes-plugin refs/remotes/origin/main -b out
+            git push -f "$MIRROR" out:refs/heads/main
+          fi
+
+      - name: prune stale pr-* branches
+        if: github.event_name == 'schedule'
+        env:
+          # GITHUB_TOKEN, NOT MIRROR_PAT: a Contents-permissions PAT cannot
+          # read PRs at all (would 404); GITHUB_TOKEN has pull-requests:read.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Same checkout-writer removal as the publish step (idempotent; the
+          # steps share one working checkout).
+          git config --local --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
+          OPEN=$(gh pr list --repo borealBytes/hermes-wearos --state open --json number -q '.[].number' | tr '\n' ' ')
+          git ls-remote --heads "$MIRROR" 'refs/heads/pr-*' | sed 's|.*refs/heads/||' | while read -r b; do
+            n=${b#pr-}
+            case " $OPEN " in
+              *" $n "*) : ;;
+              *) git push "$MIRROR" ":refs/heads/$b" ;;
+            esac
+          done

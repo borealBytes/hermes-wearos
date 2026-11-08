@@ -18,14 +18,14 @@ class RenderCasesTest {
         assertEquals(RenderCase.Tables, RenderCase.of("tables"))
         assertEquals(RenderCase.Mermaid, RenderCase.of(" MERMAID "))
         assertNull(RenderCase.of("nonsense"))
-        assertEquals("tables,wide,mermaid,pdf,link,media,av,steps,all", RenderCase.ids())
+        assertEquals("tables,wide,mermaid,pdf,link,gif,media,av,steps,all", RenderCase.ids())
     }
 
-    @Test fun `the tables case has a five-column grid and a six-column degradation`() {
+    @Test fun `the tables case has a four-column grid and a six-column degradation`() {
         val md = RenderCase.Tables.markdown
         val tables = md.split("\n\n").filter { it.contains("|---") }
         assertEquals(2, tables.size)
-        assertEquals(5, tables[0].lineSequence().first().count { it == '|' } - 1)
+        assertEquals(4, tables[0].lineSequence().first().count { it == '|' } - 1)
         assertEquals(6, tables[1].lineSequence().first().count { it == '|' } - 1)
     }
 
@@ -39,7 +39,7 @@ class RenderCasesTest {
         assertTrue(RenderCase.Media.markdown.contains("|---"))
         assertTrue(RenderCase.Media.markdown.contains("![dial mock]"))
         assertTrue(RenderCase.Av.markdown.contains("MEDIA:"))
-        assertTrue(RenderCase.Av.markdown.contains(".mp4"))
+        assertTrue(RenderCase.Av.markdown.contains(".gif")) // BATCH-10: the video card is a comfy gif
     }
 
     @Test fun `all concatenates the five media surfaces for one screenshot`() {

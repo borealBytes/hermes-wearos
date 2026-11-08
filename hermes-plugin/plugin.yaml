@@ -1,0 +1,99 @@
+# Hermes Wear Kit — the catalog entry (plugin-catalog/wearos.yaml) pins the MIRROR repo
+# borealBytes/hermes-wearos-plugin: a git subtree split of THIS directory, force-published
+# by .github/workflows/plugin-sync.yml in the monorepo on every merge. Zero human commits
+# in the mirror; edit here, never there. (shape C, handoff 2026-11-08.)
+# Manifest surface verified against hermes-agent v0.23.0 (hermes_cli/plugins_manifest.py
+# _KNOWN_MANIFEST_FIELDS; capabilities probe in hermes_cli/plugin_validate.py). The
+# desktop pane reads dashboard/plugin_api.py via ctx.rest (hot-mounted — core's own
+# test_plugin_api_hot_mount proves the first request serves without an app restart);
+# the pane has NO tool-call door (measured: src/sdk/index.ts `host` has none), which is
+# why this backend half exists at all.
+# Admission-rule mapping: secrets via config_schema only (rule 11); disclosures in
+# README.md (rule 13); requires_hermes floor re-checked against the release current at
+# PR time (rule 14); zero committed binaries in the pinned tree (rule 17 — the mirror
+# split is born without app/libs/hermes-tailnet.aar: the scanner never sees the AAR).
+name: wearos
+version: 0.1.0
+description: >-
+  ⌚ Pairs the Hermes Wear OS watch app over the watch's OWN tailnet node — PIN on the
+  glass, /pair, done; no phone app, no relay. Enable per agent with the checkboxes on the
+  Wear Kit pane. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲 𝗳𝗼𝗿𝗲𝘃𝗲𝗿 — full walkthrough in the repo:
+  https://github.com/borealBytes/hermes-wearos
+author: "Clay (borealBytes)"
+kind: standalone
+platforms:
+  - linux
+  - macos
+license: MIT
+homepage: https://github.com/borealBytes/hermes-wearos/tree/main/hermes-plugin
+tags:
+  - wearos
+  - tailscale
+  - pairing
+  - devices
+# Floor raised for the desktop data plane: ctx.rest + hot-mounted plugin_api are
+# MEASURED on v0.23.0 (2026.9.24); v0.22 is unverified for them, so we don't claim it.
+requires_hermes: ">=0.23.0"
+# Stdlib-only (urllib, no pip deps); mermaid rendering arrives in media.py — keep it so,
+# or declare python_dependencies with oldest-workable floor + upper bound (rule 10).
+provides_tools:
+  - watch_send
+  - watch_status
+  - watch_pair
+  - watch_enable
+# No provides_hooks: hermes-agent 0.23 removed the gateway:startup plugin hook (its
+# VALID_HOOKS has no gateway-scoped lifecycle event); the claim door + readiness first
+# pass come up at load on a daemon thread instead (see register() in __init__.py).
+config_schema:
+  tailnet:
+    type: str
+    description: >-
+      Tailnet handle as used by the Tailscale admin console (e.g. "example.ts.example");
+      the plugin accepts and validates it live before anything else.
+  tailscale_api_token:
+    type: secret
+    description: >-
+      Tailscale API token (Owner or Admin role) used to mint one-use enrollment keys and
+      read/patch tailnet prefs. Alternative to the OAuth client pair below.
+  tailscale_oauth_client_id:
+    type: str
+    description: >-
+      Optional OAuth client id (preferred over a personal token): scope it to
+      auth_keys + devices:core and restrict it to the watch tag so the plugin can only
+      ever mint keys carrying that tag.
+  tailscale_oauth_client_secret:
+    type: secret
+    description: Secret for tailscale_oauth_client_id; exchanged via client_credentials.
+  watch_tag:
+    type: str
+    default: "tag:hermes-watch"
+    description: ACL tag stamped on every watch node the plugin enrolls (ACL hygiene).
+  key_expiry:
+    type: str
+    default: "24h"
+    description: Expiry window for the single-use enrollment key handed to a watch.
+  gateway_profile:
+    type: str
+    default: "wear"
+    description: Hermes profile the watch binds to (its /p/<profile> lane + API key).
+  gateway_api_key:
+    type: secret
+    description: >-
+      Fallback for the packet's api_key. The plugin first reads the gateway profile's own
+      API_SERVER_KEY by binding that profile's secret scope (agent.secret_scope); when the
+      profile home is unresolvable it tries the ambient scope, and finally this secret.
+  watchkit_token:
+    type: secret
+    description: >-
+      Optional watchkit helper bearer handed to the watch in the enrollment packet
+      (nullable field "watchkit_token"); leave unset if watchkit isn't deployed.
+  claim_port:
+    type: int
+    default: 42653
+    description: >-
+      Loopback port of the funnel-facing claim door (127.0.0.1 only; tailscale serve
+      --funnel /pair/* fronts it). Change both together if 42653 is taken.
+  apk_release_url:
+    type: str
+    default: "https://github.com/borealBytes/hermes-wearos/releases/latest"
+    description: Where "install the watch app" points (CI-built APK + SHA256SUMS).

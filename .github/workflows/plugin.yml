@@ -1,0 +1,53 @@
+name: Plugin catalog gate
+
+# Gates hermes-plugin/ with the same command the Hermes plugin catalog CI runs:
+#   hermes plugins validate hermes-plugin/ --install-deps
+# Skips gracefully while hermes-plugin/ doesn't exist yet in the tree.
+
+on:
+  pull_request:
+    paths:
+      - 'hermes-plugin/**'
+      - '.github/workflows/plugin.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'hermes-plugin/**'
+      - '.github/workflows/plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: hermes plugins validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # hermes-agent REFUSES pip/wheel builds by design (measured 2026-11-06: the
+      # sdist's build hook errors "Building wheels or sdists for hermes-agent is not
+      # supported… use uv sync"; PyPI's 0.19.0 predates `plugins validate` entirely —
+      # that's how this job's first real run failed). The supported dev path is uv
+      # against a source checkout, so the gate mirrors it, pinned to the CalVer tag
+      # matching the admission-era CLI (v2026.9.24 == v0.22.5). Bump deliberately,
+      # never float `main`. Requires Python >=3.11,<3.14.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: astral-sh/setup-uv@v4
+        # (enable-cache off: the action's cache glob wants a repo-root uv.lock we
+        # don't own — the lock lives in the pinned hermes-runtime clone below)
+
+      - name: Validate plugin
+        run: |
+          if [ ! -d hermes-plugin ]; then
+            echo "::notice::hermes-plugin/ not in tree yet — skipping"
+            exit 0
+          fi
+          git clone --depth 1 --branch v2026.9.24 \
+            https://github.com/NousResearch/hermes-agent hermes-runtime
+          (cd hermes-runtime && uv sync --frozen --no-dev -q)
+          hermes-runtime/.venv/bin/hermes plugins validate hermes-plugin/ --install-deps

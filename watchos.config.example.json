@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to watchos.config.json (gitignored) and fill in — scripts/setup.sh reads it. All values overridable by flags. Endpoints are ordered: first is the DEFAULT entry, the rest are failover fallbacks (SPEC §11). With the embedded tailnet node (SPEC §11.4) endpoints are reached THROUGH the tunnel — list the tailnet FQDN/IP; a LAN literal only makes sense with the tailnet dev-off.",
+  "_comment": "Copy to watchos.config.json (gitignored) and fill in — scripts/setup.sh reads it. All values overridable by flags. Endpoints are ordered: first is the DEFAULT entry, the rest are failover fallbacks (SPEC §11). Doctrine (SPEC §11.4): the watch's embedded tailnet node is THE transport — list MagicDNS names (<host>.<tailnet>.ts.net) or tailnet 100.64/10 IPs; a LAN literal is reached THROUGH the tunnel too (works only once enrolled) and is never a shipped default. Unenrolled watches pair on-watch: Settings ▸ Gateways ▸ Pair.",
   "gatewayLabel": "hermes",
   "apiEndpoints": [
     "http://hermes.tailnet.ts.net:8642"

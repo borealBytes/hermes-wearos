@@ -83,9 +83,13 @@ sealed interface MdBlock {
         val header: List<String> = emptyList(),
         val rows: List<List<String>> = emptyList(),
     ) : MdBlock {
+        // BATCH-10 (owner 2026-11-07: "table should have 4 cols … so you see the col names
+        // better"): a labelled grid fits a round screen up to FOUR columns — every cell sits
+        // clear of the dead-corner zone at caption sizes and the headers stay legible. Five or
+        // more columns still degrade to rows (SPEC §13.1; `wide` case + viewer are the answer).
         val gridable: Boolean
-            get() = header.size == 2 && header.none { it.isBlank() } &&
-                rows.isNotEmpty() && rows.all { it.size == 2 }
+            get() = header.size in 2..4 && header.none { it.isBlank() } &&
+                rows.isNotEmpty() && rows.all { it.size == header.size }
     }
     data object HrLine : MdBlock
 }

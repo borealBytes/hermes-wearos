@@ -9,10 +9,10 @@ package dev.hermes.wearos.domain
  * `Unable to resolve host "labhost.tailca7ee1.ts.net": No address associated with hostname`.
  * That sentence is true, useless, and — worse — actively misleading: the phone's tailnet membership
  * says NOTHING about the watch, which has its own network stack, no tailscaled, and therefore no
- * MagicDNS. A `.ts.net` name can only resolve on a device that is itself in the tailnet, and this
- * app has no in-app tsnet (SPEC §11.4, researched, not shipped). So the honest reading is
- * "the endpoint list has no address this Wi-Fi can route to", and the fix is one LAN entry — which
- * is exactly what the message has to say.
+ * MagicDNS. A `.ts.net` name can only resolve on a device that is itself in the tailnet — and the
+ * shipped embedded node (SPEC §11.4, "tailnet only, always") IS that device, so a `.ts.net` DNS
+ * miss now means the watch's own tunnel is not enrolled (or not up). The fix is to enroll or
+ * repair the tunnel — Pair — which is exactly what the message has to say.
  *
  * Rules:
  *  • only rewrite what is genuinely a routing failure (DNS miss / connect timeout / refused).
@@ -66,9 +66,10 @@ object RouteReport {
         if (isDns(t)) {
             val host = unresolvedHost(t)
             return if (isTailnetUrl(host) || dead.any { isTailnetUrl(it) }) {
-                // The one sentence the owner needed and nothing in the old message carried:
-                // the WATCH is not in the tailnet, so the name cannot resolve no matter the phone.
-                "tailnet name won't resolve on the watch — Settings ▸ Gateways ▸ add this Wi-Fi's LAN IP"
+                // Post-§11.4 truth: every ask rides the watch's OWN node, so a `.ts.net` miss is
+                // never a Wi-Fi problem — the tunnel itself is not enrolled (or not up). The
+                // actionable sentence names the repair door, not a LAN workaround.
+                "tailnet name won't resolve on the watch — enroll / repair the tunnel (Settings ▸ Pair)"
             } else {
                 "gateway host won't resolve${host.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: ""} " +
                     "— wrong Wi-Fi or a stale endpoint (Settings ▸ Gateways)"

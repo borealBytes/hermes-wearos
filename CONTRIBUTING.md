@@ -112,6 +112,19 @@ Before every push:
 Miss this and the README silently lies about the app (this repo has been burned by reversions
 before — SPEC §16.3). Treat stale media as a failing test, because it is one.
 
+## The build policy: PRs ship an APK, merges roll @rc, tags are the release (owner doctrine, 2026-11-06)
+
+**Every PR to main gets an installable preview APK built by CI** (`pr-apk.yml`): artifact
+`wearos-pr<N>` + an auto-comment on your PR with the `gh run download` line and the sha256 —
+signed with a throwaway CI debug key, so a preview is a try-it (uninstall a release/@rc
+build first), not an upgrade path. **Every merge to main replaces the rolling GitHub
+prerelease on the moving tag `@rc`** (`apk-release.yml` → `preview` job), signed with the real
+release keystore exactly like the v-tags — current main, installable, rewritten under you by
+the next merge. **A `v*` tag is the only immutable Release** (the `release` job, unchanged;
+the full table + verify commands: SPEC §18). This adds nothing to your PR checklist — the
+lanes fire on their own; just don't be surprised when your PR shows an APK download comment,
+and don't force-push `@rc` by hand.
+
 ## Watch connection gotchas (real hardware)
 
 - Wireless-debugging `IP:PORT` **rotates every reconnect** — offline serial = reconnect to the

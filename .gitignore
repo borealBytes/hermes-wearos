@@ -40,3 +40,5 @@ server/watchkit/.transcribe-src/
 
 # built smoketest binary (scripts/tailnet-build.sh --smoke)
 tailnet/go/smoketest
+__pycache__/
+*.py[cod]

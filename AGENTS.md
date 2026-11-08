@@ -136,6 +136,12 @@ The tailnet AAR is a COMMITTED artifact — rebuild only when `tailnet/go` chang
 `armeabi-v7a`+`x86_64`; `-tags=version_android` is NOT optional — without it tsnet dies at
 Start with `netlinkrib: permission denied`, Android SELinux forbids app netlink route reads).
 
+**Plugin tests (python, pytest):** `python3 -m pytest hermes-plugin/tests/` — stdlib + pytest
+only (plugin rule 10), no device, no network: the suite sandboxes `HERMES_HOME` into a tmp
+dir, fakes the Tailscale API, and speaks real HTTP to an ephemeral claim door. Hermes host
+modules resolve from `~/.hermes/hermes-agent` or `$HERMES_AGENT_ROOT`. Keep green alongside
+the Gradle tests; admission re-check: `hermes plugins validate hermes-plugin/ --install-deps`.
+
 Setup pushes config via the **debug-only** `DevAskReceiver` (extras: `set_token`, `set_base`,
 `set_watchkit_base`, `set_watchkit`, `set_tailnet_key`, `tailnet_status`, `tailnet_on`,
 `tailnet_reenroll`) — chain `set_base` LAST-endpoint-first so the DEFAULT entry
@@ -145,7 +151,7 @@ overwrite-or-skip. Tests: `gradle :app:testDebugUnitTest` (must stay green, JVM-
 ## 4. Interview the human ONLY for unknowables
 
 - **Gateway URLs** — if a Hermes gateway runs on THIS machine, check Tailscale first:
-  `tailscale status --json | jq -r '.Self.DnsName'` → your FQDN (use `http://<fqdn>:8642`;
+  `tailscale status --json | jq -r '.Self.DNSName'` → your FQDN (use `http://<fqdn>:8642`;
   MagicDNS resolves `.ts.net` only inside the tailnet — and since §11.4 the watch reaches it
   THROUGH its own node, so a tailnet URL is the only one that works; LAN literals are
   reachable through the tunnel too if you must use one).
@@ -204,6 +210,8 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | `am broadcast -e text` only delivered the first word | quote trap (§6.3) — outer double quotes, inner single |
 | Repeated `hermes-wearos*` rows in the admin console | each Re-enroll enrolls a NEW node — expected; prune the stale rows there |
 | No mermaid/images/whisper | watchkit daemon down → `scripts/watchkit.sh start` (check `status`/`logs`) |
+| Voice-in ▸ Gateway shows "not installed" | engine weights missing on the gateway box → `server/watchkit/.venv/bin/python stt_stream.py --check` names the exact gap; default engine = config `stt_stream_engine` (use `"parakeet"` for live partials; `"whisper"` = final-only) |
+| Offline STT says "model missing" | Settings ▸ Voice in ▸ offline model ▸ ⬇ install (gateway-cached, resume-safe; `scripts/get-vosk-model.sh` remains the adb path) |
 | A session row "vanished" after long-press | It was 🗃 **archived**, not lost — Sessions ▸ 🗃 archived chip ▸ hold the row ▸ ♻️ unarchive |
 | `--offline` build fails on a fresh clone | Run once **online** to populate the devkit, then go offline |
 | `Toast`/UI glitch in screenshots | debug-only DevAskReceiver ran without the app open — launch the app first |
@@ -212,6 +220,10 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 
 - `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints,
   §11.4 the embedded tailnet node — the transport).
+- `.github/workflows/plugin-sync.yml` — publishes `borealBytes/hermes-wearos-plugin`, the
+  catalog-pinned subtree mirror of `hermes-plugin/`. Zero human commits; plugin code is edited
+  ONLY here. Needs the `MIRROR_PAT` secret (fine-grained, single-repo, contents RW) — without
+  it this job reddens and harms nothing.
 - `tailnet/go/` — the Go side: tsnet node + CONNECT-only SOCKS5 shim (gomobile surface
   `start/stop/statusJSON/logsJSON/wipeState`). `tailnet/go/cmd/smoketest` = host-side proof.
 - `scripts/tailnet-build.sh` — rebuilds `app/libs/hermes-tailnet.aar` from `tailnet/go`

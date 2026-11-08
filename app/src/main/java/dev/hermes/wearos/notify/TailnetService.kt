@@ -32,8 +32,11 @@ import kotlinx.coroutines.launch
  * ongoing notification is the honest cost of "tailnet only, always".
  *
  * Lifecycle: START_STICKY + the boot receiver; reads the key/hostname/enabled prefs at
- * every start (Settings edits restart the service to pick them up). No key → the service
- * stops itself and the route falls back to direct (the dev path).
+ * every start (Settings edits restart the service to pick them up). NO KEY IS NOT "OFF":
+ * the engine starts anyway and idles at NEEDS_AUTH — the Pair screen is the answer, and
+ * silent plain-socket operation was deleted with the doctrine ("tailnet only, always",
+ * SPEC §11.4). Only `enabled=false` — a DEBUGGABLE-BUILD-ONLY state (AppSettings force-
+ * returns true on release) — stops the service back to plain sockets, the dev escape hatch.
  *
  * Battery doctrine: a partial wake lock is held while the node lives — userspace
  * WireGuard timers must not sleep to a dead keepalive; the real-watch battery pass
@@ -72,13 +75,17 @@ class TailnetService : Service() {
         sc.launch {
             val enabled = settings.tailnetEnabled()
             val key = settings.tailnetKey()
-            if (!enabled || key.isBlank()) {
-                Log.i(TAG, "tailnet service: ${if (!enabled) "disabled" else "no key"} — direct mode")
+            if (!enabled) {
+                // Debuggable builds only (AppSettings force-ON): the `-e tailnet_on off` hatch.
+                Log.i(TAG, "tailnet service: disabled (dev escape hatch) — plain sockets")
                 TailnetEngine.stop()
                 TailnetRoute.socksPort = 0
                 shutdown()
                 return@launch
             }
+            // Keyless is NOT a reason to stop: the node starts, idles at NEEDS_AUTH, and the
+            // notification below reads "tailnet needs a key" — the Pair screen is the door.
+            if (key.isBlank()) Log.i(TAG, "tailnet service: no key yet — engine runs NEEDS_AUTH (Pair screen)")
             TailnetEngine.startOnce(
                 this@TailnetService,
                 hostname = settings.tailnetHostname(),

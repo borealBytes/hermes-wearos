@@ -108,7 +108,9 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
         is MdBlock.ActivityRun -> ActivityRunCard(block.steps, running = false, blockKey, modifier)
 
         is MdBlock.Table -> if (block.gridable) {
-            // True mini-grid for exactly-2 labelled columns: header + hairline + rows (F3 note).
+            // True mini-grid for 2–4 labelled columns: header + hairline + rows (F3 note).
+            // BATCH-10: cells are CENTER-aligned so short header names sit on the middle of the
+            // round glass (owner: "more centered so you see the col names better").
             Column(modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                 Row(Modifier.fillMaxWidth()) {
                     block.header.forEach { cell ->
@@ -117,6 +119,7 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
                             modifier = Modifier.weight(1f).padding(horizontal = 4.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.caption1.scaled(),
                             fontWeight = FontWeight.Bold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -133,6 +136,7 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
                                 WatchMarkdown.parseInline(cell).annotated(),
                                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.caption2.scaled(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )

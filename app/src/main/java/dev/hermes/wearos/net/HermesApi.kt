@@ -22,7 +22,9 @@ import java.util.concurrent.TimeUnit
  *  - events: message.delta {delta}, message.interim {text, already_streamed},
  *    tool.started {tool, preview}, tool.completed, approval.request {command?, choices?},
  *    run.completed {output,...}, run.failed, run.cancelled
- *  - POST /v1/runs/{id}/approval {choice, request_id?}
+ *  - POST /v1/runs/{id}/approval {choice, request_id?, execution_generation?} — authority
+ *    gateways require all three exactly; respondApproval sends what it knows, retries once
+ *    from a fresh status snapshot on 400 (BATCH-10).
  *  - GET  /v1/runs/{id} → status; terminal snapshots carry `output` (resume-safe final answer)
  */
 class HermesApi(
@@ -97,7 +99,22 @@ class HermesApi(
             val text = r.body?.string().orEmpty()
             if (!r.isSuccessful) throw ApiException(r.code, "run status ${r.code}")
             val obj = parse(text)
-            return RunSnapshot(obj.str("status") ?: "unknown", obj.str("output"), obj["approval"] as? JsonObject)
+            // Older gateways expose ONE pending `approval` object; newer ones a `pending_controls`
+            // ARRAY (kind = approval|clarify). Normalize: first approval control, same shape.
+            val ap = (obj["approval"] as? JsonObject)
+                ?: (obj["pending_controls"] as? JsonArray)?.firstNotNullOfOrNull { el ->
+                    (el as? JsonObject)?.takeIf { it.str("kind") == "approval" }?.let { ctl ->
+                        JsonObject(
+                            mapOf(
+                                "request_id" to (ctl["prompt_id"] ?: JsonPrimitive("")),
+                                "execution_generation" to (ctl["execution_generation"] ?: JsonPrimitive(0)),
+                                "command" to (ctl["command"] ?: JsonPrimitive("")),
+                                "choices" to (ctl["choices"] ?: JsonArray(emptyList())),
+                            ),
+                        )
+                    }
+                }
+            return RunSnapshot(obj.str("status") ?: "unknown", obj.str("output"), ap)
         }
     }
 
@@ -260,9 +277,15 @@ class HermesApi(
         }
     }
 
-    fun respondApproval(runId: String, choice: String, requestId: String?) {
+    /**
+     * Answer a parked approval. Newer gateways (session authority) demand the EXACT triple
+     * {request_id, execution_generation, choice} — BATCH-10: send what we know, and the caller
+     * retries from a fresh run-status snapshot when a 400 says otherwise.
+     */
+    fun respondApproval(runId: String, choice: String, requestId: String?, gen: Int = 0) {
         val reqId = if (requestId != null) ",\"request_id\":${esc(requestId)}" else ""
-        val body = "{\"choice\":${esc(choice)}$reqId}"
+        val genField = if (gen > 0) ",\"execution_generation\":$gen" else ""
+        val body = "{\"choice\":${esc(choice)}$reqId$genField}"
         client.newCall(request("$baseUrl/v1/runs/$runId/approval", body)).execute().use { r ->
             if (!r.isSuccessful) throw ApiException(r.code, "approval ${r.code}: ${r.body?.string()?.take(120)}")
         }
