@@ -222,7 +222,7 @@ Three moving parts (plus the plugin, which is really the fourth):
 | Piece | What it is |
 |---|---|
 | `app/` | The watch app. Kotlin, Wear Compose, OkHttp/SSE, the embedded tailnet node. No Google services, no Firebase, no push. |
-| `hermes-plugin/` | The **Hermes Wear Kit** plugin: pairing (PIN → claim → enrollment packet), `watch_*` tools, `/pair`, a `hermes watch` CLI, readiness checks, and the Desktop Wear Kit pane. Details in [hermes-plugin/README.md](hermes-plugin/README.md). |
+| `hermes-plugin/` | The **Hermes Wear Kit** plugin: pairing (PIN → claim → enrollment packet), `watch_*` tools, `/pair`, a `hermes watch` CLI, readiness checks, and the Desktop Wear Kit pane. Details in [hermes-plugin/README.md](hermes-plugin/README.md). The catalog installs pin [borealBytes/hermes-wearos-plugin](https://github.com/borealBytes/hermes-wearos-plugin) — a subtree-split mirror of this directory, zero human commits, force-published by this repo's own CI (`.github/workflows/plugin-sync.yml`); the monorepo stays the only place code is written. |
 | Hermes gateway | Any Hermes install: point the plugin at a profile (e.g. `wear`) with a persona, tools, and an API key. SSE run streaming + cancel. |
 | `server/watchkit/` | Optional zero-dependency Node daemon: mermaid → PNG, full-res `/img` serving from allow-listed roots (GIFs verbatim — the animation survives), `/media` pre-shrink (H.264+AAC / Ogg-Opus) so clips stream smooth on wrist Wi-Fi, opt-in body-tool snapshot cache (+ MCP for the agent), cron/job probes. A render sidecar — never in the run path (SPEC §12.13). The plugin's in-process media lane is porting; the sidecar is the documented fallback. |
 

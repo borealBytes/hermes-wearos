@@ -1,4 +1,7 @@
-# Hermes Wear Kit — catalog entry points at this directory (subdir: hermes-plugin).
+# Hermes Wear Kit — the catalog entry (plugin-catalog/wearos.yaml) pins the MIRROR repo
+# borealBytes/hermes-wearos-plugin: a git subtree split of THIS directory, force-published
+# by .github/workflows/plugin-sync.yml in the monorepo on every merge. Zero human commits
+# in the mirror; edit here, never there. (shape C, handoff 2026-11-08.)
 # Manifest surface verified against hermes-agent v0.23.0 (hermes_cli/plugins_manifest.py
 # _KNOWN_MANIFEST_FIELDS; capabilities probe in hermes_cli/plugin_validate.py). The
 # desktop pane reads dashboard/plugin_api.py via ctx.rest (hot-mounted — core's own
@@ -7,8 +10,8 @@
 # why this backend half exists at all.
 # Admission-rule mapping: secrets via config_schema only (rule 11); disclosures in
 # README.md (rule 13); requires_hermes floor re-checked against the release current at
-# PR time (rule 14); zero committed binaries inside this subdir (rule 17 — the
-# app/libs AAR lives OUTSIDE the plugin subdir, pending the validate verdict).
+# PR time (rule 14); zero committed binaries in the pinned tree (rule 17 — the mirror
+# split is born without app/libs/hermes-tailnet.aar: the scanner never sees the AAR).
 name: wearos
 version: 0.1.0
 description: >-
