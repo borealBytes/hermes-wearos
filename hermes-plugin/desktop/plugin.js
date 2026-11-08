@@ -192,6 +192,10 @@ function WearKitPane() {
           jsx('div', {
             className: 'font-medium text-(--ui-text-secondary)',
             children: 'Open source forever: the Release APK is a courtesy — making it yours is the point.'
+          }),
+          jsx('div', {
+            className: 'text-(--ui-text-tertiary)',
+            children: 'Full walkthrough of every feature lives in the repo — screenshots, the round-trip diagrams, the pairing ceremony.'
           })
         ]
       }),
