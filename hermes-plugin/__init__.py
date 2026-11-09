@@ -532,7 +532,7 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
             return 200, {"air": tts_air.status(), "aligner": align_parakeet.status()}
         if action == "tts_sources":
             return 200, {"sources": tts_air.sources_menu(),
-                         "selected": tts_air._source_id()}
+                         "slots": tts_air._slots()}
         if action == "tts_status":
             return 200, tts_air.status()
         if action == "tts_install" and method == "POST":
@@ -543,7 +543,8 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
                 tf.write_text(tok)
                 os.chmod(tf, 0o600)
             r = tts_air.start(interactive=True,
-                              source=str(body.get("source") or "") or None)
+                              source=str(body.get("source") or "") or None,
+                              for_slot=str(body.get("for") or "gateway"))
             return 200, r
         return 405, {"error": "GET tts_sources / GET tts_status / POST tts_install"}
     return 404, {"error": "not found"}

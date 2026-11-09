@@ -69,30 +69,9 @@ CODEC_REPO = "neuphonic/neucodec"                      # PyTorch codec (encode+d
 # GGUF metadata (their own quantization of the same Apache-2.0 weights), so each
 # row pins its OWN byte count; SHAs record on first verified fetch like MODEL_SHA256.
 SOURCES = {
-    "official-q8": {
-        "label": "Official Q8_0 — Neuphonic (HF consent + token, one-time)",
-        "repo": "neuphonic/neutts-air-q8-gguf", "file": "neutts-air-Q8_0.gguf",
-        "bytes": 802_658_528, "gated": True,
-        "codec": {"kind": "repo", "repo": CODEC_REPO},   # gated too; token rides
-    },
-    "official-q4": {
-        "label": "Official Q4_0 — Neuphonic (half the disk, HF consent + token)",
-        "repo": "neuphonic/neutts-air-q4-gguf", "file": "neutts-air-Q4_0.gguf",
-        "bytes": 0,        # gated: anonymous HEAD 401s; size gates on first token'd fetch
-        "gated": True,
-        "codec": {"kind": "repo", "repo": CODEC_REPO},
-    },
-    "mirror-q8-drinking": {
-        "label": "Mirror Q8_0 — MrDrinking re-quant (no account, ungated)",
-        "repo": "MrDrinking/neutts-air-Q8_0-GGUF", "file": "neutts-air-q8_0.gguf",
-        "bytes": 802_658_880, "gated": False,
-        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
-                  "files": ("config.json", "model.safetensors",
-                            "preprocessor_config.json"),
-                  "bytes": 2_519_855_456},               # HF-port codec, ungated
-    },
-    "mirror-q8-mradermacher": {
-        "label": "Mirror Q8_0 — mradermacher re-quant (no account, ungated)",
+    "community-q8": {
+        "label": "Community Q8_0 — mradermacher re-quant (no account, ungated; "
+                 "the most-downloaded source on the Hub)",
         "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q8_0.gguf",
         "bytes": 802_659_296, "gated": False,
         "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
@@ -100,8 +79,47 @@ SOURCES = {
                             "preprocessor_config.json"),
                   "bytes": 2_519_855_456},
     },
+    "community-q4": {
+        "label": "Community Q4_K_M — mradermacher re-quant (no account, ungated; "
+                 "half the RAM — the watch-size quant)",
+        "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q4_K_M.gguf",
+        "bytes": 596_267_936, "gated": False,
+        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
+                  "files": ("config.json", "model.safetensors",
+                            "preprocessor_config.json"),
+                  "bytes": 2_519_855_456},
+    },
+    "official-q8": {
+        "label": "Official Q8_0 — Neuphonic's own file (HF consent + token, one-time)",
+        "repo": "neuphonic/neutts-air-q8-gguf", "file": "neutts-air-Q8_0.gguf",
+        "bytes": 802_658_528, "gated": True,
+        "codec": {"kind": "repo", "repo": CODEC_REPO},   # gated too; token rides
+    },
+    "official-q4": {
+        "label": "Official Q4_0 — Neuphonic (watch-size, HF consent + token)",
+        "repo": "neuphonic/neutts-air-q4-gguf", "file": "neutts-air-Q4_0.gguf",
+        "bytes": 0,        # gated: anonymous HEAD 401s; size gates on first token'd fetch
+        "gated": True,
+        "codec": {"kind": "repo", "repo": CODEC_REPO},
+    },
+    "alt-q8-drinking": {
+        "label": "Alt Q8_0 — MrDrinking re-quant (no account, ungated)",
+        "repo": "MrDrinking/neutts-air-Q8_0-GGUF", "file": "neutts-air-q8_0.gguf",
+        "bytes": 802_658_880, "gated": False,
+        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
+                  "files": ("config.json", "model.safetensors",
+                            "preprocessor_config.json"),
+                  "bytes": 2_519_855_456},
+    },
 }
-DEFAULT_SOURCE = "official-q8"
+# Owner ruling 2026-11-09, second pass: the DEFAULT is the best community quant
+# (mradermacher — most-downloaded, ungated, no consent dance), and the slots are
+# per-device: the gateway runs its own best-quality pick, the watch pulls a
+# smaller quant (Q4). "You get to choose the best" on the box, the wrist gets
+# the one that fits. Watch-side install lands with slice 5; the choice is
+# canonical prefs from here.
+DEFAULT_SLOTS = {"gateway": "community-q8", "watch": "community-q4"}
+SLOTS = ("gateway", "watch")
 
 STATUS = threading.Lock()
 _state: dict = {"phase": "idle", "detail": "", "percent": 0, "log": [],
@@ -170,40 +188,57 @@ def _verify(path: Path) -> bool:
         return False
 
 
-def _source_id() -> str:
-    """The installed/selected source row, DEFAULT_SOURCE unless source.json says
-    otherwise (a pane dropdown choice or --source flag)."""
+def _slots() -> dict:
+    """Per-device model slots {gateway: id, watch: id}, DEFAULT_SLOTS unless
+    source.json says otherwise (a pane dropdown choice or --source/--for flag).
+    One engine physically runs (the gateway's); the watch slot is the quant the
+    watch client will pull when on-watch inference lands (slice 5)."""
     try:
-        sid = json.loads((_root() / "source.json").read_text()).get("source", "")
-        return sid if sid in SOURCES else DEFAULT_SOURCE
+        raw = json.loads((_root() / "source.json").read_text())
     except (OSError, ValueError):
-        return DEFAULT_SOURCE
+        raw = {}
+    if "source" in raw:                       # pre-slots format: one pick, both slots
+        legacy = raw["source"]
+        raw = {"gateway": legacy, "watch": legacy}
+    return {k: (raw.get(k) if raw.get(k) in SOURCES else DEFAULT_SLOTS[k])
+            for k in SLOTS}
 
 
-def _source() -> tuple:
-    sid = _source_id()
+def _source_id(slot: str = "gateway") -> str:
+    return _slots()[slot if slot in SLOTS else "gateway"]
+
+
+def _source(slot: str = "gateway") -> tuple:
+    sid = _source_id(slot)
     s = SOURCES[sid]
     return sid, dict(s, url=f"https://huggingface.co/{s['repo']}/resolve/main/{s['file']}")
 
 
-def select_source(source_id: str) -> dict:
+def select_source(source_id: str, for_slot: str = "both") -> dict:
+    """Persist a dropdown choice. for_slot: gateway | watch | both."""
     if source_id not in SOURCES:
         return {"ok": False, "error": f"unknown source {source_id!r} — choose one of: "
                 + ", ".join(SOURCES)}
+    if for_slot not in SLOTS + ("both",):
+        return {"ok": False, "error": f"unknown device {for_slot!r} — gateway | watch | both"}
+    slots = _slots()
+    targets = SLOTS if for_slot == "both" else (for_slot,)
+    for t in targets:
+        slots[t] = source_id
     _root().mkdir(parents=True, exist_ok=True)
-    (_root() / "source.json").write_text(json.dumps({"source": source_id}))
-    return {"ok": True, "source": source_id}
+    (_root() / "source.json").write_text(json.dumps(slots))
+    return {"ok": True, "source": source_id, "slots": slots}
 
 
 def sources_menu() -> list:
-    """The pane dropdown: every known weights row + honest state."""
-    root, sid = _root(), _source_id()
+    """The pane dropdown: every known weights row + honest state, per-slot."""
+    root, slots = _root(), _slots()
     menu = []
     for k, s in SOURCES.items():
         have = _size_ok(root / "model" / s["file"], s["bytes"])
         menu.append({"id": k, "label": s["label"], "bytes": s["bytes"],
-                     "gated": s["gated"], "selected": k == sid,
-                     "present": have})
+                     "gated": s["gated"], "present": have,
+                     "selected_for": [t for t in SLOTS if slots[t] == k]})
     return menu
 
 
@@ -268,15 +303,20 @@ def pinned_hint() -> bool:
     return MODEL_SHA256 != "PENDING"
 
 
-def start(interactive: bool = True, source: Optional[str] = None) -> dict:
+def start(interactive: bool = True, source: Optional[str] = None,
+          for_slot: str = "gateway") -> dict:
     if not interactive:
         return {"started": False, "error": "no terminal to approve the install "
                                            "(rule 12): use the Wear Kit pane or run "
                                            "hermes watch setup --fix tts"}
     if source:
-        picked = select_source(source)
+        picked = select_source(source, for_slot)
         if not picked.get("ok"):
             return {"started": False, "error": picked["error"]}
+    if for_slot == "watch":       # the watch quant is a prefs value; its files ride
+        return {"started": False, "slots": _slots(),                     # to the
+                "note": "watch quant recorded — the watch client pulls it over "
+                        "the lane when on-watch inference lands (slice 5)"}
     probe = _probe()
     if probe["installed"] and (probe["model_verified"] or probe["verified_pending"]):
         return {"started": False, "error": "already installed"}
@@ -591,24 +631,29 @@ if __name__ == "__main__":
     p = sub.add_parser("sources")
     i = sub.add_parser("install")
     i.add_argument("--source", default=None, help="source id from `sources`")
+    i.add_argument("--for", dest="slot", default="gateway", choices=list(SLOTS),
+                   help="which device's model slot this picks (default gateway; "
+                        "watch records the quant only)")
     i.add_argument("--token", default=None,
                    help="HF read token (validated, stored 0600; gated sources only)")
     a = ap.parse_args()
     if a.cmd == "status":
         print(json.dumps(status(), indent=2))
     elif a.cmd == "sources":
+        print("#  GW = the gateway runs this · WT = the watch will pull this")
         for row in sources_menu():
-            mark = ">" if row["selected"] else " "
+            marks = ("+" if "gateway" in row["selected_for"] else " ") \
+                  + ("+" if "watch" in row["selected_for"] else " ")
             state = "present" if row["present"] else ("gated" if row["gated"] else "ready")
             size = f"{row['bytes'] / 1_000_000:.0f} MB" if row["bytes"] else "size-pending"
-            print(f"{mark} {row['id']:26} {size:>11}  [{state}]  {row['label']}")
+            print(f"{marks} {row['id']:26} {size:>11}  [{state}]  {row['label']}")
     else:
         if a.token:
             (_root()).mkdir(parents=True, exist_ok=True)
             tf = _root() / "hf_token"
             tf.write_text(a.token.strip())
             os.chmod(tf, 0o600)
-        r = start(interactive=True, source=a.source)
+        r = start(interactive=True, source=a.source, for_slot=a.slot)
         print(r)
         if r.get("started"):
             while _worker and _worker.is_alive():

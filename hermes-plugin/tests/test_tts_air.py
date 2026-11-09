@@ -44,17 +44,17 @@ class TtsAirTests(unittest.TestCase):
         r = ta.start(interactive=False)
         self.assertFalse(r["started"])
         self.assertIn("rule 12", r["error"])                  # named cause, not silence
-        r = ta.start(interactive=True)
+        r = ta.start(interactive=True, source="official-q8")   # gated row, no token
         self.assertFalse(r["started"])
-        self.assertTrue(("HF" in r["error"]) or ("toolchain" in r["error"])
+        self.assertTrue(("consent" in r["error"]) or ("toolchain" in r["error"])
                         or ("g++" in r["error"]))
 
     def test_size_gate_and_pending_sha_honesty(self):
-        src = ta.SOURCES["official-q8"]
+        src = ta.SOURCES["community-q8"]
         old = src["bytes"]
         src["bytes"] = 12
         try:
-            model = ta._root() / "model" / ta.MODEL_FILE
+            model = ta._root() / "model" / src["file"]
             model.parent.mkdir(parents=True, exist_ok=True)
             model.write_bytes(b"0" * 11)                       # one byte short
             p = ta._probe()
@@ -82,26 +82,27 @@ class TtsAirTests(unittest.TestCase):
 
     # ---------------------------------------------- source menu (owner ruling)
 
-    def test_sources_menu_shape_and_single_selection(self):
+    def test_sources_menu_community_default_and_two_slots(self):
         menu = ta.sources_menu()
         self.assertGreaterEqual(len(menu), 4)
         for row in menu:
-            for k in ("id", "label", "bytes", "gated", "selected", "present"):
+            for k in ("id", "label", "bytes", "gated", "selected_for", "present"):
                 self.assertIn(k, row)
-        self.assertEqual(sum(1 for r in menu if r["selected"]), 1)
-        self.assertTrue([r for r in menu if r["selected"]][0]["id"]
-                        .startswith("official"))               # official first, by default
+        sel = {t: [r["id"] for r in menu if t in r["selected_for"]] for t in ta.SLOTS}
+        self.assertEqual(sel["gateway"], ["community-q8"])   # best community quant,
+        self.assertEqual(sel["watch"], ["community-q4"])     # by default; watch = Q4
+        self.assertTrue(any(r["gated"] and r["id"] == "official-q8" for r in menu))
 
     def test_select_source_moves_selection_and_rejects_invention(self):
-        r = ta.select_source("mirror-q8-drinking")
+        r = ta.select_source("alt-q8-drinking", for_slot="gateway")
         self.assertTrue(r["ok"])
-        row = [m for m in ta.sources_menu() if m["id"] == "mirror-q8-drinking"][0]
-        self.assertTrue(row["selected"])
+        row = [m for m in ta.sources_menu() if m["id"] == "alt-q8-drinking"][0]
+        self.assertEqual(row["selected_for"], ["gateway"])   # watch keeps its Q4
         bad = ta.select_source("mirror-from-a-sketchy-telegram-group")
         self.assertFalse(bad["ok"])
-        self.assertIn("official-q8", bad["error"])             # the menu names its rows
+        self.assertIn("community-q8", bad["error"])          # the menu names its rows
 
-    def test_mirror_source_clears_the_consent_gate(self):
+    def test_default_community_source_clears_the_consent_gate(self):
         real_which = ta.shutil.which
         ta.shutil.which = lambda n: "/usr/bin/" + n            # pretend a full toolchain
         real_thread = ta.threading.Thread
@@ -109,12 +110,16 @@ class TtsAirTests(unittest.TestCase):
                                                           "is_alive": lambda s: False})()
         try:
             os.environ["HF_TOKEN"] = ""
+            default = ta.start(interactive=True)               # community q8
+            self.assertTrue(default.get("started"),
+                            f"the default source must need no account: {default}")
             gated = ta.start(interactive=True, source="official-q8")
             self.assertFalse(gated["started"])
             self.assertIn("consent", gated["error"])
-            mirror = ta.start(interactive=True, source="mirror-q8-drinking")
-            self.assertTrue(mirror.get("started"),
-                            f"ungated mirror must not need a token: {mirror}")
+            watch = ta.start(interactive=True, source="official-q4", for_slot="watch")
+            self.assertFalse(watch["started"])                 # watch slot records only
+            self.assertIn("slice 5", watch["note"])
+            self.assertEqual(ta._source_id("watch"), "official-q4")
         finally:
             ta.shutil.which = real_which
             ta.threading.Thread = real_thread

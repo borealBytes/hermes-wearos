@@ -202,23 +202,25 @@ def test_tts_sources_menu_serves_the_pane_dropdown(vlane):
     base = vlane["base"]
     st, r = http(base, "GET", "/voice/tts_sources")
     assert st == 200 and len(r["sources"]) >= 4
-    assert r["selected"].startswith("official")          # honest default, not a mirror
-    assert any(not s["gated"] and s["id"].startswith("mirror") for s in r["sources"])
+    assert r["slots"] == {"gateway": "community-q8",       # best community quant
+                          "watch": "community-q4"}         # watch-size quant
+    assert any(s["gated"] and s["id"] == "official-q8" for s in r["sources"])
 
 
 def test_tts_install_stores_token_0600_and_names_valid_rows(vlane, monkeypatch):
     base = vlane["base"]
     st, r = http(base, "POST", "/voice/tts_install", {"source": "bogus-row"})
-    assert st == 200 and not r["started"] and "official-q8" in r["error"]
+    assert st == 200 and not r["started"] and "community-q8" in r["error"]
     import sys
     ta = (sys.modules.get("wearos_plugin.tts_air") or sys.modules.get("wearos.tts_air")
           or sys.modules.get("tts_air"))
     assert ta is not None, "lane must have imported the engine module"
     monkeypatch.setattr(ta, "start",
-                        lambda **kw: {"started": True, "stub": kw.get("source")})
+                        lambda **kw: {"started": True, "stub": (kw.get("source"),
+                                                                kw.get("for_slot"))})
     st, r = http(base, "POST", "/voice/tts_install",
-                 {"token": "hf_testtoken", "source": "mirror-q8-drinking"})
-    assert st == 200 and r.get("started")
+                 {"token": "hf_testtoken", "source": "alt-q8-drinking", "for": "watch"})
+    assert st == 200 and r.get("started") and r["stub"] == ["alt-q8-drinking", "watch"]
     tf = ta._root() / "hf_token"
     assert tf.read_text() == "hf_testtoken"
     import stat

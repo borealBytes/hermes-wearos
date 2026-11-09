@@ -1551,10 +1551,14 @@ GGUF, zero-shot clone from ~3 s reference audio. Runtime `neuphonic/neutts` @
 802,658,528 bytes; the repo is `gated: auto` — a one-time consent click + read token
 (HF_TOKEN or the pane's token box) is required, and the fetch names that cause on
 401/403. Source choice is a user dropdown, not a wall (owner ruling, §19.4 2e):
-official rows first, ungated community re-quants with the ungated NeuCodec port as
-a zero-account tier; every row pins its own byte count and sha-records on first
-fetch. `MODEL_SHA256` is PENDING until the first token-carrying install records the
-observed digest (the installer writes it beside the model; the constant gets pinned in
+the DEFAULT is the best community quant (mradermacher re-quant — most-downloaded
+GGUF source on the Hub, ungated, zero-account), official rows ride the same menu
+for consent-keepers. Slots are per-device: `gateway` runs the best the box can
+hold (Q8), `watch` records the smaller Q4 the wrist will pull when on-watch
+inference lands (slice 5); `install --for watch` stores the choice only. Every
+row pins its own byte count and sha-records on first fetch. `MODEL_SHA256` is
+PENDING until the first token-carrying install records the observed digest (the
+installer writes it beside the model; the constant gets pinned in
 a follow-up commit, same pattern as `voiceout.SEED_SHA256`). Runner-up if Air stalls:
 CosyVoice2 (verify the license fine-print first). Off-1.0 speed = stdlib linear
 time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment log.
@@ -1566,7 +1570,7 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
 | 2b | `align_parakeet.py` — TDT word timings re-blended onto the script; proportional slots flagged `estimated`; honest `align:"none"` when the STT engine is absent | SHIPPED, tests 8/8 |
 | 2c | `/voice/*` routes on the private lane — node-law auth (WHOIS → bound device, no token), prefs GET/PUT (rev-merge), cards snapshot, card_wav streaming, card_create/delete, synthesize (b64 wav + words) | SHIPPED this push, tests 10/10 (`test_voice_api.py`, real-HTTP lane + fake whois) |
 | 3–7 | desktop pane ▸ Voice-out · watch prefs client · karaoke orb player · recorder UI · PR hygiene | planned |
-| 2e | **source menu** (owner ruling: a dropdown of every known weights source — official gated rows first, ungated community re-quants after): `SOURCES` table + selection persistence, pane dropdown via `GET /voice/tts_sources`, `POST /voice/tts_install {source, token}` (token stored 0600, never echoed), CLI `tts_air.py sources\|install --source`, mirror rows carry their OWN byte pin + ungated NeuCodec port (`bezzam/neucodec-hf`) so a no-account install is possible end-to-end | SHIPPED, tests 5/5 |
+| 2e | **source menu** (owner ruling: a dropdown of every known weights source — **community quants default** (most-downloaded mradermacher re-quant, ungated), official gated rows for consent-keepers; per-device slots: gateway Q8 best, watch Q4 small): `SOURCES` table + slot persistence, pane dropdown via `GET /voice/tts_sources`, `POST /voice/tts_install {source, for, token}` (token stored 0600, never echoed), CLI `tts_air.py sources\|install --source --for`, every row size-pins itself + sha-records on first fetch, ungated NeuCodec port (`bezzam/neucodec-hf`) so a no-account install is possible end-to-end | SHIPPED, tests 5/5 |
 
 ### 19.4 Amendment log (append-only; dated; never rewrite history)
 
@@ -1639,6 +1643,19 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   fetch; the pane labels the active source, `status()` names it, and the mirror
   tier is never presented as Neuphonic's own file. CLI mirrors the pane exactly
   (`tts_air.py sources / install --source --token`).
+- **2026-11-09 (weardev, slice 2e second pass — community default + per-device
+  slots)** — owner ruling: "make the community ones the default … the most
+  popular one; choose a model for the gateway and a model for the watch, the
+  watch needs the smaller 4-bit quant, you get to choose the best [on the box]."
+  `DEFAULT_SLOTS = {gateway: community-q8, watch: community-q4}` (mradermacher's
+  re-quant: 562 downloads/10 likes at ruling time — the most-downloaded source
+  on the Hub; Q4_K_M 596,267,936 B is the watch row). source.json is now the
+  slot map (old single-`source` files migrate silently); `select_source(id,
+  for_slot)`, `GET /voice/tts_sources` returns `slots`, `POST tts_install
+  {for: gateway|watch}` — watch records intent only, its files ride to the wrist
+  with slice 5's model-pull (the same gateway-cached, resume-safe pattern as the
+  Vosk model). Popularity is a dated fact in the label, the menu order is
+  static.
 
 ## Appendix A — Landed slices (build log, newest first)
 
