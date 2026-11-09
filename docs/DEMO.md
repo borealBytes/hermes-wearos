@@ -756,3 +756,21 @@ Branch keeps exactly ONE generation of every tracked media path.
   lat=` kept), re-masked, claim re-gated PASS. README caption rewritten (no "redacted here" prose —
   pixels just are). History: all prior generations of this PNG replaced with the blurred bytes via
   filter-repo blob-callback.
+
+- **2026-11-09 (pairing v2 — the full proof ledger, emulator-5554 + wear-demo, every step
+  logcat/journal-verified):** window closed-by-default verified (`begin` → 403 "pairing is closed";
+  v1 `claim` → 426). `hermes -p wear-demo watch pair` opens; `-e pair_knock <handle>` →
+  `pair code 927981` on the glass; CLI approve → `✓ the watch collected its key and its device
+  token`; tsnet node enrolled (`wear-demo-watch-1`), lane session delivered `key.len=58
+  wkToken.len=64`, device bound to the REAL watch node (whois-captured id), secret spent.
+  Ask proof: `-e text 'what is 12 times 12'` → `run accepted` → approval round-trip over the lane
+  → `finish … error=false len=3` ("144"). watch_send proof: agent called `watch_send` →
+  `outbox msg id=7 agent=wear-demo len=11` → notif posted. Cron proof: `hermes cron run` of job
+  `wearos-proof` → `outbox cron id=6 … len=25` ("⏰ wearos-proof ✓ finished") + notif posted; the
+  ⏰ view's rows (watchkit `/sessions?source=cron`) carry the `"<job> · <date>"` titles; `?source=
+  bogus` → 400; `/agent_keys` → 410. Revoke proof (`watch devices --revoke … --yes`): token+queue
+  gone, node-step honest (self-node guard), **named-profile key rotated hot**; watch-side
+  `-e unpair 1` → "lane said: Forgotten" + local wipe. STT: the pane route (same code path) cloned
+  the pinned commit, built, downloaded the pinned GGUF and finished `installed and verified`
+  (model_verified: true). Screens: circle-masked ×3 (chat/sessions/settings) + `tesseract --psm 11`
+  secret sweep — CLEAN. Lessons pinned in SPEC §11.4 addendum + fix commits c7b280a..30055a8.

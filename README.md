@@ -38,7 +38,8 @@ APK embeds a real Tailscale node (tsnet, Go via gomobile), so every ask, answer 
 fetch and STT leg rides a private WireGuard tunnel to your own box — zero cloud relays, no Telegram
 in the middle. Replies are spoken by **on-device TTS, on by default**, and the
 **Hermes Wear Kit plugin** (`hermes-plugin/`) for the Hermes desktop app completes the loop: it
-pairs the watch with a 6-digit PIN and mints the watch's one single-use enrollment key — then gets
+mints the watch's pairing code, hands the watch a one single-use enrollment key over a public
+door, and delivers the real secrets only over the watch's own verified lane — then gets
 out of the way forever.
 
 | | |
@@ -57,10 +58,13 @@ out of the way forever.
    reviewed SHA; source lives in [`hermes-plugin/`](hermes-plugin/README.md)). If the Wear Kit
    pane's readiness lights aren't all green, `hermes watch setup` names exactly what's missing.
 3. **Open the app on the watch.**
-4. **It greets you with a big 6-digit PIN** — 5-minute window, single use.
-5. **Say or type `/pair <PIN>`** to Hermes on any surface (or `hermes watch pair <PIN>`). The
-   plugin mints a single-use enrollment key, the watch's embedded node joins *your* tailnet, and
-   the tunnel is everything from there on.
+4. **Open the pairing window at the gateway** — `hermes watch pair` (or the Wear Kit pane's Pair
+   button). Closed by default; one pairing per open window; 5-minute life.
+5. **Knock from the watch, approve on your computer.** Type your funnel handle, tap Pair; the watch
+   shows a big 6-digit code (minted gateway-side — the code never passes through any model). Run
+   `hermes watch pair <CODE>` — or Approve in the pane, or `/pair <CODE>` on a local surface. The
+   watch collects its single-use enrollment key, its node joins *your* tailnet, and the lane
+   session delivers the real secrets over the tunnel. The tunnel is everything from there on.
 
 After pairing, the daily loop is ≤3 touches on the wrist: raise → tap the orb → talk.
 
@@ -216,7 +220,7 @@ flowchart LR
         NODE[embedded tsnet node<br/>Go via gomobile] --- SOCKS[loopback SOCKS5 shim]
     end
     subgraph server [Your gateway box — Hermes host]
-        PLG[Wear Kit plugin<br/>PIN + claim door :42653 loopback] --- TS[Tailscale Management API<br/>single-use key mint]
+        PLG[Wear Kit plugin<br/>code door :42653 loopback + private lane :42654 tailnet-only] --- TS[Tailscale Management API<br/>single-use key mint + node delete]
         HG[Hermes gateway API :8642<br/>/p/wear profile] --> LLM[Self-hosted LLM<br/>OpenAI-compatible]
         WK[watchkit helper :42651<br/>optional zero-dep Node] --- IMG[img / media / mermaid render]
     end
@@ -231,7 +235,7 @@ Three moving parts (plus the plugin, which is really the fourth):
 | Piece | What it is |
 |---|---|
 | `app/` | The watch app. Kotlin, Wear Compose, OkHttp/SSE, the embedded tailnet node. No Google services, no Firebase, no push. |
-| `hermes-plugin/` | The **Hermes Wear Kit** plugin: pairing (PIN → claim → enrollment packet), `watch_*` tools, `/pair`, a `hermes watch` CLI, readiness checks, and the Desktop Wear Kit pane. Details in [hermes-plugin/README.md](hermes-plugin/README.md). The catalog installs pin [borealBytes/hermes-wearos-plugin](https://github.com/borealBytes/hermes-wearos-plugin) — a subtree-split mirror of this directory, zero human commits, force-published by this repo's own CI (`.github/workflows/plugin-sync.yml`); the monorepo stays the only place code is written. |
+| `hermes-plugin/` | The **Hermes Wear Kit** plugin: pairing (gateway-minted code → secret pickup → lane-delivered secrets), `watch_*` tools, `/pair`, a `hermes watch` CLI, readiness checks, and the Desktop Wear Kit pane. Details in [hermes-plugin/README.md](hermes-plugin/README.md). The catalog installs pin [borealBytes/hermes-wearos-plugin](https://github.com/borealBytes/hermes-wearos-plugin) — a subtree-split mirror of this directory, zero human commits, force-published by this repo's own CI (`.github/workflows/plugin-sync.yml`); the monorepo stays the only place code is written. |
 | Hermes gateway | Any Hermes install: point the plugin at a profile (e.g. `wear`) with a persona, tools, and an API key. SSE run streaming + cancel. |
 | `server/watchkit/` | Optional zero-dependency Node daemon: mermaid → PNG, full-res `/img` serving from allow-listed roots (GIFs verbatim — the animation survives), `/media` pre-shrink (H.264+AAC / Ogg-Opus) so clips stream smooth on wrist Wi-Fi, opt-in body-tool snapshot cache (+ MCP for the agent), cron/job probes. A render sidecar — never in the run path (SPEC §12.13). The plugin's in-process media lane is porting; the sidecar is the documented fallback. |
 
@@ -243,27 +247,34 @@ know about your tailnet lives on the gateway side of the line.** A Tailscale API
 admin-grade credential — minting keys, tagging nodes, patching ACLs — and a Galaxy Watch is the
 wrong place to paste one. The plugin keeps that credential on your box, where Hermes already keeps
 secrets, and hands the watch a key that is single-use, tag-restricted, and dead the moment
-enrollment finishes. Pairing becomes the only ceremony: six digits on the glass, one `pair` to
-Hermes, done — no console, no copy-paste, no phone app.
+enrollment finishes. Pairing becomes the only ceremony: six digits on the glass, one `pair` typed
+to Hermes **on your computer**, done — no console, no copy-paste, no phone app. And the one
+gateway-grade secret the watch must hold (its agent's `API_SERVER_KEY`) never rides the public
+door: it arrives only over the watch's own lane, after `tailscale whois` has verified the node
+behind the dial.
 
 | | **The plugin owns** (`hermes-plugin/`, on your gateway box) | **The watch owns** (`app/`, Wear APK) |
 |---|---|---|
-| Trust | The Tailscale credential; minting single-use pre-authorized `tag:hermes-watch` keys; the ACL grants (tagOwners + funnel attr) that make enrollment self-serve and narrow | The node identity it earns from that one key — and nothing else; it never sees an API token |
-| Pairing | The PIN ledger (5-min TTL, one claim, rate limits), the Funnel claim door (`/pair/*`, port 42653 loopback), the wizard (`hermes watch setup --fix …`) with per-node funnel links | Showing the 6-digit PIN, one handle field, the Knock button — and collecting the enrollment packet exactly once |
+| Trust | The Tailscale credential; minting single-use pre-authorized `tag:hermes-watch` keys at approval; deleting nodes on revoke; the ACL grants (tagOwners + funnel attr) that make enrollment self-serve and narrow | The node identity it earns from that one key — and nothing else; it never sees an API token until its lane session is whois-verified |
+| Pairing | The pairing window (closed by default, 5-min TTL, one pairing per open), the gateway-minted code ledger (3-strike approval lockout, door rate limits), the Funnel code door (`/pair/*`, port 42653 loopback) and the tailnet-only private lane (`:42654` — the only road to `API_SERVER_KEY`), the wizard (`hermes watch setup --fix …`) with per-node funnel links | Generating the 256-bit device secret at knock, showing the 6-digit code, one handle field, the Knock button — pickup by secret (the code rides no URL), collecting the enrollment packet exactly once, and Keystore-sealing everything it learns |
 | Transport | — (out of the data path entirely) | The embedded tsnet node: every REST/SSE call rides the watch's own WireGuard leg; loopback SOCKS5 shim; failover probe |
-| The agent relationship | Profile routing (`/p/wear`), per-profile API keys, session tools (`watch_sessions_*`, `watch_status`…), the Desktop Wear Kit pane, `hermes watch` CLI, readiness lights | The conversation: streaming markdown, the orb, approvals UI, on-device Vosk STT + TTS, media rendering, body tools |
-| Media | Telling the watch where watchkit is (ports ride the packet) | Rendering; and — being ported into the plugin — in-process image/GIF/video pre-shrink so the Node sidecar becomes optional |
+| The agent relationship | Profile routing (`/p/wear`), per-profile API keys + per-agent key grants, the three `watch_*` tools, the Desktop Wear Kit pane (window, approvals, devices, grants, alert prefs, STT installer), `hermes watch` CLI, readiness lights, cron-alert fan-out | The conversation: streaming markdown, the orb, approvals UI, on-device Vosk STT + TTS, media rendering, body tools |
+| Media | Telling the watch where watchkit is (ports ride the lane session) | Rendering; and — being ported into the plugin — in-process image/GIF/video pre-shrink so the Node sidecar becomes optional |
 
 Read the middle column as the security story: the plugin is the **provisioner and the bouncer**;
 the APK is the **resident**. The resident can be thrown out (reinstall, factory reset) and let back
-in with a PIN, and nothing the attacker holds from the watch ever outlives a single enrollment.
+in with a fresh code ceremony, and nothing an attacker holds from the watch ever outlives a single
+enrollment — revocation deletes the node, rotates the agent key, and burns the device token.
 
 ## Networking: the watch's own tailnet node is the transport
 
 The app embeds a real Tailscale node (`tsnet`, no system Tailscale needed on the watch or a phone).
-Since the plugin era, **pairing is the enrollment**: the watch's PIN claim hands it a *single-use*
-enrollment key (24 h default lifetime, zeroed from the plugin's ledger the moment the watch collects
-its packet), and the node enrolls once — no reusable keys lying around. The manual path (Settings ▸
+Since the plugin era, **pairing is the enrollment**: the watch's approved knock hands it a
+*single-use* enrollment key (24 h default lifetime, zeroed from the plugin's ledger the moment the
+watch collects its packet — and the key itself only ever rides the authenticated pickup leg), the
+node enrolls once, and the gateway binds the node to the device by **`tailscale whois` on the lane
+dial** — a watch that self-reports a node is believed zero times. No reusable keys lying around.
+The manual path (Settings ▸
 Gateways ▸ Tailnet, one reusable authkey from the admin console) still works and is what
 `scripts/setup.sh` drives for agent installs. From enrollment on, **every** call — REST, answer
 streams, image fetches, the STT WebSocket — leaves the watch through a private WireGuard tunnel to
@@ -282,7 +293,7 @@ the exact tunnel an ask rides:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Enrolling: paired via PIN — single-use key adopted
+    [*] --> Enrolling: approved code — single-use key collected
     Enrolling --> Tunnel: node enrolled (persisted)
     Tunnel --> Probing: endpoints probed THROUGH the tunnel
     Probing --> Tunnel: healthy endpoint found (sticky winner)
@@ -292,7 +303,7 @@ stateDiagram-v2
 
 | Piece | You get | Setup |
 |---|---|---|
-| **Watch node** (`<watch-name>.<your-tailnet>.ts.net`) | answers from anywhere with Wi-Fi | paired via the PIN ceremony — or, manual path, mint a *reusable, non-ephemeral* authkey (admin ▸ Keys) and hand it over once |
+| **Watch node** (`<watch-name>.<your-tailnet>.ts.net`) | answers from anywhere with Wi-Fi | paired via the code ceremony — or, manual path, mint a *reusable, non-ephemeral* authkey (admin ▸ Keys) and hand it over once |
 | **Gateway** (`http://<gateway-fqdn>.ts.net:8642`) | the API the watch rides the tunnel to | run `tailscale` on the gateway box; nothing else — tailscaled accepts tunnel traffic itself (MagicDNS on; one Funnel rule for `/pair/*` during pairing, by the wizard) |
 | **LAN literal** (`http://192.168.1.50:8642`) | optional extra endpoint | reached THROUGH the tunnel too; useful only with the dev escape hatch (`tailnet_on off`) |
 
@@ -321,18 +332,20 @@ whose whole job is a four-step checklist:
 
 | | |
 |:--:|:--:|
-| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: four-step checklist, per-agent enablement, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen: the tailnet handle typed, a 6-digit PIN under its own 5-minute label, Knock and New PIN buttons"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. Agent names are blurred by the maintainer — they are yours to populate. |
+| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: install checklist, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen: the tailnet handle typed, Knock button under a code field — the shot predates 0.2, where the 6-digit code is gateway-minted"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. (Shots are from the 0.1 pane; 0.2 replaces PIN+claim with the window/Approve code ceremony, per-agent key grants, cron-alert prefs, and the pinned Parakeet STT installer — see [hermes-plugin/README.md](hermes-plugin/README.md).) Agent names are blurred by the maintainer — they are yours to populate. |
 
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
    [repo](https://github.com/borealBytes/hermes-wearos).
-2. **Enable Wear Kit for your agents** — one checkbox per profile, plus an **Enable all** row
-   on top (enable all, then uncheck who should *not* talk to the watch — the CLI equivalent is
-   `hermes watch enable --agents all`).
-3. **Open the app on the watch** — it greets you with a big 6-digit PIN (5-minute window, single
-   use; a `show PIN` button mints one plugin-side for when the watch isn't in your hand).
-4. **Say or type `/pair 123456`** — swap in the PIN on the watch and say it to Hermes on ANY
-   surface, or run `hermes watch pair`. The watch gets its tunnel enrollment packet and is yours.
+2. **Enable Wear Kit for your agents** — one checkbox per profile on the pane (each toggle shells
+   out to the core's own `hermes plugins enable|disable wearos -p <profile>` — fixed argv, never a
+   shell); enable all, then uncheck who should *not* talk to the watch.
+3. **Open the app on the watch** — one field (your funnel handle) and a Knock button. The window
+   is closed by default; open it first: `hermes watch pair` or the pane's Pair button.
+4. **Approve the code on your computer.** The watch shows a gateway-minted 6-digit code; run
+   `hermes watch pair <CODE>` (or Approve in the pane — or `/pair <CODE>` on a local surface; a
+   messaging-platform reply honestly gets "approve it on your computer"). The watch collects its
+   enrollment key, enrolls its node, and pulls its real secrets over the whois-verified lane.
 
 Below the checklist: the paired-device list and the **readiness lights** (tailscaled, credential,
 MagicDNS, funnel) — every red light names its fix verb, and `hermes watch setup` prints the same
@@ -340,8 +353,10 @@ list as JSON. The pane talks to the plugin's own REST half (`dashboard/plugin_ap
 `/api/plugins/wearos/*`, read pane-side with `ctx.rest`) — and that mount is **hot**: installing or
 updating the plugin makes the backend answer the very next request, no app restart. (A pane only
 needs the card's **Rescan** to pick up fresh JS; a row stuck on *"copying…"* is core's
-pending-sync state, and Rescan lands it too.) The checkbox writes the same `config.yaml` ledger
-core's card toggle edits one agent at a time — and it's the same list `hermes watch enable` drives.
+pending-sync state, and Rescan lands it too.) The checkbox delegates to the core's own enable verb
+(`hermes plugins enable|disable wearos -p <profile>`, fixed argv — the pane ships no editor of its
+own), and the pane adds the v2 halves: window/Approve controls with the live pending list, per-device
+Revoke, per-agent key grants, per-agent cron-alert preference, and the pinned Parakeet STT installer.
 The web dashboard shows the same plugin as a plain management tile
 (Disable / Remove, *"No dashboard tab"* — honestly: this plugin's page is the Desktop pane, not
 a web page; `/api/plugins/wearos/*` is an API namespace, not a tab).
@@ -363,7 +378,7 @@ terminal.
 | <img src="docs/screens/61-vm-plugins-page.png" width="420"/> | <img src="docs/screens/62-vm-wizard-red.png" width="420"/> |
 | **A brand-new install's Plugins page** (Settings ▸ **Plugins**): the `wearos` row is the only user-source plugin on the box. The left nav grows a `wearos` sub-entry; the row and the **Manage plugins →** link both land on the Wear Kit pane — the config form two shots below is exactly what that click opens. The card legitimately says "No dashboard tab". | **`hermes watch setup` before any credential** — verbatim wizard JSON: red lights, each with its fix hint. Nothing invented for the camera. |
 | <img src="docs/screens/63-vm-wizard-green.png" width="360"/> | <img src="docs/screens/64-vm-pairing-ceremony.png" width="480"/> |
-| **Tailnet joined, funnel up, no watch yet** — all green except `devices_online: 0 paired`. Honest state, honest screenshot. | **The whole ceremony, start to finish** — mint PIN → watch knocks `POST /pair/claim` → `hermes watch pair <PIN>` claims → the packet is collected ONCE (the second GET gets 410). Single-use by construction. |
+| **Tailnet joined, funnel up, no watch yet** — all green except `devices_online: 0 paired`. Honest state, honest screenshot. | **The whole ceremony, start to finish (0.1-era shot)** — window open → watch knocks `POST /pair/begin` with its device secret → gateway shows the code → `hermes watch pair <CODE>` approves → pickup by secret, packet collected ONCE (the second ack gets 410). Single-use by construction. |
 | <img src="docs/screens/65-vm-wizard-paired.png" width="320"/> | <img src="docs/screens/66-vm-webapp-plugin-settings.png" width="420"/> |
 | **After the ceremony** — all green, `1 paired`, and the device row from `hermes watch devices`. | **The real plugin config form** (Settings ▸ Plugins ▸ wearos), rendered from `config_schema` — secret fields empty by design. |
 
@@ -459,10 +474,13 @@ quiet.
 - **TTS is on-device** by default (no cloud voice calls).
 - Text + run streaming go **only** to your configured gateways, through the watch's own tailnet
   node (SPEC §11.4) — no relay, no companion app, no LAN requirement.
-- **Pairing leaks nothing reusable:** the 6-digit PIN is 5-minute and single-claim; the enrollment
-  key it returns is single-use and zeroed from the plugin's ledger once collected. The only public
-  surface is the claim door, Funnel-fronted at `/pair/*` alone (SPEC +
-  [hermes-plugin/README.md](hermes-plugin/README.md) disclosure).
+- **Pairing leaks nothing reusable:** the 6-digit code is gateway-minted, 5-minute, one pairing per
+  open window, and never passes through a model; the enrollment key it unlocks is single-use, rides
+  only the secret-authenticated pickup, and is zeroed from the plugin's ledger once collected. The
+  only public surface is the code door, Funnel-fronted at `/pair/*` alone; the private lane
+  (`:42654`) is tailnet-only and whois-gated (SPEC +
+  [hermes-plugin/README.md](hermes-plugin/README.md) disclosure). Secrets the watch must keep are
+  Keystore-sealed on-device (AES-256-GCM, non-exported key).
 - On-watch cache is **encrypted at rest and size-bounded**; delete = app data wipe.
 - Body data flows **only** when you flip the toggles; snapshots push to your watchkit, nowhere else.
 - No analytics. No crash reporter. No push tokens. `grep` for tracking SDKs: nothing.
@@ -536,9 +554,10 @@ scripts/doctor.sh                          # toolchain + link health report
 - [x] **tsnet node in-app** — shipped: the watch joins your tailnet itself (embedded `tsnet` via
       a gomobile shim), and the tunnel is THE transport — no LAN path, no tailscale-enabled router
       required (SPEC §11.4).
-- [x] **Hermes Wear Kit plugin** — shipped: catalog install, PIN pairing (`/pair`), single-use
-      enrollment keys, the Desktop pane's checklist + readiness lights. The six-digit first-run
-      pairing flow this slot used to hold *is* that.
+- [x] **Hermes Wear Kit plugin** — shipped: catalog install, the 0.2 code ceremony (gateway-minted
+      code, secret pickup, whois-bound private lane, full-removal revoke), single-use enrollment
+      keys, the Desktop pane (window/Approve/Revoke, grants, alert prefs, pinned STT installer) +
+      readiness lights. The six-digit first-run pairing flow this slot used to hold *is* that.
 - [ ] **Play Store listing** — the app is submitted and sitting in Google's approval queue (the
       wait is theirs, not ours). Until it clears: sideload the CI-built APK from GitHub Releases
       (developer mode on the watch, ~1 minute); once it lands, install is a Store tap and pairing
