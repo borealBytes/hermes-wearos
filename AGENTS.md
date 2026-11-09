@@ -222,9 +222,12 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 
 - `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints,
   §11.4 the embedded tailnet node — the transport;
-  §14 the voice-out milestone + its amendment log).
+  §19 the voice-out milestone + its amendment log).
 - `hermes-plugin/voiceout.py` — voice-out canonical prefs (`voiceout.yaml`, rev'd two-way merge), the
-  measured-`ref_rate` card store, and the tier-aware `synthesize()` contract (§14; stdlib-only tests).
+  measured-`ref_rate` card store, and the tier-aware `synthesize()` contract (§19; stdlib-only tests).
+- `hermes-plugin/tts_air.py` — NeuTTS Air engine: pinned installer into a private venv (rule 17),
+  subprocess runner, size-gated gated-HF fetch, stdlib time-scale; registers into voiceout when
+  `register_if_ready()` finds it installed.
 - `.github/workflows/plugin-sync.yml` — publishes `borealBytes/hermes-wearos-plugin`, the
   catalog-pinned subtree mirror of `hermes-plugin/`. Zero human commits; plugin code is edited
   ONLY here. Needs the `MIRROR_PAT` secret (fine-grained, single-repo, contents RW) — without

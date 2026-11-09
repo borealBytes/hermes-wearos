@@ -263,6 +263,9 @@ def create_card(wav_bytes: bytes, label: str, source: str = "watch-record",
         p.setdefault("cards", {})[card_id] = {
             "label": label[:48], "source": source, "license": license_,
             "seeded": seeded, "sha256": dig, "created": time.time(),
+            # the EXACT words the pace was measured against — zero-shot cloning
+            # needs the reference transcript, so the card that measures it stores it
+            "transcript": transcript if transcript is not None else SCRIPTED_PROMPT,
             **meta,
         }
         _save_and_return(p)
@@ -351,6 +354,8 @@ def synthesize(text: str, agent: str, *, want_words: bool = True) -> dict:
                 "card": card and {"card_id": card_id, "ref_rate": card["ref_rate"]}}
     if not _SYNTH:
         return {"ok": False, "error": "no TTS engine registered (install NeuTTS Air)"}
+    # engines address the card's wav by id — hand the id to the adapter with the meta
+    card = dict(card, card_id=card_id) if card else None
     audio, rate = _SYNTH["air"](text, card, speed)
     words: list[dict] = []
     if want_words and _ALIGN:

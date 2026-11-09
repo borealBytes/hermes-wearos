@@ -1514,6 +1514,68 @@ gh attestation verify --repo borealBytes/hermes-wearos hermes-wearos-@rc.apk # @
 apksigner verify --print-certs <apk>   # who signed it: release key vs CI debug key
 ```
 
+## 19. VOICE-OUT MILESTONE — dual-tier TTS (issue #7; sliced on `feat/voiceout`, PR #8)
+
+The watch speaks with a voice cloned from a CARD, on the user's own hardware, with
+word-synced karaoke — no cloud voice dependency. Full design: issue #7 body; the
+gateway half is `hermes-plugin/voiceout.py` (prefs/cards/synthesis) and
+`hermes-plugin/tts_air.py` (the engine). Owner rulings that bind every slice:
+
+- **Gateway-canonical prefs** — one `voiceout.yaml`, monotonic `rev`, higher-rev
+  wins per field; an offline watch's edits replay on reconnect. No forked truth.
+- **A card is data** — reference wav + transcript + the MEASURED `ref_rate` (VAD
+  speech-span against the known 17-word scripted prompt). 1.0x replays the speaker
+  at THEIR pace; a fast speaker's clone never 'fixes' their speed. 3 s floor, 60 s
+  cap, enforced gateway-side — a watch bug can't smuggle a 1 s clip.
+- **One global speed dial**, riding the existing TTS-speed feature; per-agent voice
+  + mode (gateway | watch | off), never a per-agent rate.
+- **Alignment is honest per tier** — gateway: synth → forced-align → `words[]`;
+  watch-native: the sentence IS the highlight unit, and the UI says so. A
+  degradation is a REPORTED mode, never a silent lie.
+- **The timeline ring NEVER animates** (the PTT conic halo owns motion, the ring
+  owns time); track `#431410`, played `#C0392B`, concentric with the orb; orb tap =
+  stop, extending the §12.11 mute semantics.
+- **Nothing unscannable ships** (rule 17): the seed pack and the Air model arrive
+  hash-pinned at first use like the Parakeet weights; the runtime lives in its own
+  venv, behind a subprocess boundary — an engine crash can't take the gateway.
+
+**Engine (locked 2026-11-08 in #7):** NeuTTS Air — Apache-2.0, ~552M-param speech-LM,
+GGUF, zero-shot clone from ~3 s reference audio. Runtime `neuphonic/neutts` @
+`ac69851f28fc63a487917e7c2e27f0d75c759cba` (pinned), pip spec
+`neutts[all] @ git+…@<commit>`, private venv. Model
+`huggingface.co/neuphonic/neutts-air-q8-gguf/resolve/main/neutts-air-Q8_0.gguf`,
+802,658,528 bytes; the repo is `gated: auto` — a one-time consent click + read token
+(HF_TOKEN or the pane's token box) is required, and the fetch names that cause on
+401/403. `MODEL_SHA256` is PENDING until the first token-carrying install records the
+observed digest (the installer writes it beside the model; the constant gets pinned in
+a follow-up commit, same pattern as `voiceout.SEED_SHA256`). Runner-up if Air stalls:
+CosyVoice2 (verify the license fine-print first). Off-1.0 speed = stdlib linear
+time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment log.
+
+| slice | surface | state |
+|---|---|---|
+| 1 | `voiceout.py` — prefs rev/merge, measured cards, seed fetch, tier-aware `synthesize()` | SHIPPED `493eb2b`, tests 8/8 |
+| 2a | `tts_air.py` — pinned installer, subprocess runner, time-scale, honest probe | SHIPPED this push, tests 11/11 |
+| 2b | Parakeet forced-align → `words[]`, honest `align:"none"` degradation | planned |
+| 2c | `/voice/*` routes in `private_api.py` (prefs, cards, synthesize; Tailscale-node auth) | planned |
+| 3–7 | desktop pane ▸ Voice-out · watch prefs client · karaoke orb player · recorder UI · PR hygiene | planned |
+
+### 19.4 Amendment log (append-only; dated; never rewrite history)
+
+- **2026-11-09 (weardev)** — docs commit `2b16c8e` announced "SPEC §14 voice-out
+  milestone + amendment log" but its diff touched only AGENTS.md/CONTRIBUTING.md:
+  the voice-out section never landed in docs/SPEC.md. Numbering collision too —
+  §14 is batch 4 (2026-10-29). This §19 is the section that commit owed; AGENTS §8
+  pointers fixed to §19 in the same push.
+- **2026-11-09 (weardev, slice 2a)** — two seams added to `voiceout.py` the Air
+  adapter needs: cards persist the exact `transcript` their pace was measured
+  against (zero-shot cloning would otherwise GUESS the reference words), and
+  `synthesize()` hands the engine `card_id` with the meta (the adapter must address
+  `cards/<id>.wav` on disk). Both additive; slice-1 tests untouched and green.
+- **2026-11-09 (weardev, slice 2a)** — speed scaling is linear resample (pitch
+  follows at extremes). Known debt, chosen over shipping a WSOLA first-cut inside
+  the same slice that pins an 803 MB model. Polish tracked here, not in prose.
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
