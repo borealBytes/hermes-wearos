@@ -107,6 +107,20 @@ class PairingClientTest {
     }
 
     @Test
+    fun `THE LIVE DOOR SPACES ITS COLONS — stdlib json bodies must still parse`() {
+        // json.dumps serializes '"state": "ready"' — the original sniff used to miss it
+        // and read the pickup as Malformed (caught live 2026-11-09).
+        val ready = """{"authkey": "tskey-x", "key_id": "k", "profile": "wear", """ +
+            """"gateway_fqdn": "t.ts.net", "gateway_port": 8642, "watchkit_port": 42651, """ +
+            """"private_port": 42654, "state": "ready"}"""
+        val o = PairingClient.outcomeOf(200, ready)
+        assertTrue(o is PairingClient.Outcome.Ready)
+        assertEquals("t.ts.net", (o as PairingClient.Outcome.Ready).packet.gatewayFqdn)
+        val ack = """{"token": "wtk-fedcba987654", "device": {"hostname": "w"}}"""
+        assertTrue(PairingClient.outcomeOf(200, ack) is PairingClient.Outcome.Tokened)
+    }
+
+    @Test
     fun `200 without either shape is Malformed`() {
         assertTrue(PairingClient.outcomeOf(200, """{"hello":"world"}""") is PairingClient.Outcome.Malformed)
         assertTrue(PairingClient.outcomeOf(200, "not json") is PairingClient.Outcome.Malformed)

@@ -14,7 +14,9 @@ Protocol doctrine (review 2026-11-09 + owner decisions D2/D3/D6/D12/D13):
     Every read-modify-write here takes an exclusive ``fcntl`` lock on the state file
     for the whole transaction (``ctx.state`` locks per-call only — not enough).
 
-State file: ``<HERMES_HOME>/plugin-data/wearos/pairing.json`` (0600). The device secret
+State file: ``<gateway root>/plugin-data/wearos/pairing.json`` (0600) — the GATEWAY's
+root home, so a named profile (``<root>/profiles/<p>``) and the door's launch process
+share one registry. The device secret
 and the PIN are stored ONLY as SHA-256 hashes; the Tailscale authkey lives here
 short-term, zeroed the moment the watch acknowledges pickup.
 """
@@ -86,9 +88,18 @@ def sanitize_hostname(name: str) -> str:
 def _default_home() -> Path:
     try:
         from hermes_constants import get_hermes_home
-        return Path(get_hermes_home())
+        home = Path(get_hermes_home())
     except Exception:
-        return Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+        home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+    # ONE registry per GATEWAY, not per profile: the claim door is a single shared port
+    # hosted by the launch profile's process, while `hermes -p <profile> watch pair`
+    # runs under `<root>/profiles/<profile>`. Collapsing that layout to the root keeps
+    # door, CLI and lane reading the SAME fcntl-locked file — per-profile copies gave
+    # the door a store whose window it never saw (caught live 2026-11-09: begin 403
+    # "pairing closed" right after the window opened).
+    if home.parent.name == "profiles":
+        return home.parent.parent
+    return home
 
 
 class Store:

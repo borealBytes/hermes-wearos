@@ -1,6 +1,7 @@
 package dev.hermes.wearos.net
 
 import dev.hermes.wearos.domain.PairingCode
+import dev.hermes.wearos.net.HermesApi.Companion.str
 import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -238,13 +239,25 @@ class PairingClient(private val http: Http = LiveHttp()) {
                 .ifEmpty { "pairing door refused" }
 
         /** The status-code contract, as pure data (what the JVM tests pin down). */
+        /** Status-code contract (pure; the JVM tests pin this). THE 200 BRANCH PARSES, IT DOES
+         *  NOT SNIFF: the door serializes with stdlib json (`"state": "ready"` — a space after
+         *  every colon), so substring probes on compact JSON silently fell through to
+         *  Malformed on the live door (caught in the 2026-11-09 ceremony). Key presence after a
+         *  real parse is the whole contract. */
         fun outcomeOf(code: Int, body: String): Outcome = when (code) {
             201 -> parseCode(body) ?: Outcome.Malformed
             204 -> Outcome.Pending
-            200 -> when {
-                body.contains("\"state\":\"ready\"") -> parsePickup(body)?.let { Outcome.Ready(it) } ?: Outcome.Malformed
-                body.contains("\"token\"") -> parseToken(body) ?: Outcome.Malformed
-                else -> Outcome.Malformed
+            200 -> {
+                val o = runCatching {
+                    Json_.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject
+                }.getOrNull()
+                when {
+                    o == null -> Outcome.Malformed
+                    o.containsKey("authkey") || o.str("state") == "ready" ->
+                        parsePickup(body)?.let { Outcome.Ready(it) } ?: Outcome.Malformed
+                    o.containsKey("token") -> parseToken(body) ?: Outcome.Malformed
+                    else -> Outcome.Malformed
+                }
             }
             410 -> Outcome.Gone
             429 -> Outcome.RateLimited
