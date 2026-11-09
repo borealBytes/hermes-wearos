@@ -234,6 +234,7 @@ class MainActivity : ComponentActivity() {
                 val agentsRefreshing by agents.refreshing.collectAsState()
                 val gatewaySessions by session.gatewaySessions.collectAsState()
                 val archivedSessions by session.archivedSessions.collectAsState()
+                val cronSessions by session.cronSessions.collectAsState()
                 val sessionsMeta by session.sessionsMeta.collectAsState()
                 val devPtt by WearApp.Graph.devPtt.collectAsState()
                 val devEditor by WearApp.Graph.devEditor.collectAsState()
@@ -258,9 +259,11 @@ class MainActivity : ComponentActivity() {
                 var approvalsOpen by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
                 // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
-                // the user on an empty list they can see is empty).
-                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty()) {
-                    if (archivedSessions.isEmpty() && sessionFilter == GatewaySessions.FILTER_ARCHIVED)
+                // the user on an empty list they can see is empty). ⏰ shares the rule.
+                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty(), cronSessions.isEmpty()) {
+                    if (sessionFilter == GatewaySessions.FILTER_ARCHIVED && archivedSessions.isEmpty())
+                        sessionFilter = GatewaySessions.FILTER_ALL
+                    if (sessionFilter == GatewaySessions.FILTER_CRON && cronSessions.isEmpty())
                         sessionFilter = GatewaySessions.FILTER_ALL
                 }
                 // OWNER BATCH 2 (asks #5/#6): long-pressed prompt → sheet → full-screen editor.
@@ -827,6 +830,7 @@ class MainActivity : ComponentActivity() {
                                 agent = profile,
                                 sessions = gatewaySessions,
                                 archived = archivedSessions,
+                                cron = cronSessions,
                                 meta = sessionsMeta,
                                 filter = sessionFilter,
                                 onFilter = { sessionFilter = it },

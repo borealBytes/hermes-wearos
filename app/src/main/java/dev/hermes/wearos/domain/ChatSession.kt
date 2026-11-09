@@ -110,6 +110,14 @@ class ChatSession(
     /** Archived rows for the current agent (🗃 chip; refreshed with every list refresh). */
     private val _archivedSessions = MutableStateFlow<List<GatewaySessions.Info>>(emptyList())
     val archivedSessions: StateFlow<List<GatewaySessions.Info>> = _archivedSessions
+
+    /**
+     * CRON RUN rows for the current agent (⏰ chip, pairing v2 / D14): every cron alert the
+     * outbox delivers names a run session, and an alert must be OPENABLE — so the runs
+     * themselves ride their own fetch (watchkit `?source=cron`), same fail-soft no-chip rule.
+     */
+    private val _cronSessions = MutableStateFlow<List<GatewaySessions.Info>>(emptyList())
+    val cronSessions: StateFlow<List<GatewaySessions.Info>> = _cronSessions
     private val _sessionsMeta = MutableStateFlow(SessionsMeta())
     val sessionsMeta: StateFlow<SessionsMeta> = _sessionsMeta
 
@@ -1370,6 +1378,10 @@ class ChatSession(
             // archived list simply means no chip — the normal list is untouched by its failure.
             _archivedSessions.value = try {
                 GatewaySessions.parseProfiled(Watchkit.fetchSessionsJson(current, archived = true), current)
+            } catch (e: Exception) { emptyList() }
+            // …and the ⏰ chip's (D14): the cron runs behind every alert, same rules, own fetch.
+            _cronSessions.value = try {
+                GatewaySessions.parseProfiled(Watchkit.fetchSessionsJson(current, source = "cron"), current)
             } catch (e: Exception) { emptyList() }
             val (mine, error) = try {
                 GatewaySessions.parseProfiled(api().sessionsJson(), current) to ""

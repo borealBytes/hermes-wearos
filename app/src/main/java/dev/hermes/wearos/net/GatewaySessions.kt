@@ -27,6 +27,13 @@ object GatewaySessions {
      */
     const val FILTER_ARCHIVED = "\u0000archived"
 
+    /**
+     * Chip sentinel for the ⏰ CRON-RUNS list (pairing v2 / D14): every alert the plugin's outbox
+     * delivers opens INTO its run session, so the runs themselves must be listable — fetched with
+     * watchkit `?source=cron` exactly like 🗃 rides its own fetch. Same sentinel grammar.
+     */
+    const val FILTER_CRON = "\u0000cron"
+
     data class Info(
         val id: String,
         val title: String,
@@ -37,6 +44,8 @@ object GatewaySessions {
         val profile: String = "",
         /** True only on rows from the archived fetch — the 🗃 chip's exclusive content. */
         val archived: Boolean = false,
+        /** The store's OWN row source ("chat"/"cron"/"api_server"/…); "" on pre-v2 payloads/caches. */
+        val source: String = "",
     )
 
     /** Parse + newest-first sort; malformed JSON throws (caller decides cache-vs-error). */
@@ -48,7 +57,8 @@ object GatewaySessions {
             val sec = (o["last_active"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull() ?: 0.0
             val msgs = (o["message_count"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
             val arch = (o["archived"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            Info(id, o.str("title") ?: "", (sec * 1000).toLong(), msgs, o.str("profile") ?: "", arch)
+            Info(id, o.str("title") ?: "", (sec * 1000).toLong(), msgs, o.str("profile") ?: "", arch,
+                o.str("source") ?: "")
         }.sortedByDescending { it.lastActiveMs }
     }
 
@@ -79,7 +89,8 @@ object GatewaySessions {
     fun encode(rows: List<Info>): String {
         val data = rows.joinToString(",") {
             "{\"id\":${jstr(it.id)},\"title\":${jstr(it.title)},\"last_active\":${it.lastActiveMs / 1000.0}," +
-                "\"message_count\":${it.messages},\"profile\":${jstr(it.profile)},\"archived\":${if (it.archived) "true" else "false"}}"
+                "\"message_count\":${it.messages},\"profile\":${jstr(it.profile)},\"archived\":${if (it.archived) "true" else "false"}" +
+                (if (it.source.isEmpty()) "" else ",\"source\":${jstr(it.source)}") + "}"
         }
         return "{\"object\":\"list\",\"data\":[$data]}"
     }
