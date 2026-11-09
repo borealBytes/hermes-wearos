@@ -14,13 +14,17 @@
 # mirror split is born without app/libs/hermes-tailnet.aar, and the Parakeet engine is
 # BUILT from pinned source on the user's machine, never shipped).
 name: wearos
-version: 0.2.0
+version: 0.3.0
 description: >-
   ⌚ Pairs the Hermes Wear OS watch app over the watch's OWN tailnet node — the gateway
   issues a 6-digit code, a human types it back at the gateway (never through a model);
   no phone app, no relay. Per-agent key grants, real watch_send delivery, cron-run
   notifications, and one-command full revoke (tailnet node + token + key rotation).
-  Optional streaming speech-to-text builds itself from pinned source. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲
+  Voice-out: your agents speak on the wrist with cloned zero-shot voices (NeuTTS Air,
+  Apache-2.0) — a Desktop pane dropdown picks the weights source (community re-quants
+  default, no account; official gated rows for consent-keepers), separate gateway and
+  watch quants, word-synced karaoke, all audio served over your own tailnet. Optional
+  streaming speech-to-text builds itself from pinned source. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲
   𝗳𝗼𝗿𝗲𝘃𝗲𝗿 — full walkthrough: https://github.com/borealBytes/hermes-wearos
 author: "Clay (borealBytes)"
 kind: standalone
@@ -34,6 +38,8 @@ tags:
   - tailscale
   - pairing
   - devices
+  - voice
+  - tts
 # Floor raised for the desktop data plane: ctx.rest + hot-mounted plugin_api are
 # MEASURED on v0.23.0 (2026.9.24); v0.22 is unverified for them, so we don't claim it.
 requires_hermes: ">=0.23.0"
@@ -83,6 +89,16 @@ config_schema:
     description: >-
       Optional watchkit helper bearer handed to enrolled watches on the private lane
       (nullable field "watchkit_token"); leave unset if watchkit isn't deployed.
+  hf_token:
+    type: secret
+    env: HF_TOKEN
+    description: >-
+      Hugging Face read token for the voice-out weights (ONLY needed when a
+      gated official row is selected — the community default needs no account).
+      One-time consent click at the model page, then paste here or in the pane.
+      Read through this plugin's declared secret route (profile-scoped); the
+      pane's token box stores it 0600 in the plugin's own data dir; never
+      echoed by any route, never logged.
   claim_port:
     type: int
     default: 42653

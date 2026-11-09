@@ -1349,6 +1349,10 @@ def register(ctx) -> None:
         description="One-command Wear OS watch pairing over your own tailnet.",
     )
     ctx.on_unload(lambda: (claim_server.stop_server(), private_api.stop_server()))
+    # Rule 11: the voice-out engine reads its declared secret (config_schema
+    # hf_token → env HF_TOKEN) through the plugin's own route, profile-scoped.
+    from . import tts_air as _ta
+    _ta._SECRETS = lambda key: _cfg(key) or _get_secret("HF_TOKEN")
     # Door + lane come up at LOAD on a daemon thread (0.23 has no gateway:startup hook;
     # a door that never comes up is a SILENT pairing failure). The pass is strictly
     # local: tailscale CLI probes only, never api.tailscale.com.

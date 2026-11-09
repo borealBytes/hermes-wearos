@@ -122,6 +122,7 @@ DEFAULT_SLOTS = {"gateway": "community-q8", "watch": "community-q4"}
 SLOTS = ("gateway", "watch")
 
 STATUS = threading.Lock()
+_SECRETS = None      # register() injects: fn(key)->str|None reading declared secrets
 _state: dict = {"phase": "idle", "detail": "", "percent": 0, "log": [],
                 "started": 0.0, "error": ""}
 _proc: Optional[subprocess.Popen] = None
@@ -150,22 +151,26 @@ def _root() -> Path:
 
 
 def _hf_token() -> str:
-    """Read token, in precedence order, never logged. Empty string = not available."""
-    tok = (os.environ.get("HF_TOKEN") or "").strip()
-    if tok:
-        return tok
-    f = Path.home() / ".cache" / "huggingface" / "token"
-    try:
-        if f.is_file():
-            return f.read_text().strip()
-    except OSError:
-        pass
-    local = _root() / "hf_token"                    # pane-side paste box writes this
+    """The HF read token, never logged. Rule 11: through the plugin's declared
+    secret route first (config_schema secret hf_token → profile-scoped), then the
+    pane/CLI-written plugin-data file, then a documented bare-env fallback that
+    only the STANDALONE CLI path (no host) may hit. The huggingface-cli cache
+    file is deliberately NOT read — that is another tool's login store."""
+    if _SECRETS is not None:
+        try:
+            tok = str(_SECRETS("hf_token") or "").strip()
+            if tok:
+                return tok
+        except Exception:
+            pass
+    local = _root() / "hf_token"                    # pane-side paste box / CLI --token writes this
     try:
         if local.is_file():
             return local.read_text().strip()
     except OSError:
         pass
+    if _SECRETS is None:                            # standalone CLI, no host route exists
+        return (os.environ.get("HF_TOKEN") or "").strip()
     return ""
 
 
