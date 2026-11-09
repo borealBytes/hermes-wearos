@@ -1,25 +1,23 @@
 <!doctype html><html><head><meta charset=utf-8><style>
 *{margin:0;box-sizing:border-box}
 html,body{width:466px;height:466px;background:#000;font-family:'Roboto','Google Sans',system-ui,sans-serif;color:#fff;overflow:hidden}
-.screen{position:relative;width:466px;height:466px;padding:28px 68px 24px}
-.status{color:#8A8A8A;font-size:12px;text-align:center;margin-top:2px}
-.kara{font-size:16px;line-height:1.75;margin-top:10px}
+.screen{position:relative;width:466px;height:466px;padding:26px 68px 0}
+.status{color:#8A8A8A;font-size:12px;text-align:center}
+.bug{position:absolute;top:8px;right:96px;font-size:10px;color:#4A4F55}
+.kara{font-size:15.5px;line-height:1.7;margin-top:6px;margin-bottom:120px}
 .kara .now{background:#2E4B6E;color:#fff;padding:2px 8px;border-radius:8px}
 .kara .said{color:#fff}.kara .next{color:#5A5F66}
-.player{display:flex;align-items:center;justify-content:center;gap:26px;margin-top:14px}
+.player{position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center}
 .orbwrap{position:relative;width:110px;height:110px}
 .orbwrap img{width:110px;height:110px;border-radius:50%;display:block;filter:drop-shadow(0 0 12px rgba(192,57,43,.38)) drop-shadow(0 0 30px rgba(192,57,43,.16))}
 .time{position:absolute;left:0;right:0;bottom:11px;text-align:center;font-size:10.5px;font-weight:500;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 7px rgba(40,6,4,.9);letter-spacing:.4px}
-.stop{width:30px;height:30px;border:2px solid #C0392B;border-radius:7px;display:flex;align-items:center;justify-content:center}
-.stop i{width:11px;height:11px;background:#C0392B;border-radius:2px}
-.bug{position:absolute;bottom:34px;width:466px;text-align:center;font-size:10.5px;color:#4A4F55;left:0}
 </style></head><body><div class=screen>
+<div class=bug>v0.9.0 · wear-demo · mock</div>
 <div class=status>On watch · sentence karaoke ✓</div>
 <div class=kara><span class=said>Your cron digest: three farm alerts,</span>
 <span class=now>no incidents, sprayer window opens Thursday 06:10.</span>
 <span class=next>Milk prices held flat; soil report attached.</span></div>
 <div class=player>
-  <div class=orbwrap><svg width="156" height="156" viewBox="0 0 156 156" style="position:absolute;left:-23px;top:-23px"><circle cx="78" cy="78" r="62" fill="none" stroke="rgba(224,138,138,0.30)" stroke-width="5"/><path d="M78.0,16.0 A62,62 0 0,1 93.4,138.1" fill="none" stroke="#C0392B" stroke-width="5" stroke-linecap="round"/></svg><img src="orb-real.png"><div class=time>0:04 / 0:09</div></div>
-  <div class=stop><i></i></div>
+  <div class=orbwrap><svg width="156" height="156" viewBox="0 0 156 156" style="position:absolute;left:-23px;top:-23px"><circle cx="78" cy="78" r="62" fill="none" stroke="rgba(96,32,26,0.9)" stroke-width="5"/><path d="M78.0,140.0 A62,62 0 1,1 62.6,17.9" fill="none" stroke="#C0392B" stroke-width="5" stroke-linecap="round"/></svg><img src="orb-real.png"><div class=time>0:04 / 0:09</div></div>
 </div>
-<div class=bug>v0.9.0 · wear-demo · mock</div></div></body></html>
+</div></body></html>
