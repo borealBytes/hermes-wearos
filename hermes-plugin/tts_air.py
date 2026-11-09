@@ -293,7 +293,9 @@ def preview() -> dict:
     mb = (s.get("bytes") or 0) // 1_000_000
     steps = [
         f"pip-install {REPO} at commit {COMMIT[:12]} into a private venv "
-        "(pulls the CPU torch wheel; pypi.org)",
+        "(venv pinned to a Python 3.10-3.13 found on PATH — the neutts pin; "
+        "a gateway interpreter outside that range is never used; pulls the "
+        "CPU torch wheel; pypi.org)",
         f"Download {s['file']} (~{mb} MB) from huggingface.co/{s['repo']}"
         + (" — gated: auto, needs your one-time consent + read token" if gated
            else " — ungated: no account, no consent click"),
@@ -306,8 +308,14 @@ def preview() -> dict:
             " (checksum pin lands with the first verified fetch)"),
         f"Everything lands in {root} (private venv + cache, nothing system-wide)",
     ]
-    needs = ["git", "cmake", "g++"] + (["HF read token (HF_TOKEN or the token box)"]
-                                        if gated else [])
+    try:
+        _venv_python()
+        py_ok = True
+    except RuntimeError:
+        py_ok = False
+    needs = ["git", "cmake", "g++"] \
+        + ([] if py_ok else ["python 3.10-3.13 (the engine pin; this box's interpreter is out of range)"]) \
+        + (["HF read token (HF_TOKEN or the token box)"] if gated else [])
     return {
         "title": f"Voice-out engine — {sid} (NeuTTS Air, Apache-2.0)",
         "steps": steps,
@@ -376,6 +384,24 @@ def _set(phase: str, detail: str = "", percent: Optional[int] = None) -> None:
         _state["log"] = _state["log"][-200:]
 
 
+def _venv_python() -> str:
+    """neutts pins >=3.10,<3.14 upstream (measured 2026-11-09: 3.14.9 rejects the
+    wheel), and the gateway's own interpreter may be outside that range — the venv
+    therefore pins a supported interpreter found on PATH, and fails LOUD by name
+    when there is none. Never a silent fall onto the host interpreter."""
+    import shutil as _sh
+    for name in ("python3.13", "python3.12", "python3.11", "python3.10"):
+        p = _sh.which(name)
+        if p:
+            return p
+    if sys.version_info.major == 3 and 10 <= sys.version_info.minor < 14:
+        return sys.executable
+    raise RuntimeError(
+        "the voice-out runtime needs Python 3.10-3.13; none found on PATH "
+        f"(this gateway runs {sys.version.split()[0]}) — install python3.13 "
+        "and press install again")
+
+
 def _run() -> None:
     root = _root()
     global _proc
@@ -388,7 +414,7 @@ def _run() -> None:
         model = root / "model" / s["file"]
         if not (venv / "bin" / "python").is_file():
             _set("venv", "creating the private venv")
-            subprocess.run([sys.executable, "-m", "venv", str(venv)],
+            subprocess.run([_venv_python(), "-m", "venv", str(venv)],
                            check=True, capture_output=True, timeout=300)
         if not (venv / ".neutts-installed").is_file():
             _set("runtime", "pip install (torch CPU wheel + llama-cpp build, minutes)")

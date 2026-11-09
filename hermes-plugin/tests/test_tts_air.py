@@ -211,3 +211,21 @@ def vo_create_wav():
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+    def test_venv_python_stays_inside_the_neutts_pin(self):
+        # The private venv must never silently fall onto an out-of-range host
+        # interpreter (measured: 3.14.9 rejects the pinned wheel).
+        import shutil
+        for fake in (None, "3.9", "3.14"):
+            with self.subTest(host=fake):
+                def which(n):
+                    return None if fake is None else "/usr/bin/" + n
+                vi = (3, int(fake), 0) if fake else (3, 14, 9)
+                with mock.patch.object(shutil, "which", side_effect=lambda n: None if fake else "/usr/bin/python" + fake), \
+                     mock.patch.object(sys, "version_info", vi):
+                    if fake:
+                        self.assertIn("/usr/bin/python" + fake, ta._venv_python())
+                    else:
+                        with self.assertRaises(RuntimeError) as cm:
+                            ta._venv_python()
+                        self.assertIn("3.10-3.13", str(cm.exception))
