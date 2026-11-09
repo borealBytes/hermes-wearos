@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from conftest import load_plugin
 
 tailscale = load_plugin().tailscale
@@ -54,6 +56,62 @@ def client_returning(payload: bytes | None = None, raise_status: int | None = No
 def test_funnel_attr_present_is_detected():
     ok, detail = client_returning(ACL_WITH_FUNNEL).funnel_attr_present()
     assert ok is True and "funnel" in detail
+
+
+def test_delete_device_resolves_numeric_node_ref():
+    # Measured live 2026-11-09: a real-watch revoke captured the engine-self-reported
+    # NUMERIC nodeId at bootstrap, but DELETE devices/{id} is keyed by the object id —
+    # the numeric call 404s ("404 page not found"), the resolver finds the device by
+    # nodeId, and the retry deletes the object id.
+    client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
+                                     tailnet="example.ts.example")
+    calls: list = []
+    devices = {"devices": [
+        {"id": "nRealId12345CNTRL", "nodeId": 6528413509656018, "name": "wear-demo-watch-2"},
+    ]}
+
+    def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
+                     auth=True, if_match=None, accept=None, want_headers=False):
+        calls.append((method, path))
+        if path.endswith("/devices/6528413509656018"):
+            raise tailscale.TailnetAPIError(404, "404 page not found")
+        return b'{"deleting": true}'
+
+    client._request = fake_request
+    client._get = lambda path: (calls.append(("GETLIST", path)), devices)[1]
+
+    out = client.delete_device("6528413509656018")
+    assert out == {"deleted": "nRealId12345CNTRL", "resolved_from": "6528413509656018"}
+    assert calls[-1] == ("DELETE", "/tailnet/example.ts.example/devices/nRealId12345CNTRL")
+
+
+def test_delete_device_object_id_skips_resolver():
+    client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
+                                     tailnet="example.ts.example")
+    calls: list = []
+
+    def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
+                     auth=True, if_match=None, accept=None, want_headers=False):
+        calls.append((method, path))
+        return b'{"deleting": true}'
+
+    client._request = fake_request
+    client._get = lambda path: pytest.fail("resolver must not run when the id matches")
+    assert client.delete_device("nDirectId999CNTRL") == {"deleted": "nDirectId999CNTRL"}
+
+
+def test_delete_device_unknown_ref_keeps_the_404():
+    client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
+                                     tailnet="example.ts.example")
+
+    def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
+                     auth=True, if_match=None, accept=None, want_headers=False):
+        raise tailscale.TailnetAPIError(404, "404 page not found")
+
+    client._request = fake_request
+    client._get = lambda path: {"devices": [{"id": "nOther", "nodeId": 1, "name": "elsewhere"}]}
+    with pytest.raises(tailscale.TailnetAPIError):
+        client.delete_device("999999999")
 
 
 def test_bare_funnel_attr_is_detected():

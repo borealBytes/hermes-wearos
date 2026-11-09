@@ -250,8 +250,26 @@ class TailnetClient:
 
     def delete_device(self, node_id: str) -> Any:
         """Remove a node from the tailnet (full-revoke, D12). 404 afterwards is the
-        proof of removal. Route measured against the v2 API: DELETE devices/{id}."""
-        self._request("DELETE", f"/tailnet/{self._tn()}/devices/{urllib.parse.quote(node_id)}")
+        proof of removal. Route measured against the v2 API: DELETE devices/{id}.
+
+        The engine self-reports the NUMERIC nodeId (first-session bootstrap), but the
+        device route is keyed by the object id (neaoq…-style) — a live revoke on a real
+        watch 404ed on the numeric ref (2026-11-09). So a bare 404 resolves the ref
+        through the device list (id, nodeId, or hostname) and retries once; unknown
+        refs keep the original 404 (which revoke already reports as a clear step)."""
+        try:
+            self._request("DELETE", f"/tailnet/{self._tn()}/devices/{urllib.parse.quote(node_id)}")
+        except TailnetAPIError as exc:
+            if exc.status != 404:
+                raise
+            want = str(node_id)
+            for d in (self._get("/tailnet/-/devices") or {}).get("devices", []):
+                if want in (str(d.get("id", "")), str(d.get("nodeId", "")),
+                            str(d.get("name", "")), str(d.get("hostname", ""))):
+                    self._request("DELETE",
+                                  f"/tailnet/{self._tn()}/devices/{urllib.parse.quote(str(d['id']))}")
+                    return {"deleted": str(d["id"]), "resolved_from": want}
+            raise
         return {"deleted": node_id}
 
     # -- enrollment keys (the pairing heart) ------------------------------------
