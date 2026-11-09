@@ -1550,7 +1550,10 @@ GGUF, zero-shot clone from ~3 s reference audio. Runtime `neuphonic/neutts` @
 `huggingface.co/neuphonic/neutts-air-q8-gguf/resolve/main/neutts-air-Q8_0.gguf`,
 802,658,528 bytes; the repo is `gated: auto` — a one-time consent click + read token
 (HF_TOKEN or the pane's token box) is required, and the fetch names that cause on
-401/403. `MODEL_SHA256` is PENDING until the first token-carrying install records the
+401/403. Source choice is a user dropdown, not a wall (owner ruling, §19.4 2e):
+official rows first, ungated community re-quants with the ungated NeuCodec port as
+a zero-account tier; every row pins its own byte count and sha-records on first
+fetch. `MODEL_SHA256` is PENDING until the first token-carrying install records the
 observed digest (the installer writes it beside the model; the constant gets pinned in
 a follow-up commit, same pattern as `voiceout.SEED_SHA256`). Runner-up if Air stalls:
 CosyVoice2 (verify the license fine-print first). Off-1.0 speed = stdlib linear
@@ -1563,6 +1566,7 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
 | 2b | `align_parakeet.py` — TDT word timings re-blended onto the script; proportional slots flagged `estimated`; honest `align:"none"` when the STT engine is absent | SHIPPED, tests 8/8 |
 | 2c | `/voice/*` routes on the private lane — node-law auth (WHOIS → bound device, no token), prefs GET/PUT (rev-merge), cards snapshot, card_wav streaming, card_create/delete, synthesize (b64 wav + words) | SHIPPED this push, tests 10/10 (`test_voice_api.py`, real-HTTP lane + fake whois) |
 | 3–7 | desktop pane ▸ Voice-out · watch prefs client · karaoke orb player · recorder UI · PR hygiene | planned |
+| 2e | **source menu** (owner ruling: a dropdown of every known weights source — official gated rows first, ungated community re-quants after): `SOURCES` table + selection persistence, pane dropdown via `GET /voice/tts_sources`, `POST /voice/tts_install {source, token}` (token stored 0600, never echoed), CLI `tts_air.py sources\|install --source`, mirror rows carry their OWN byte pin + ungated NeuCodec port (`bezzam/neucodec-hf`) so a no-account install is possible end-to-end | SHIPPED, tests 5/5 |
 
 ### 19.4 Amendment log (append-only; dated; never rewrite history)
 
@@ -1625,6 +1629,16 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   `test_vad_bridges_conversation_not_coughs`; fixtures and all prior contracts
   untouched; 112/112. Re-measured on the owner's true take: a human-plausible
   213 wpm voiced span.
+- **2026-11-09 (weardev, slice 2e — source menu)** — owner ruling: the weights
+  install is a CHOICE, not a wall. `neuphonic/*` rows are `gated: auto` (one-time
+  consent click + read token, no approval queue); community re-quant mirrors
+  (`MrDrinking`, `mradermacher`) and the `bezzam/neucodec-hf` codec port serve the
+  no-account path today. Trust honesty: mirror files differ from the official
+  GGUF by hundreds of bytes of metadata (their own quantization of the same
+  Apache-2.0 weights), so each row size-pins ITSELF and sha-records on first
+  fetch; the pane labels the active source, `status()` names it, and the mirror
+  tier is never presented as Neuphonic's own file. CLI mirrors the pane exactly
+  (`tts_air.py sources / install --source --token`).
 
 ## Appendix A — Landed slices (build log, newest first)
 

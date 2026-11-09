@@ -50,8 +50,9 @@ class TtsAirTests(unittest.TestCase):
                         or ("g++" in r["error"]))
 
     def test_size_gate_and_pending_sha_honesty(self):
-        old = ta.MODEL_BYTES
-        ta.MODEL_BYTES = 12
+        src = ta.SOURCES["official-q8"]
+        old = src["bytes"]
+        src["bytes"] = 12
         try:
             model = ta._root() / "model" / ta.MODEL_FILE
             model.parent.mkdir(parents=True, exist_ok=True)
@@ -64,20 +65,59 @@ class TtsAirTests(unittest.TestCase):
             self.assertFalse(p["model_verified"])              # PENDING never claims
             self.assertTrue(p["verified_pending"])             # …it verified
             real = hashlib.sha256(b"0" * 12).hexdigest()
-            old_sha = ta.MODEL_SHA256
-            ta.MODEL_SHA256 = real
+            old_sha = src.get("sha256", "PENDING")
+            src["sha256"] = real
             try:
                 p = ta._probe()
                 self.assertTrue(p["model_verified"])
                 self.assertFalse(p["verified_pending"])
             finally:
-                ta.MODEL_SHA256 = old_sha
+                src.pop("sha256") if old_sha == "PENDING" else src.update(sha256=old_sha)
         finally:
-            ta.MODEL_BYTES = old
+            src["bytes"] = old
 
     def test_register_if_ready_false_when_absent(self):
         self.assertFalse(ta.register_if_ready())
         self.assertNotIn("air", vo._SYNTH)                     # refusal stays honest
+
+    # ---------------------------------------------- source menu (owner ruling)
+
+    def test_sources_menu_shape_and_single_selection(self):
+        menu = ta.sources_menu()
+        self.assertGreaterEqual(len(menu), 4)
+        for row in menu:
+            for k in ("id", "label", "bytes", "gated", "selected", "present"):
+                self.assertIn(k, row)
+        self.assertEqual(sum(1 for r in menu if r["selected"]), 1)
+        self.assertTrue([r for r in menu if r["selected"]][0]["id"]
+                        .startswith("official"))               # official first, by default
+
+    def test_select_source_moves_selection_and_rejects_invention(self):
+        r = ta.select_source("mirror-q8-drinking")
+        self.assertTrue(r["ok"])
+        row = [m for m in ta.sources_menu() if m["id"] == "mirror-q8-drinking"][0]
+        self.assertTrue(row["selected"])
+        bad = ta.select_source("mirror-from-a-sketchy-telegram-group")
+        self.assertFalse(bad["ok"])
+        self.assertIn("official-q8", bad["error"])             # the menu names its rows
+
+    def test_mirror_source_clears_the_consent_gate(self):
+        real_which = ta.shutil.which
+        ta.shutil.which = lambda n: "/usr/bin/" + n            # pretend a full toolchain
+        real_thread = ta.threading.Thread
+        ta.threading.Thread = lambda **kw: type("T", (), {"start": lambda s: None,
+                                                          "is_alive": lambda s: False})()
+        try:
+            os.environ["HF_TOKEN"] = ""
+            gated = ta.start(interactive=True, source="official-q8")
+            self.assertFalse(gated["started"])
+            self.assertIn("consent", gated["error"])
+            mirror = ta.start(interactive=True, source="mirror-q8-drinking")
+            self.assertTrue(mirror.get("started"),
+                            f"ungated mirror must not need a token: {mirror}")
+        finally:
+            ta.shutil.which = real_which
+            ta.threading.Thread = real_thread
 
     # ---------------------------------------------- synth seam
 

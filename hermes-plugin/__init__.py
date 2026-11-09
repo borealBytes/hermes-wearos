@@ -522,6 +522,30 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
         if isinstance(r.get("audio"), (bytes, bytearray)):
             r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
         return 200, r
+    if action.startswith("tts_") or action == "engines":
+        try:
+            from . import align_parakeet, tts_air
+        except ImportError:
+            import align_parakeet  # type: ignore[no-redef]
+            import tts_air         # type: ignore[no-redef]
+        if action == "engines":
+            return 200, {"air": tts_air.status(), "aligner": align_parakeet.status()}
+        if action == "tts_sources":
+            return 200, {"sources": tts_air.sources_menu(),
+                         "selected": tts_air._source_id()}
+        if action == "tts_status":
+            return 200, tts_air.status()
+        if action == "tts_install" and method == "POST":
+            tok = str(body.get("token") or "").strip()
+            if tok:                                   # paste box: store 0600, never echo
+                tf = tts_air._root() / "hf_token"
+                tf.parent.mkdir(parents=True, exist_ok=True)
+                tf.write_text(tok)
+                os.chmod(tf, 0o600)
+            r = tts_air.start(interactive=True,
+                              source=str(body.get("source") or "") or None)
+            return 200, r
+        return 405, {"error": "GET tts_sources / GET tts_status / POST tts_install"}
     return 404, {"error": "not found"}
 
 

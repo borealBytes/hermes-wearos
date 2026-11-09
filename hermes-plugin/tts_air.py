@@ -30,6 +30,7 @@ layer (slice 2c), not here.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import struct
@@ -57,6 +58,50 @@ OUTPUT_RATE = 24_000                                   # neucodec is 50 Hz → 2
 BUILD_TIMEOUT = 60 * 60                                # torch wheel + llama-cpp build
 SYNTH_TIMEOUT = 180                                    # a whole paragraph on weak CPUs
 CODEC_REPO = "neuphonic/neucodec"                      # PyTorch codec (encode+decode)
+
+# ---------------------------------------------------------------- source menu
+# Owner ruling 2026-11-09: every weights source we know of ships as a CHOICE —
+# official first, ungated mirrors / community re-quants after, so users can pick
+# their own trust tradeoff (consent+token for Neuphonic truth, or a hash-pinned
+# mirror with no account). Every row is provenance-honest in the pane, and every
+# download — mirror or official — is size-gated and sha-recorded (rule 17).
+# Community re-quants differ from the official file by a few hundred bytes of
+# GGUF metadata (their own quantization of the same Apache-2.0 weights), so each
+# row pins its OWN byte count; SHAs record on first verified fetch like MODEL_SHA256.
+SOURCES = {
+    "official-q8": {
+        "label": "Official Q8_0 — Neuphonic (HF consent + token, one-time)",
+        "repo": "neuphonic/neutts-air-q8-gguf", "file": "neutts-air-Q8_0.gguf",
+        "bytes": 802_658_528, "gated": True,
+        "codec": {"kind": "repo", "repo": CODEC_REPO},   # gated too; token rides
+    },
+    "official-q4": {
+        "label": "Official Q4_0 — Neuphonic (half the disk, HF consent + token)",
+        "repo": "neuphonic/neutts-air-q4-gguf", "file": "neutts-air-Q4_0.gguf",
+        "bytes": 0,        # gated: anonymous HEAD 401s; size gates on first token'd fetch
+        "gated": True,
+        "codec": {"kind": "repo", "repo": CODEC_REPO},
+    },
+    "mirror-q8-drinking": {
+        "label": "Mirror Q8_0 — MrDrinking re-quant (no account, ungated)",
+        "repo": "MrDrinking/neutts-air-Q8_0-GGUF", "file": "neutts-air-q8_0.gguf",
+        "bytes": 802_658_880, "gated": False,
+        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
+                  "files": ("config.json", "model.safetensors",
+                            "preprocessor_config.json"),
+                  "bytes": 2_519_855_456},               # HF-port codec, ungated
+    },
+    "mirror-q8-mradermacher": {
+        "label": "Mirror Q8_0 — mradermacher re-quant (no account, ungated)",
+        "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q8_0.gguf",
+        "bytes": 802_659_296, "gated": False,
+        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
+                  "files": ("config.json", "model.safetensors",
+                            "preprocessor_config.json"),
+                  "bytes": 2_519_855_456},
+    },
+}
+DEFAULT_SOURCE = "official-q8"
 
 STATUS = threading.Lock()
 _state: dict = {"phase": "idle", "detail": "", "percent": 0, "log": [],
@@ -106,9 +151,10 @@ def _hf_token() -> str:
     return ""
 
 
-def _size_ok(path: Path) -> bool:
+def _size_ok(path: Path, nbytes: int = MODEL_BYTES) -> bool:
     try:
-        return path.stat().st_size == MODEL_BYTES
+        return (nbytes > 0 and path.stat().st_size == nbytes) or \
+               (nbytes == 0 and path.is_file())      # size-unknown gated rows: presence only
     except OSError:
         return False
 
@@ -124,23 +170,69 @@ def _verify(path: Path) -> bool:
         return False
 
 
+def _source_id() -> str:
+    """The installed/selected source row, DEFAULT_SOURCE unless source.json says
+    otherwise (a pane dropdown choice or --source flag)."""
+    try:
+        sid = json.loads((_root() / "source.json").read_text()).get("source", "")
+        return sid if sid in SOURCES else DEFAULT_SOURCE
+    except (OSError, ValueError):
+        return DEFAULT_SOURCE
+
+
+def _source() -> tuple:
+    sid = _source_id()
+    s = SOURCES[sid]
+    return sid, dict(s, url=f"https://huggingface.co/{s['repo']}/resolve/main/{s['file']}")
+
+
+def select_source(source_id: str) -> dict:
+    if source_id not in SOURCES:
+        return {"ok": False, "error": f"unknown source {source_id!r} — choose one of: "
+                + ", ".join(SOURCES)}
+    _root().mkdir(parents=True, exist_ok=True)
+    (_root() / "source.json").write_text(json.dumps({"source": source_id}))
+    return {"ok": True, "source": source_id}
+
+
+def sources_menu() -> list:
+    """The pane dropdown: every known weights row + honest state."""
+    root, sid = _root(), _source_id()
+    menu = []
+    for k, s in SOURCES.items():
+        have = _size_ok(root / "model" / s["file"], s["bytes"])
+        menu.append({"id": k, "label": s["label"], "bytes": s["bytes"],
+                     "gated": s["gated"], "selected": k == sid,
+                     "present": have})
+    return menu
+
+
 def _probe() -> dict:
     root = _root()
+    sid, s = _source()
     venv_py = root / "venv" / "bin" / "python"
-    model = root / "model" / MODEL_FILE
+    model = root / "model" / s["file"]
     have_venv = venv_py.is_file() and (root / "venv" / ".neutts-installed").is_file()
-    have_model = model.is_file() and _size_ok(model)
-    pinned = MODEL_SHA256 != "PENDING"
-    verified = have_model and (pinned and _verify(model))
+    have_model = _size_ok(model, s["bytes"])
+    pin = s.get("sha256", "PENDING")
+    recorded = root / "model" / (s["file"] + ".observed-sha256")
+    if pin == "PENDING" and recorded.is_file():
+        pin = recorded.read_text().strip()
+    verified = have_model and pin != "PENDING" and _verify_at(model, pin)
     return {"installed": have_venv and have_model,
             "venv": have_venv, "model": have_model,
+            "source": sid, "sources": sources_menu(),
             "model_verified": verified,
-            "verified_pending": have_model and not pinned,
-            "model_size_expected": MODEL_BYTES,
+            "verified_pending": have_model and pin == "PENDING",
+            "model_size_expected": s["bytes"],
             "dir": str(root),
             "hf_token": bool(_hf_token()),
             "toolchain": bool(shutil.which("cmake") and shutil.which("g++")
                               and shutil.which("git"))}
+
+
+def _verify_at(path: Path, sha: str) -> bool:
+    return sha == "PENDING" or _sha_of(path) == sha
 
 
 def status() -> dict:
@@ -176,22 +268,27 @@ def pinned_hint() -> bool:
     return MODEL_SHA256 != "PENDING"
 
 
-def start(interactive: bool = True) -> dict:
+def start(interactive: bool = True, source: Optional[str] = None) -> dict:
     if not interactive:
         return {"started": False, "error": "no terminal to approve the install "
                                            "(rule 12): use the Wear Kit pane or run "
                                            "hermes watch setup --fix tts"}
+    if source:
+        picked = select_source(source)
+        if not picked.get("ok"):
+            return {"started": False, "error": picked["error"]}
     probe = _probe()
     if probe["installed"] and (probe["model_verified"] or probe["verified_pending"]):
         return {"started": False, "error": "already installed"}
     if not probe["toolchain"]:
         return {"started": False, "error": "needs git, cmake and g++ (apt install "
                                            "cmake build-essential git)"}
-    if not probe["hf_token"]:
+    if SOURCES[probe["source"]]["gated"] and not probe["hf_token"]:
         return {"started": False,
                 "error": "the model lives behind HF consent (gated: auto): accept the "
-                         "terms at https://huggingface.co/" + MODEL_REPO + " and set "
-                         "HF_TOKEN or paste a read token into the pane box"}
+                         "terms at https://huggingface.co/" + SOURCES[probe["source"]]["repo"]
+                         + " and set HF_TOKEN or paste a read token into the pane box "
+                         "(or pick an ungated mirror source — see the sources list)"}
     with STATUS:
         if _state["phase"] in ("venv", "runtime", "model"):
             return {"started": False, "error": "an install is already running"}
@@ -228,7 +325,8 @@ def _run() -> None:
     try:
         root.mkdir(parents=True, exist_ok=True)
         venv = root / "venv"
-        model = root / "model" / MODEL_FILE
+        sid, s = _source()
+        model = root / "model" / s["file"]
         if not (venv / "bin" / "python").is_file():
             _set("venv", "creating the private venv")
             subprocess.run([sys.executable, "-m", "venv", str(venv)],
@@ -238,18 +336,29 @@ def _run() -> None:
             _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
                        "--no-input", "-q", PKG_SPEC], "runtime")
             (venv / ".neutts-installed").write_text(PKG_SPEC)
-        if not _size_ok(model):
-            _set("model", f"downloading {MODEL_FILE} (~803 MB)")
-            _download(MODEL_URL, model)
-            if not _size_ok(model):
+        if not _size_ok(model, s["bytes"]):
+            _set("model", f"downloading {s['file']} "
+                          f"(~{max(1, s['bytes'] // 1_000_000)} MB)")
+            _download(s["url"], model, s["bytes"])
+            if not _size_ok(model, s["bytes"]):
                 model.unlink(missing_ok=True)
                 raise RuntimeError("model size mismatch after download — kept nothing")
-            if not pinned_hint():
-                (model.parent / (MODEL_FILE + ".observed-sha256")).write_text(
-                    _sha_of(model))                     # the pin lands from here
-            elif not _verify(model):
+            observed = _sha_of(model)
+            (model.parent / (s["file"] + ".observed-sha256")).write_text(observed)
+            if s.get("sha256", "PENDING") != "PENDING" and observed != s["sha256"]:
                 model.unlink(missing_ok=True)
                 raise RuntimeError("model failed its SHA-256 check — kept nothing")
+        if s["codec"]["kind"] == "port":
+            cdir = root / "codec"
+            cbig = s["codec"]["bytes"]
+            if not _size_ok(cdir / "model.safetensors", cbig):
+                _set("codec", "downloading the ungated NeuCodec port (~2.5 GB)")
+                for f in s["codec"]["files"]:
+                    _download(f"https://huggingface.co/{s['codec']['repo']}"
+                              f"/resolve/main/{f}", cdir / f,
+                              cbig if f.endswith(".safetensors") else 0)
+            if not _size_ok(cdir / "model.safetensors", cbig):
+                raise RuntimeError("codec port download size mismatch — kept nothing")
         write_runner()
         _set("done", "installed — first synth warms the codec weights (same token)", 100)
     except Exception as exc:                        # never raise out of the worker
@@ -278,17 +387,17 @@ def _run_proc(argv: list, phase: str) -> None:
                            f"{out[-300:]}")
 
 
-def _download(url: str, dest: Path) -> None:
+def _download(url: str, dest: Path, nbytes: int = 0) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     headers = {"User-Agent": "hermes-wearkit/0.2"}
     tok = _hf_token()
-    if tok:
+    if tok and "huggingface.co" in url:
         headers["Authorization"] = "Bearer " + tok
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as fh:
-            total = int(resp.headers.get("Content-Length") or MODEL_BYTES)
+            total = int(resp.headers.get("Content-Length") or nbytes or MODEL_BYTES)
             done = 0
             while True:
                 chunk = resp.read(1 << 20)
@@ -326,6 +435,7 @@ def main():
     ap.add_argument("--ref-text", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--codec", default="neuphonic/neucodec")
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top-k", type=int, default=50)
     a = ap.parse_args()
@@ -334,7 +444,7 @@ def main():
     import torch
     from neutts import NeuTTS
     tts = NeuTTS(backbone_repo=a.model, backbone_device="cpu",
-                 codec_repo="neuphonic/neucodec", codec_device="cpu", seed=a.seed)
+                 codec_repo=a.codec, codec_device="cpu", seed=a.seed)
     if os.path.isfile(codes_path):
         ref_codes = torch.load(codes_path, weights_only=True)
     else:
@@ -361,16 +471,21 @@ def write_runner() -> Path:
 def _synth_argv(text: str, ref_wav: Path, ref_text: str, out_wav: Path) -> list:
     """Fixed argv, no shell; text/ref ride FILES, so nothing user-controlled is a
     flag boundary and no quoting trap exists."""
+    _, s = _source()
     tf = out_wav.with_suffix(".txt")
     tf.parent.mkdir(parents=True, exist_ok=True)
     tf.write_text(text, encoding="utf-8")
     rf = out_wav.with_suffix(".ref.txt")
     rf.write_text(ref_text, encoding="utf-8")
-    return [str(_root() / "venv" / "bin" / "python"),
+    codec = s["codec"]
+    argv = [str(_root() / "venv" / "bin" / "python"),
             str(_root() / "air_runner.py"),
-            "--model", str(_root() / "model" / MODEL_FILE),
+            "--model", str(_root() / "model" / s["file"]),
+            "--codec", str(_root() / "codec") if codec["kind"] == "port"
+                       else codec["repo"],
             "--text-file", str(tf), "--ref-wav", str(ref_wav),
             "--ref-text", str(rf), "--out", str(out_wav)]
+    return argv
 
 
 def _time_scale(pcm16: bytes, factor: float) -> bytes:
@@ -466,3 +581,39 @@ def register_if_ready() -> bool:
     _voiceout().register_synth("air", synth)
     write_runner()
     return True
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Hermes Wear Kit voice-out engine")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status")
+    p = sub.add_parser("sources")
+    i = sub.add_parser("install")
+    i.add_argument("--source", default=None, help="source id from `sources`")
+    i.add_argument("--token", default=None,
+                   help="HF read token (validated, stored 0600; gated sources only)")
+    a = ap.parse_args()
+    if a.cmd == "status":
+        print(json.dumps(status(), indent=2))
+    elif a.cmd == "sources":
+        for row in sources_menu():
+            mark = ">" if row["selected"] else " "
+            state = "present" if row["present"] else ("gated" if row["gated"] else "ready")
+            size = f"{row['bytes'] / 1_000_000:.0f} MB" if row["bytes"] else "size-pending"
+            print(f"{mark} {row['id']:26} {size:>11}  [{state}]  {row['label']}")
+    else:
+        if a.token:
+            (_root()).mkdir(parents=True, exist_ok=True)
+            tf = _root() / "hf_token"
+            tf.write_text(a.token.strip())
+            os.chmod(tf, 0o600)
+        r = start(interactive=True, source=a.source)
+        print(r)
+        if r.get("started"):
+            while _worker and _worker.is_alive():
+                with STATUS:
+                    print(f"  {_state['phase']}: {_state['detail']}")
+                time.sleep(5)
+            with STATUS:
+                print("final:", _state["phase"], _state.get("error", ""))
