@@ -28,6 +28,12 @@ PYV="$(command -v python3.13 || command -v python3.12 || command -v python3.11)"
 "$PYV" -m venv "$W/venv"
 "$W/venv/bin/pip" install -q --upgrade pip wheel
 "$W/venv/bin/pip" install -q "neutts[all] @ git+https://github.com/neuphonic/neutts@ac69851f28fc63a487917e7c2e27f0d75c759cba" 2>&1 | tail -3
+# measured 2026-11-09: today's fresh resolve pairs torchao 0.12+ with torchtune
+# 0.6.1, which lost torchao.dtypes.nf4tensor -> the codec decoder import dies.
+# 0.11.0 imports clean (neucodec's >=0.12 metadata is satisfied-in-fact, proven
+# by the synth below, not by pip's resolver).
+"$W/venv/bin/pip" install -q "torchao==0.11.0" 2>&1 | tail -1
+"$W/venv/bin/python" -c "import torchtune; from torchao.dtypes.nf4tensor import NF4Tensor; from neutts import NeuTTS; print('IMPORT-CHAIN-OK')"
 
 echo "== synth: sales narration, owner voice =="
 "$W/venv/bin/python" - "$W" <<'PY'

@@ -428,6 +428,17 @@ def _run() -> None:
             _set("runtime", "pip install (torch CPU wheel + llama-cpp build, minutes)")
             _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
                        "--no-input", "-q", PKG_SPEC], "runtime")
+            # measured 2026-11-09: fresh resolves pair torchao>=0.12 with
+            # torchtune 0.6.1, which lost torchao.dtypes.nf4tensor — the codec
+            # decoder import dies at the FIRST SYNTH, the worst possible place.
+            # Pin the importable version and PROVE the chain imports before we
+            # call it installed (fail at install, never at the sound test).
+            _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
+                       "--no-input", "-q", "torchao==0.11.0"], "runtime")
+            _run_proc([str(venv / "bin" / "python"), "-c",
+                       "import torchtune; "
+                       "from torchao.dtypes.nf4tensor import NF4Tensor; "
+                       "from neutts import NeuTTS"], "runtime")
             (venv / ".neutts-installed").write_text(PKG_SPEC)
         if not _size_ok(model, s["bytes"]):
             _set("model", f"downloading {s['file']} "
