@@ -451,6 +451,80 @@ def _lane_lookup(token: str) -> Optional[str]:
     return _engine().device_lookup(token)
 
 
+def _voiceout_register_engines() -> None:
+    """Best-effort engine/aligner registration at lane start: each adapter
+    self-probes and only registers when installed+verified (or honestly
+    size-verified-pending). Absent engines leave voiceout's refusal intact."""
+    try:
+        from . import align_parakeet, tts_air
+    except ImportError:              # flat loader outside a package context
+        import align_parakeet        # type: ignore[no-redef]
+        import tts_air               # type: ignore[no-redef]
+    for mod in (tts_air, align_parakeet):
+        try:
+            mod.register_if_ready()
+        except Exception:            # engine problems never block the lane
+            logger.debug("voice engine %s not registered", mod.__name__,
+                         exc_info=True)
+
+
+def _lane_voice(action: str, method: str, body: dict, node: dict,
+                query: dict) -> tuple:
+    """The voice-out surface (SPEC §19). Node law first: the WHOIS-verified node
+    must be bound to a paired device — no token, but never just 'a tailnet peer'
+    either (a stranger's node on the same tailnet gets 403)."""
+    try:
+        from . import voiceout
+    except ImportError:
+        import voiceout  # type: ignore[no-redef]
+    eng = _engine()
+    nid = str(node.get("node_id") or "")
+    bound = next((name for name, d in eng.devices().items()
+                  if nid and str(d.get("node_id") or "") == nid), None)
+    if bound is None:
+        return 403, {"error": "tailnet node is not bound to a paired device"}
+    dev = eng.device(bound) or {}
+    if action == "prefs":
+        if method == "GET":
+            return 200, voiceout.read_prefs()
+        if method in ("PUT", "POST"):
+            remote = body.get("prefs")
+            if not isinstance(remote, dict):
+                remote = body
+            return 200, voiceout.merge_prefs(remote)
+        return 405, {"error": "GET or PUT"}
+    if action == "cards":
+        return 200, voiceout.status()
+    if action == "card_wav":
+        cid = re.sub(r"[^a-z0-9-]", "",
+                     str((query.get("card_id") or [""])[0]))[:64]
+        path = voiceout._root() / voiceout.CARDS_DIR / f"{cid}.wav"
+        if not cid or not path.is_file():
+            return 404, {"error": "no such card"}
+        return 200, {"_raw": path.read_bytes(), "_ctype": "audio/wav"}
+    if action == "card_create":
+        import base64
+        wav = base64.b64decode(str(body.get("wav_b64") or ""), validate=True)
+        card = voiceout.create_card(
+            wav, str(body.get("label") or "watch card")[:48],
+            source=str(body.get("source") or "watch-record")[:24],
+            transcript=body.get("transcript") if isinstance(
+                body.get("transcript"), str) else None)
+        return 200, card
+    if action == "card_delete":
+        return 200, voiceout.delete_card(
+            re.sub(r"[^a-z0-9-]", "", str(body.get("card_id") or ""))[:64])
+    if action == "synthesize":
+        import base64
+        r = voiceout.synthesize(str(body.get("text") or "")[:4000],
+                                str(body.get("agent") or dev.get("profile") or ""),
+                                want_words=bool(body.get("words", True)))
+        if isinstance(r.get("audio"), (bytes, bytearray)):
+            r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
+        return 200, r
+    return 404, {"error": "not found"}
+
+
 def ensure_private_lane() -> bool:
     """Bind the private lane to the gateway's FIRST tailnet IP (never 0.0.0.0 — the
     scanner and the doctrine agree). No tailscaled → no lane → pairing can't finish:
@@ -464,7 +538,9 @@ def ensure_private_lane() -> bool:
                                                "(tailscaled down or logged out)"}
         return False
     backend = private_api.PrivateBackend(private_api._whois_local, _lane_session,
-                                         _lane_events, _lane_ack, _lane_forget)
+                                         _lane_events, _lane_ack, _lane_forget,
+                                         voice=_lane_voice)
+    _voiceout_register_engines()
     for host in ips:
         try:
             private_api.start_server(host, _private_port(), backend, _lane_lookup)

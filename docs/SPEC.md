@@ -1557,7 +1557,7 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
 | 1 | `voiceout.py` — prefs rev/merge, measured cards, seed fetch, tier-aware `synthesize()` | SHIPPED `493eb2b`, tests 8/8 |
 | 2a | `tts_air.py` — pinned installer, subprocess runner, time-scale, honest probe | SHIPPED this push, tests 11/11 |
 | 2b | `align_parakeet.py` — TDT word timings re-blended onto the script; proportional slots flagged `estimated`; honest `align:"none"` when the STT engine is absent | SHIPPED, tests 8/8 |
-| 2c | `/voice/*` routes in `private_api.py` (prefs, cards, synthesize; Tailscale-node auth) | planned |
+| 2c | `/voice/*` routes on the private lane — node-law auth (WHOIS → bound device, no token), prefs GET/PUT (rev-merge), cards snapshot, card_wav streaming, card_create/delete, synthesize (b64 wav + words) | SHIPPED this push, tests 10/10 (`test_voice_api.py`, real-HTTP lane + fake whois) |
 | 3–7 | desktop pane ▸ Voice-out · watch prefs client · karaoke orb player · recorder UI · PR hygiene | planned |
 
 ### 19.4 Amendment log (append-only; dated; never rewrite history)
@@ -1588,6 +1588,28 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   host-module version drift, python3.14/pytest9 surface). Reproduces with all
   voice-out work stashed at HEAD~; not introduced here; owner's OpenCode rig owns
   that floor. Voice-out suites run standalone (`python3 tests/test_*.py`).
+- **2026-11-09 (weardev, slice 2c — CORRECTS the env note above)** — that note's
+  diagnosis was wrong and the floor is fixable on this box. Both failures were the
+  TEST RUNNER, not the code: (1) pytest inherited `TMPDIR` inside the real
+  `~/.hermes` tree, so the sandboxed `HERMES_HOME` resolved its root UP to the real
+  one and the cron-name test read the machine's live jobs store — run with
+  `TMPDIR=/tmp`; (2) the grant-law test needs `ruamel` + the host modules — run with
+  the Hermes-managed interpreter and its environment venv on `PYTHONPATH` (keep the
+  inherited `PYTHONPATH`, don't overwrite it), e.g.
+  `TMPDIR=/tmp PYTHONPATH=tests:$PYTHONPATH <hermes-py> -m pytest tests/` →
+  **111 passed**. No plugin-code fix was needed for either.
+- **2026-11-09 (weardev, slice 2c)** — never add `hermes-plugin/tests/__init__.py`:
+  the package marker makes pytest import conftest twice (rootdir vs PYTHONPATH), the
+  plugin module is exec'd twice, and `test_plugin_api`'s `is`-identity resolver test
+  fails on same-file/different-module. The suite ran green 74/74 at `e24bd5a` with
+  no marker; this branch had it wrong for a beat and removed it.
+- **2026-11-09 (weardev, slice 2c)** — the `/voice/*` identity law: WHOIS must
+  resolve AND the node must be BOUND to a paired device (first-session capture).
+  An on-tailnet stranger's node gets 403, not the token 401 — the surface is
+  credential-bearing audio, and no bearer exists yet at first sync (the watch can
+  replay prefs before it ever has a session token). `synthesize` with no engine is
+  a 200 `{ok:false}` naming the fix; a registered-but-crashed engine is a 503
+  (transient); neither is ever a silent empty string.
 
 ## Appendix A — Landed slices (build log, newest first)
 

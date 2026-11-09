@@ -1,23 +1,23 @@
 # HANDOFF — Wear Kit, voice-out milestone (updated at every slice boundary)
 
-**As of:** 2026-11-09 20:19 EST · **From:** research desk (planning partner) · **To:** weardev desk
-**You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §14, which loses only to a fresher `git fetch`.
+**As of:** 2026-11-09 (late) · **From:** weardev desk (slices 2a–2c shipped) · **To:** next session of weardev
+**You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
 ## Where things stand (verified, not claimed)
 
 - **Repo:** `borealBytes/hermes-wearos` (monorepo — plugin code edits happen here; `hermes-wearos-plugin` mirror is CI-only, zero human commits).
-- **This worktree:** branch `feat/voiceout` @ `2b16c8e` (pushed), base = PR #6 head `fix/nous-review-151546` @ `01ef29d` — checked today: base contains `feat/hermes-plugin`, so the whole plugin line is in your floor.
-- **PR #8:** draft, open — voice-out milestone lands as slices here.
-- **Issue #7:** the voice-out spec (owner rulings verbatim inside). Planning art: `docs/mocks/voiceout/` (from `docs/voiceout-mocks`).
-- **Slice 1 SHIPPED:** `hermes-plugin/voiceout.py` (382 lines) + `hermes-plugin/tests/test_voiceout.py` (8 tests, stdlib, no network — all pass: `python3 hermes-plugin/tests/test_voiceout.py`). Delivered: rev'd gateway-canonical prefs (`voiceout.yaml`, higher-rev-wins merge), card store with **measured** `ref_rate` (VAD speech-span / 17-word scripted prompt), 3 s floor / 60 s ceiling, hash-pinned 10-voice seed pack (nothing binary committed), tier-aware `synthesize()` that **refuses honestly** until an engine registers.
-- **Spec discipline SHIPPED:** `docs/SPEC.md` §14 (incl. §14.4 amendment log — append-only, dated, never rewrite), `CONTRIBUTING.md` "The spec-and-sync discipline" (conflict classification table), `AGENTS.md` §8 map. A slice without its SPEC update is not shipped.
+- **This worktree:** branch `feat/voiceout`; base merged through PR #6 head `e24bd5a` + `feat/hermes-plugin` `a417853`-era tip. PR #8 stays draft until slices 3–7 land.
+- **Slice 1 SHIPPED** (`voiceout.py` + 8 tests — see the 2026-11-09 research-desk notes below the line).
+- **Slice 2a SHIPPED** `hermes-plugin/tts_air.py` (468 lines): NeuTTS Air pinned adapter — private venv install (`stt_install.py` pattern), size-gated gated-HF fetch (802,658,528 B; consent+token named on 401/403), subprocess runner, stdlib linear time-scale, `MODEL_SHA256="PENDING"` (first token-carrying install records it), `register_if_ready()`. Tests 11/11 (`test_tts_air.py`, stdlib unittest — run `python3 tests/test_tts_air.py`).
+- **Slice 2b SHIPPED** `hermes-plugin/align_parakeet.py` (252 lines): word timestamps from the Parakeet/CTA build `stt_install.py` already produces (`timestamps="word"`, pin `5700f127`); recognized rows re-blended onto the SCRIPT, dropped words get proportional slots flagged `"align":"estimated"`; absent engine → `align:"none"` (reported, never silent). Tests 8/8.
+- **Slice 2c SHIPPED** `/voice/*` on the private lane: `private_api.py` gained the transport (node-law gate, `_read_body(cap)`, `_handle_voice`, PUT verb, raw-audio streaming), `__init__.py` gained `_lane_voice` (prefs GET/PUT with rev-merge · cards snapshot · card_wav · card_create/delete · synthesize→b64) and `_voiceout_register_engines()` at lane start. Identity = WHOIS-verified node **bound to a paired device**; no bearer anywhere on this surface. Tests 10/10 (`test_voice_api.py`, real HTTP + fake whois).
+- **Full pytest suite on this box: 111 passed** (was 2 red — fixed by RUNNER hygiene, not code: `TMPDIR=/tmp`, Hermes-managed interpreter, keep inherited `PYTHONPATH`). Recipe in SPEC §19.4; also: do NOT add `hermes-plugin/tests/__init__.py` (double-conftest breaks the module-identity test).
 
-## Your next slice (2): engine adapter + aligner + routes
+## Your next slice (3): desktop pane ▸ Voice-out
 
-1. **`hermes-plugin/tts_air.py`** — NeuTTS Air adapter (Apache-2.0, GGUF). Follow `stt_install.py`'s pattern exactly: hash-pinned model download at first use, `install()`/`status()` for the pane's gated install button, `register_engine()` into `voiceout.py`. Runner-up if Air stalls: CosyVoice2 (verify license first).
-2. **Aligner** — reuse the already-installed Parakeet/CTA **forced-align** capability (`transcribe.py` pattern) to emit `words: [{text, start, end}]`; when unavailable degrade to whole-sentence karaoke (issue #7 tier rule: gateway=words, watch=sentence — degradation is a *reported* mode, never a silent lie).
-3. **`hermes-plugin/private_api.py`** — add `/voice/*` routes (GET/PUT prefs, card list/create/delete, synthesize → wav + words.json). **Shared file:** `git fetch origin && git merge origin/fix/nous-review-151546 && git merge origin/feat/hermes-plugin` BEFORE editing; classify any conflict per CONTRIBUTING (upstream-invalidate / interleave / my-mistake); re-run both sides' tests after.
-4. Tests for adapter-degraded-mode (no model → refusal with reason) and route auth (Tailscale node, not token); SPEC §14.2 status flips ✅ with amendment-log line; commit with the docs in the SAME commit.
+Rule 18: sidebar pane, mock first, real source. Art: `docs/mocks/voiceout/` (issue #7 attachments). `desktop/plugin.js` is a SHARED file — fetch/merge both upstream branches before touching, classify conflicts per CONTRIBUTING. The pane already has the gated-install pattern (STT engine section) to copy: `tts_air.install()/status()` drive the Install button + progress; card list = `GET /voice/cards` mirror (or direct `voiceout.status()` in-pane); prefs edits PUT with `rev+1`.
+
+Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karaoke orb player (ring never animates; tap = stop), 6 = recorder UI (3 s floor message comes from the gateway — show it verbatim), 7 = PR hygiene: MEDIA proof on #8, SPEC flips, HANDOFF update.
 
 ## Read first (in this order)
 
