@@ -3,7 +3,7 @@
 # + HF-port codec, and synthesize the sales narration from the owner's card.
 # Everything lands in /opt/wearos-out2 as durable artifacts + a sha manifest.
 set -euo pipefail
-OUT=/opt/wearos-out2; W=/opt/wearos-mirror; mkdir -p "$W/codec" "$OUT"
+OUT=/opt/wearos-out2; W=$OUT/work; mkdir -p "$W/codec" "$OUT"   # work lives UNDER the mount: retries never re-download
 export TMPDIR=/tmp HF_HUB_DISABLE_TELEMETRY=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 echo "== toolchain =="
@@ -12,18 +12,20 @@ apt-get install -y -qq espeak-ng cmake g++ >/dev/null 2>&1 || command -v espeakn
 command -v espeak-ng && command -v cmake && command -v g++
 
 echo "== backbone (mirror, ungated) =="
-curl -sSL -o "$W/model.gguf" \
-  "https://huggingface.co/MrDrinking/neutts-air-Q8_0-GGUF/resolve/main/neutts-air-q8_0.gguf"
+[ -s "$W/model.gguf" ] || curl -sSL -o "$W/model.gguf" \
+  "https://huggingface.co/mradermacher/neutts-air-GGUF/resolve/main/neutts-air.Q8_0.gguf"   # the shipping DEFAULT row
 ls -la "$W/model.gguf"
 
 echo "== codec (HF-port mirror, ungated) =="
 for F in config.json model.safetensors preprocessor_config.json; do
-  curl -sSL -o "$W/codec/$F" "https://huggingface.co/bezzam/neucodec-hf/resolve/main/$F"
+  [ -s "$W/codec/$F" ] || curl -sSL -o "$W/codec/$F" "https://huggingface.co/bezzam/neucodec-hf/resolve/main/$F"
 done
 ls -la "$W/codec"
 
 echo "== venv + pinned runtime =="
-python3 -m venv "$W/venv"
+PYV="$(command -v python3.13 || command -v python3.12 || command -v python3.11)"   # neutts pin: >=3.10,<3.14
+[ -n "$PYV" ] || { echo "no py 3.10-3.13 in image"; exit 1; }
+"$PYV" -m venv "$W/venv"
 "$W/venv/bin/pip" install -q --upgrade pip wheel
 "$W/venv/bin/pip" install -q "neutts[all] @ git+https://github.com/neuphonic/neutts@ac69851f28fc63a487917e7c2e27f0d75c759cba" 2>&1 | tail -3
 
