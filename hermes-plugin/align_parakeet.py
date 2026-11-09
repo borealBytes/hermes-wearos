@@ -98,6 +98,20 @@ def _stt_root() -> Path:
     return _root() / "stt"          # exactly where stt_install.py builds
 
 
+def _model_path() -> Path:
+    """The quant the USER chose (stt_install selection), not a frozen filename —
+    an engine installed on Q4 aligns karaoke on Q4. Falls back to the day-one
+    Q8 file only for pre-menu installs (upgrade-in-place sees the old name)."""
+    try:
+        try:
+            from . import stt_install
+        except ImportError:
+            import stt_install  # type: ignore[no-redef]
+        return stt_install.model_path()
+    except Exception:
+        return _stt_root() / "models" / "parakeet-unified-en-0.6b-Q8_0.gguf"
+
+
 def _voiceout():
     try:
         from . import voiceout
@@ -112,7 +126,7 @@ def engine_ready() -> bool:
     import transcribe_cpp here — rule 10 keeps numpy out of the gateway process."""
     root = _stt_root()
     lib = root / "transcribe-src" / "build-shared" / "src" / "libtranscribe.so"
-    model = root / "models" / "parakeet-unified-en-0.6b-Q8_0.gguf"
+    model = _model_path()
     venv_py = root / "venv" / "bin" / "python"
     return lib.is_file() and model.is_file() and venv_py.is_file()
 
@@ -135,7 +149,7 @@ def align(wav_bytes: bytes, rate: int, text: str) -> list:
         wav_bytes = _wrap_pcm(wav_bytes, rate)
     venv_py = _stt_root() / "venv" / "bin" / "python"
     lib = _stt_root() / "transcribe-src" / "build-shared" / "src" / "libtranscribe.so"
-    model = _stt_root() / "models" / "parakeet-unified-en-0.6b-Q8_0.gguf"
+    model = _model_path()
     runner = write_runner()
     tmp = _stt_root() / "align_in.wav"
     tmp.write_bytes(wav_bytes)

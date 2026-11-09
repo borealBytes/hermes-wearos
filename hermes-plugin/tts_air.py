@@ -121,6 +121,11 @@ SOURCES = {
 DEFAULT_SLOTS = {"gateway": "community-q8", "watch": "community-q4"}
 SLOTS = ("gateway", "watch")
 
+try:
+    from . import weight_cache as _wc          # package context (the plugin host)
+except ImportError:
+    _wc = None                             # standalone CLI: lazy import on first use
+
 STATUS = threading.Lock()
 _SECRETS = None      # register() injects: fn(key)->str|None reading declared secrets
 _state: dict = {"phase": "idle", "detail": "", "percent": 0, "log": [],
@@ -306,7 +311,10 @@ def preview() -> dict:
             f"; SHA-256 check against {s.get('sha256', MODEL_SHA256)[:16]}…"
             if s.get("sha256", MODEL_SHA256) != "PENDING" else
             " (checksum pin lands with the first verified fetch)"),
-        f"Everything lands in {root} (private venv + cache, nothing system-wide)",
+        f"Everything lands in {root} (private venv + weights cache, nothing system-wide)",
+        "Re-install and slot switches reuse the cache: bytes already on disk are "
+        "hash-checked against the remote (HEAD size + etag) and hardlinked, never "
+        "re-fetched; a half download RESUMES with a Range request",
     ]
     try:
         _venv_python()
@@ -424,7 +432,8 @@ def _run() -> None:
         if not _size_ok(model, s["bytes"]):
             _set("model", f"downloading {s['file']} "
                           f"(~{max(1, s['bytes'] // 1_000_000)} MB)")
-            _download(s["url"], model, s["bytes"])
+            _download(s["url"], model, s["bytes"],
+                      s.get("sha256", MODEL_SHA256))
             if not _size_ok(model, s["bytes"]):
                 model.unlink(missing_ok=True)
                 raise RuntimeError("model size mismatch after download — kept nothing")
@@ -472,33 +481,24 @@ def _run_proc(argv: list, phase: str) -> None:
                            f"{out[-300:]}")
 
 
-def _download(url: str, dest: Path, nbytes: int = 0) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    headers = {"User-Agent": "hermes-wearkit/0.2"}
-    tok = _hf_token()
-    if tok and "huggingface.co" in url:
-        headers["Authorization"] = "Bearer " + tok
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as fh:
-            total = int(resp.headers.get("Content-Length") or nbytes or MODEL_BYTES)
-            done = 0
-            while True:
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                fh.write(chunk)
-                done += len(chunk)
-                _set("model", f"{done // 1_048_576} MB",
-                     min(99, int(done * 100 / max(1, total))))
-    except urllib.error.HTTPError as exc:
-        tmp.unlink(missing_ok=True)
-        if exc.code in (401, 403):
-            raise RuntimeError(f"huggingface.co said {exc.code} — consent not given or "
-                               "token lacks read access for " + MODEL_REPO) from None
-        raise
-    os.replace(tmp, dest)
+def _download(url: str, dest: Path, nbytes: int = 0,
+              expected_sha: str = "") -> None:
+    """Cache-first fetch through the kit's shared weight_cache (owner ruling
+    2026-11-09): a hash-matched cache entry is hardlinked, never re-fetched;
+    a half download resumes with Range. Progress reports ride _set so the pane
+    dial keeps ticking."""
+    if not _wc:
+        # standalone-CLI degrade: the module set may be incomplete offline
+        import weight_cache as _wc_mod
+        globals()["_wc"] = _wc_mod
+    return _wc.fetch(
+        _root() / "cache", url, dest, nbytes, expected_sha, token=_hf_token(),
+        progress=lambda done, total: _set(
+            "model", f"{done // 1_048_576} MB",
+            min(99, int(done * 100 / max(1, total)))),
+        denied=lambda code: (f"huggingface.co said {code} — consent not given or "
+                             f"token lacks read access for {MODEL_REPO}"),
+    )
 
 
 # ------------------------------------------------------------------ synthesis

@@ -1,5 +1,6 @@
 """tts_air: honest probe, size-gated fetch, stdlib time-scale, no-network (issue #7 s2)."""
-import hashlib, importlib.util, os, struct, tempfile, unittest
+import hashlib, importlib.util, os, shutil, struct, sys, tempfile, unittest
+from unittest import mock
 os.environ.setdefault("HERMES_HOME", tempfile.mkdtemp(prefix="tts-test-"))
 
 
@@ -191,11 +192,28 @@ class TtsAirTests(unittest.TestCase):
         finally:
             vo._SYNTH.pop("air", None)
 
+    def test_venv_python_stays_inside_the_neutts_pin(self):
+        # The private venv must never silently fall onto an out-of-range host
+        # interpreter (measured: 3.14.9 rejects the pinned wheel).
+        for fake in (None, "3.9", "3.14"):
+            with self.subTest(host=fake):
+                found = "/usr/bin/python" + fake if fake else None
+                vi = mock.Mock(major=3, minor=int(fake.split(".")[1])) if fake else mock.Mock(major=3, minor=14)
+                with mock.patch.object(shutil, "which",
+                                       return_value=found), \
+                     mock.patch.object(sys, "version_info", vi):
+                    if fake:
+                        self.assertEqual(ta._venv_python(), found)
+                    else:
+                        with self.assertRaises(RuntimeError) as cm:
+                            ta._venv_python()
+                        self.assertIn("3.10-3.13", str(cm.exception))
+
+
+
 
 def vo_create_wav():
-    """Amplitude-modulated speech-like envelope: a FLAT sine has no noise floor —
-    the energy VAD (gate = max(3*floor, peak/8)) needs quiet frames to gate against
-    (same shape as the slice-1 fixture)."""
+    """Amplitude-modulated speech-like envelope (slice-1 fixture shape)."""
     import math
     rate, sm = 16000, []
     for i in range(int(4.4 * rate)):
@@ -207,25 +225,3 @@ def vo_create_wav():
            + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
            + b"data" + struct.pack("<I", len(data)))
     return hdr + data
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-    def test_venv_python_stays_inside_the_neutts_pin(self):
-        # The private venv must never silently fall onto an out-of-range host
-        # interpreter (measured: 3.14.9 rejects the pinned wheel).
-        import shutil
-        for fake in (None, "3.9", "3.14"):
-            with self.subTest(host=fake):
-                def which(n):
-                    return None if fake is None else "/usr/bin/" + n
-                vi = (3, int(fake), 0) if fake else (3, 14, 9)
-                with mock.patch.object(shutil, "which", side_effect=lambda n: None if fake else "/usr/bin/python" + fake), \
-                     mock.patch.object(sys, "version_info", vi):
-                    if fake:
-                        self.assertIn("/usr/bin/python" + fake, ta._venv_python())
-                    else:
-                        with self.assertRaises(RuntimeError) as cm:
-                            ta._venv_python()
-                        self.assertIn("3.10-3.13", str(cm.exception))

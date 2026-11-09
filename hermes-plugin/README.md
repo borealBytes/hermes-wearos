@@ -124,7 +124,14 @@ button:
 - `github.com/handy-computer/transcribe.cpp` @ commit
   `5700f127e38dd53c4735ea23ef743b4b538eacd4` (fixed revision; git + cmake + g++ in a private venv),
 - model `parakeet-unified-en-0.6b-Q8_0.gguf` (~731 MB) verified against SHA-256
-  `4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795` before use,
+  `4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795` before use —
+  **every official quant of that repo is selectable** (Q4_K_M 455 MB → F32 2.36 GB, one engine
+  underneath): the pane's dropdown persists your choice, and the karaoke aligner follows it.
+  Unpinned rows are size-gated and their observed SHA-256 is recorded at first fetch,
+- **cache-first weights** (owner ruling): downloads land in a shared cache under
+  `plugin-data/wearos/<installer>/cache/` keyed by repo+file — a completed file whose size/SHA
+  matches the remote (HEAD etag) is hardlinked, never re-downloaded, and an interrupted
+  download resumes with a Range request; STT and TTS installers share the discipline,
 - everything under the plugin's own `plugin-data/wearos/stt/`; nothing system-wide, nothing sudo,
   cancellable, resumable, and the status line says `installed and verified` (or names what failed).
 

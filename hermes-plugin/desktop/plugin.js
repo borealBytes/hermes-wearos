@@ -68,6 +68,12 @@ function voPick (slot) {
   }))
 }
 
+async function sttSelect (ev) {
+  await act(() => rest('/stt', {
+    method: 'POST', body: { action: 'select', variant: ev.target.value }
+  }))
+}
+
 // Install = the consent dialog first (rule 12): steps, hosts, disk, per chosen row.
 function voInstall () {
   const air = ($voice.get() || {}).air || {}
@@ -439,9 +445,17 @@ function WearKitPane () {
               stt.toolchain
                 ? null
                 : jsx('div', { className: 'text-[10px] text-(--ui-text-danger)', children: 'needs git, cmake, g++ on this machine' }),
-              jsx('div', {
+              stt.variants ? jsx('select', {
+                className: 'w-full rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-xs',
+                value: stt.variant,
+                onChange: sttSelect,
+                children: stt.variants.map (v =>
+                  jsx('option', { value: v.id, children:
+                    `${v.label} — ${(v.bytes / 1048576).toFixed(0)} MB` +
+                    (v.sha_pinned ? ' · SHA-pinned' : '') }, v.id))
+              }) : null,              jsx('div', {
                 className: 'text-[10px] text-(--ui-text-tertiary)',
-                children: `built from a pinned commit, model verified by SHA-256, installed into ${stt.dir} — ~731 MB download + a few-minute CPU build`
+                children: `built from a pinned commit, model verified by SHA-256, installed into ${stt.dir} — ~${Math.round((((stt.variants || []).find(v => v.selected) || {}).bytes || 731000000) / 1048576)} MB download + a few-minute CPU build${stt.variants ? ' · quant switches reuse the weight cache — same bytes never re-download' : ''}`
               }),
               (stt.phase && stt.phase !== 'idle' && stt.phase !== 'done' && stt.phase !== 'failed')
                 ? jsxs('div', {
@@ -468,8 +482,21 @@ function WearKitPane () {
             ? jsxs('div', {
                 className: 'flex flex-col rounded border border-(--ui-border) p-2 text-xs',
                 children: [
-                  jsx('div', { className: 'text-(--ui-text-secondary)', children: '✓ Streaming speech-to-text installed & verified' }),
-                  jsx('div', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'watchkit serves it after its next health probe' })
+                  jsx('div', { className: 'text-(--ui-text-secondary)', children: `✓ Streaming speech-to-text installed & verified (${(stt.variant || 'q8_0').toUpperCase()}` + (stt.variants ? ' — change the quant above, only the weights swap and the weight cache makes repeat downloads free)' : ')') }),
+                  jsx('div', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'watchkit serves it after its next health probe' }),
+                  stt.variants ? jsx('select', {
+                    className: 'mt-1 w-full rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-xs',
+                    value: stt.variant,
+                    onChange: sttSelect,
+                    children: stt.variants.map (v =>
+                      jsx('option', { value: v.id, children:
+                        `${v.label} — ${(v.bytes / 1048576).toFixed(0)} MB` +
+                        (v.sha_pinned ? ' · SHA-pinned' : '') }, v.id))
+                  }) : null,
+                  stt.variant && stt.variant !== 'q8_0' ? jsx('div', {
+                    className: 'text-[10px] text-(--ui-text-tertiary)',
+                    children: 'switching the quant above asks for one more verified fetch — the engine build is reused'
+                  }) : null
                 ]
               }, 'stt-card')
             : null,

@@ -164,6 +164,9 @@ def stt_post(body: dict):
     action = str(body.get("action", "install")).lower()
     if action == "cancel":
         return stt_install.cancel()
+    if action == "select":
+        # quant menu choice (same engine, different weights) — persists, no install
+        return stt_install.select_variant(str(body.get("variant", "")))
     # The pane IS the interactive surface + the consent dialog (preview shown first).
     return stt_install.start(interactive=True)
 
