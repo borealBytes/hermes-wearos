@@ -1028,7 +1028,7 @@ def _cli_pair(args) -> None:
         status = _await_pickup(code, CLAIM_WAIT_SECONDS)
         if status == "delivered":
             print("✓ the watch collected its key and its device token")
-        elif status == "pruned":
+        elif status == "unknown":
             print("⚠ the approved record aged out before the watch polled — re-pair")
         else:
             print(f"approved — the watch polls every ~3 s; still waiting after {CLAIM_WAIT_SECONDS}s")
