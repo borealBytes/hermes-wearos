@@ -384,11 +384,11 @@ def _lane_session(profile: str, device: str, secret: str, node: dict) -> dict:
         raise PermissionError("the dial arrived from the gateway's own tailnet IP — "
                               "pairing must ride the WATCH's tunnel")
     dev = eng.first_session(device, secret, node)
-    if str(dev.get("profile") or "") != str(profile):
-        raise PermissionError(f"this watch is paired to agent {dev.get('profile')!r}")
-    # base = THIS process's profile: a device belonging to another agent needs an
-    # explicit grant before its key can be read cross-profile (D17)
-    key = eng.resolve_key(_running_profile(), device, _read_profile_key)
+    # THE GRANT LAW (D17, live-fixed 2026-11-09): the device's OWN agent's key always
+    # flows over its lane; a session routed at another agent is that agent's key and
+    # requires an explicit grant. The lane host's own running profile is irrelevant —
+    # one shared lane hosts every agent on a multiplexed gateway.
+    key = eng.resolve_key(profile, device, _read_profile_key)
     payload = {
         "api_key": key,
         "profile": profile,

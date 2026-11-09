@@ -103,7 +103,10 @@ def test_node_identity_is_law_after_binding(lane):
 def test_wrong_agent_lane_is_refused(lane):
     status, body = http(lane["base"], "POST", "/watch/lightshow/session",
                         {"secret": SECRET_A}, token=lane["token"])
-    assert status == 403 and "paired to agent" in body["error"]
+    # The refusal IS the grant law: foreign route, no grant → that agent is "no key
+    # grant yet", and the copy names where to fix it (live lesson 2026-11-09: the
+    # lane host's own profile must NOT gate the device's own agent's key).
+    assert status == 403 and "grant" in body["error"] and "lightshow" in body["error"]
 
 
 def test_events_round_trip(lane):
@@ -127,18 +130,28 @@ def test_unknown_routes_are_404(lane):
     assert http(lane["base"], "GET", "/nope", token=lane["token"])[0] == 404
 
 
-def test_cross_agent_key_needs_grant_then_works(lane, monkeypatch, tmp_path):
+def test_own_agent_flows_grant_opens_the_sibling_lane(lane, monkeypatch, tmp_path):
+    """THE GRANT LAW over the real lane, live-fixed 2026-11-09: the device's own
+    agent's key needs NO grant even when the lane process is hosted elsewhere; a
+    SIBLING agent's route opens only once the pane grants it."""
     m, name = lane["module"], lane["device"]
-    m._engine().store.mutate(lambda doc: doc["devices"][name].__setitem__(
-        "profile", "research"))
     (tmp_path / "profiles" / "research").mkdir(parents=True)
     (tmp_path / "profiles" / "research" / ".env").write_text(
         "API_SERVER_KEY=sk-research-key\n", encoding="utf-8")
-    # first: no grant → refused (D17: no silent cross-profile reads)
+    (tmp_path / ".env").write_text("API_SERVER_KEY=sk-hermes-profilekey-A\n",
+                                   encoding="utf-8")
+    # Re-pair the device under research: its OWN route always flows…
+    m._engine().store.mutate(lambda doc: doc["devices"][name].__setitem__(
+        "profile", "research"))
     status, body = http(lane["base"], "POST", "/watch/research/session",
                         {"secret": SECRET_A}, token=lane["token"])
-    assert status == 403 and "grant" in body["error"]
-    m._engine().set_grant("research", True)
-    status, body = http(lane["base"], "POST", "/watch/research/session", {},
-                        token=lane["token"])
     assert status == 200 and body["api_key"] == "sk-research-key"
+    # …the sibling (default) route is refused until granted (no silent cross reads),
+    # and the refusal copy names where to fix it.
+    status, body = http(lane["base"], "POST", "/watch/default/session", {},
+                        token=lane["token"])
+    assert status == 403 and "grant" in body["error"] and "default" in body["error"]
+    m._engine().set_grant("default", True)
+    status, body = http(lane["base"], "POST", "/watch/default/session", {},
+                        token=lane["token"])
+    assert status == 200 and body["api_key"] == "sk-hermes-profilekey-A"

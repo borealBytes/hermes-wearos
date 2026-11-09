@@ -292,16 +292,21 @@ def test_failed_cron_says_failed(wearos):
 
 
 # ── grants (D17) ────────────────────────────────────────────────────────────────
-def test_cross_profile_key_needs_a_grant(wearos):
-    name, _ = _enrolled(wearos)
+def test_own_agent_key_always_flows_cross_needs_grant(wearos):
+    """THE GRANT LAW, live-fixed 2026-11-09: the device's OWN agent's key needs no
+    grant; any OTHER agent's route requires that agent to be granted."""
+    name, _ = _enrolled(wearos)          # paired to "default" here
     wearos._engine().store.mutate(
         lambda doc: doc["devices"][name].__setitem__("profile", "research"))
+    # own agent (research): key flows with NO grant at all
+    assert wearos._engine().resolve_key("research", name, lambda p: "sk-new") == "sk-new"
+    # another agent (default): refused until it is granted (no silent cross reads)
     with pytest.raises(wearos.pairing.PairingError) as exc:
         wearos._engine().resolve_key("default", name, lambda p: "sk-new")
     assert "grant" in str(exc.value)
-    wearos._engine().set_grant("research", True)
+    wearos._engine().set_grant("default", True)
     assert wearos._engine().resolve_key("default", name, lambda p: "sk-new") == "sk-new"
-    wearos._engine().set_grant("research", False)
+    wearos._engine().set_grant("default", False)
     with pytest.raises(wearos.pairing.PairingError):
         wearos._engine().resolve_key("default", name, lambda p: "sk-new")
 

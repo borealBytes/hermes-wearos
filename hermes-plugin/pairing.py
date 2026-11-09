@@ -673,14 +673,19 @@ class PairingEngine:
     # -- bootstrap credential delivery (D13) ----------------------------------------
     def resolve_key(self, profile: str, device_name: str, key_reader: Callable[[str], str],
                     grants: Optional[dict] = None) -> str:
-        """Return the API key for a device's profile. ``key_reader(profile)`` reads
-        that profile's API_SERVER_KEY through Hermes's secret route. Cross-profile
-        reads (grants, D17) require an explicit grant record."""
+        """Return the API key for the ROUTE's agent. The law (D17/D13, live-fixed
+        2026-11-09): a device ALWAYS gets its own paired agent's key — no grant —
+        over its private lane; reaching ANOTHER agent's key requires that other
+        agent to be granted on the Wear Kit pane. The lane process's own profile is
+        irrelevant (one shared door/lane can host every agent). ``key_reader(agent)``
+        reads that agent's API_SERVER_KEY through Hermes's secret route.
+        """
         dev = self.device(device_name)
         if dev is None:
             raise PairingError("unknown device", "gone")
-        want = str(dev.get("profile") or profile)
-        if want != profile:
+        own = str(dev.get("profile") or "")
+        want = str(profile or own)
+        if want != own:
             g = grants if grants is not None else self.grants()
             if want not in g:
                 raise PairingError(
