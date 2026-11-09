@@ -252,11 +252,13 @@ class TailnetClient:
         """Remove a node from the tailnet (full-revoke, D12). 404 afterwards is the
         proof of removal. Route measured against the v2 API: DELETE devices/{id}.
 
-        The engine self-reports the NUMERIC nodeId (first-session bootstrap), but the
-        device route is keyed by the object id (neaoq…-style) — a live revoke on a real
-        watch 404ed on the numeric ref (2026-11-09). So a bare 404 resolves the ref
-        through the device list (id, nodeId, or hostname) and retries once; unknown
-        refs keep the original 404 (which revoke already reports as a clear step)."""
+        Measured on the first REAL-WATCH revoke (2026-11-09): the API's device `id`
+        IS the numeric the engine self-reports, so the captured ref is right — but
+        this token 404s every device-scoped route, GET included: Tailscale masks
+        missing scopes as 404s, and the minted key carries create-keys + ACL-write,
+        not device delete. The list-resolve retry below stays as format-proofing
+        (accepts id, nodeId or hostname from any future capture); the revoke report
+        names the capability gap when the API answers 404."""
         try:
             self._request("DELETE", f"/tailnet/{self._tn()}/devices/{urllib.parse.quote(node_id)}")
         except TailnetAPIError as exc:

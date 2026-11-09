@@ -292,8 +292,12 @@ def revoke_device(name: str, *, started_from: str = "cli") -> dict:
             report["steps"].append({"step": "tailnet", "ok": True,
                                     "detail": f"node {node_id} removed from your tailnet"})
         except tailscale.TailnetAPIError as exc:
+            hint = (" — measured: Tailscale answers 404 for every route the token's "
+                    "scopes don't cover; the key needs the Devices delete capability "
+                    "(admin console ▸ keys ▸ edit). Delete the node by hand until then."
+                    if exc.status == 404 else "")
             report["steps"].append({"step": "tailnet", "ok": False,
-                                    "detail": f"node {node_id} NOT deleted: {exc}"})
+                                    "detail": f"node {node_id} NOT deleted: {exc}{hint}"})
     else:
         report["steps"].append({"step": "tailnet", "ok": False,
                                 "detail": "node id never captured (watch never opened a "
