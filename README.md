@@ -319,7 +319,9 @@ sessions; asking them needs the key:
 Installed into the Hermes desktop app, the plugin adds a **Wear Kit** page — a right-side pane
 whose whole job is a four-step checklist:
 
-![The Wear Kit pane inside Hermes Desktop: four-step checklist, per-agent enablement, paired devices, readiness lights (agent names blurred by the maintainer)](docs/screens/67-wearkit-pane.png)
+| | |
+|:--:|:--:|
+| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: four-step checklist, per-agent enablement, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen: the tailnet handle typed, a 6-digit PIN under its own 5-minute label, Knock and New PIN buttons"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. Agent names are blurred by the maintainer — they are yours to populate. |
 
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
