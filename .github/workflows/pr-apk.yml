@@ -1,5 +1,10 @@
-# PR Preview APK — owner doctrine (SPEC §18): every PR to main ships an INSTALLABLE
-# preview. This lane builds `:app:assembleRelease` (minus lintVitalRelease — a release
+# PR Preview APK — owner doctrine (SPEC §18): every labeled PR ships an INSTALLABLE
+# preview. OWNER GATE (2026-11-09): the build fires only when someone with triage
+# applies the `preview-build` label — one lane, one artifact, owner-controlled spend.
+# The job also declares the `preview-build` GitHub Environment: if the owner later adds
+# themselves as required reviewer there (Settings ▸ Environments ▸ preview-build), every preview build
+# additionally waits for an explicit human approve — a tighter gate with zero code change.
+# This lane builds `:app:assembleRelease` (minus lintVitalRelease — a release
 # gate the @rc/v-tag lanes still enforce verbatim; see the assemble step) and signs it
 # with an EPHEMERAL CI-GENERATED debug keystore — keytool mints a fresh key in-job,
 # then zipalign + apksigner (same build-tools pin as every other lane). The release
@@ -32,7 +37,10 @@ name: PR APK
 
 on:
   pull_request:
-    branches: [main]
+    # labeled is what the owner's label-add fires; synchronize lets a push re-run a
+    # PR that already carries the label. No branches filter: any base is eligible —
+    # the label is the gate, not the destination branch.
+    types: [opened, reopened, synchronize, labeled]
 
 permissions:
   contents: read
@@ -45,7 +53,9 @@ concurrency:
 jobs:
   preview:
     name: Build CI-signed preview APK
+    if: contains(github.event.pull_request.labels.*.name, 'preview-build')
     runs-on: ubuntu-latest
+    environment: preview-build
     outputs:
       apk: ${{ steps.stage.outputs.apk }}
       sha256: ${{ steps.sums.outputs.sha256 }}
