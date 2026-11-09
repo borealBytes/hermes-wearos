@@ -21,6 +21,7 @@ ffmpeg -y -i card.wav -c:a libopus -b:a 24k -ac 1 card.opus && rm card.wav
 | `card.opus` | the exact bytes `GET /voice/card_wav` streamed back, re-encoded 24 kbps mono Opus (repo rule: compressed audio only). Click play — this is the voice the watch ships with |
 | `synthesize.json` | the honest no-engine refusal: `ok:false` naming NeuTTS Air (never silence) |
 | `engines.json` | `tts_air.status()` + `align_parakeet.status()` — expected/observed model size, token presence, toolchain gate |
+| `proof/` | MEDIA rule pack: `voiceout-proof.png` (evidence page), `voiceout-playing.png` (player at 0:03/0:06 mid-stream), `voiceout-lane.mp4` (13 s recording of the play interaction), `proof.html` (source), `lane-run.log` (verbatim container output). Rendered headless via playwright-cli at 1280×900 |
 
 The card audio is the repo owner (Clay) reading the scripted prompt into a
 webcam mic (`arecord` default device, 16 kHz mono), final pass of take 4 —
