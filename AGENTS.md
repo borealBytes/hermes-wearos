@@ -228,6 +228,9 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 - `hermes-plugin/tts_air.py` — NeuTTS Air engine: pinned installer into a private venv (rule 17),
   subprocess runner, size-gated gated-HF fetch, stdlib time-scale; registers into voiceout when
   `register_if_ready()` finds it installed.
+- `hermes-plugin/align_parakeet.py` — karaoke word timestamps: re-blends the Parakeet/CTA TDT
+  alignment (the stt_install.py build) onto the synthesized script; estimated slots are flagged,
+  absent engine degrades to align:"none" (sentence-mode), never a silent lie (§19).
 - `.github/workflows/plugin-sync.yml` — publishes `borealBytes/hermes-wearos-plugin`, the
   catalog-pinned subtree mirror of `hermes-plugin/`. Zero human commits; plugin code is edited
   ONLY here. Needs the `MIRROR_PAT` secret (fine-grained, single-repo, contents RW) — without

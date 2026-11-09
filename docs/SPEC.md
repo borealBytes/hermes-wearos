@@ -1556,7 +1556,7 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
 |---|---|---|
 | 1 | `voiceout.py` — prefs rev/merge, measured cards, seed fetch, tier-aware `synthesize()` | SHIPPED `493eb2b`, tests 8/8 |
 | 2a | `tts_air.py` — pinned installer, subprocess runner, time-scale, honest probe | SHIPPED this push, tests 11/11 |
-| 2b | Parakeet forced-align → `words[]`, honest `align:"none"` degradation | planned |
+| 2b | `align_parakeet.py` — TDT word timings re-blended onto the script; proportional slots flagged `estimated`; honest `align:"none"` when the STT engine is absent | SHIPPED, tests 8/8 |
 | 2c | `/voice/*` routes in `private_api.py` (prefs, cards, synthesize; Tailscale-node auth) | planned |
 | 3–7 | desktop pane ▸ Voice-out · watch prefs client · karaoke orb player · recorder UI · PR hygiene | planned |
 
@@ -1575,6 +1575,19 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
 - **2026-11-09 (weardev, slice 2a)** — speed scaling is linear resample (pitch
   follows at extremes). Known debt, chosen over shipping a WSOLA first-cut inside
   the same slice that pins an 803 MB model. Polish tracked here, not in prose.
+- **2026-11-09 (weardev, slice 2b)** — the aligner reuses the Parakeet/CTA build
+  `stt_install.py` already produces (same venv, same pinned model, `timestamps=
+  "word"` on the 5700f127 bindings — `Word.t0_ms/t1_ms` verified against the pinned
+  source). Recognized rows are RE-BLENDED onto the script we synthesized: the
+  karaoke must follow the script (punctuation included), and any word the
+  recognizer dropped gets a proportional slot explicitly flagged
+  `"align":"estimated"` — measured truth and estimated truth never mix silently.
+- **2026-11-09 (weardev, env note)** — the pairing-era pytest suite (test_pairing
+  cron-alert test + test_private_api grant-law test) fails on THIS machine's
+  interpreter (profiles resolve to the real `~/.hermes` instead of the test tmp —
+  host-module version drift, python3.14/pytest9 surface). Reproduces with all
+  voice-out work stashed at HEAD~; not introduced here; owner's OpenCode rig owns
+  that floor. Voice-out suites run standalone (`python3 tests/test_*.py`).
 
 ## Appendix A — Landed slices (build log, newest first)
 
