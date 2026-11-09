@@ -371,18 +371,39 @@ def _read_profile_key(profile: str) -> str:
         return ""
 
 
+def _read_watchkit_token(profile: str) -> str:
+    """Watchkit bearer for the ROUTED agent, through that profile's secret scope
+    (same file convention as API_SERVER_KEY: profiles/<p>/.env, root .env for the
+    single-profile box). The plugin host thread has no scope bound — a bare
+    _get_secret here reads the daemon's os.environ and misses the .env body."""
+    home = _profile_home(profile) or Path(os.environ.get("HERMES_HOME",
+                                                         str(Path.home() / ".hermes")))
+    try:
+        from agent.secret_scope import (build_profile_secret_scope, get_secret,
+                                        reset_secret_scope, set_secret_scope)
+        token = set_secret_scope(build_profile_secret_scope(home), profile_home=str(home))
+        try:
+            return get_secret("watchkit_token") or ""
+        finally:
+            reset_secret_scope(token)
+    except Exception:
+        return _get_secret("watchkit_token") or ""
+
+
 def _lane_session(profile: str, device: str, secret: str, node: dict) -> dict:
     eng = _engine()
     # A dial whose whois resolves to THIS machine's own node never came through a
     # watch tunnel — it arrived over the host's own tailnet IP (emulator NAT, or an
-    # app run on the gateway box itself). Binding such a session would fence the real
-    # node out for the device's whole life (measured live 2026-11-09: the first lane
-    # call bound the pairing to the GATEWAY node, every later session 403'd "different
-    # tailnet node"). Refuse honestly; the watch retries once its own node dials.
-    me = _self_node_id()
-    if me and str(node.get("node_id") or "") == me:
-        raise PermissionError("the dial arrived from the gateway's own tailnet IP — "
-                              "pairing must ride the WATCH's tunnel")
+    # app run on the gateway box itself). The guard covers the ONE dangerous moment:
+    # the FIRST session, which would CAPTURE the gateway node as the device's node
+    # and fence the real one out for the device's whole life (measured live
+    # 2026-11-09). Once bound, first_session's node-identity law already refuses a
+    # different node — and a hairpin'd refresh simply retries its next direct dial.
+    if not (eng.device(device) or {}).get("node_id"):
+        me = _self_node_id()
+        if me and str(node.get("node_id") or "") == me:
+            raise PermissionError("the dial arrived from the gateway's own tailnet IP — "
+                                  "pairing must ride the WATCH's tunnel")
     dev = eng.first_session(device, secret, node)
     # THE GRANT LAW (D17, live-fixed 2026-11-09): the device's OWN agent's key always
     # flows over its lane; a session routed at another agent is that agent's key and
@@ -395,7 +416,12 @@ def _lane_session(profile: str, device: str, secret: str, node: dict) -> dict:
         "gateway_fqdn": _gateway_fqdn(),
         "gateway_port": GATEWAY_PORT,
         "watchkit_port": WATCHKIT_PORT,
-        "watchkit_token": _get_secret("watchkit_token"),  # nullable by contract
+        # The helper bearer, read through the ROUTED agent's secret scope: a plugin
+        # host thread has no scope bound and would otherwise fall to os.environ —
+        # systemd doesn't carry this one (live: every session said wkToken.len=0
+        # while profiles/<p>/.env held the exact bearer). Same trick as
+        # _read_profile_key; empty when watchkit isn't deployed (nullable by design).
+        "watchkit_token": _read_watchkit_token(profile),
     }
     return payload
 
@@ -457,20 +483,43 @@ def _private_port() -> int:
 
 
 # ── cron → watch notifications (D14) ───────────────────────────────────────────
-def _cron_title(profile: str, session_id: str) -> str:
-    """Best-effort human title for the finished cron run: the session row in the
-    profile's state.db carries '<job name> · <date>' (Hermes's own public session
-    store — READ-ONLY, local, never credentials). Any miss degrades to the generic
+def _cron_title(profile: str, session_id: str, task_id: str = "") -> str:
+    """Best-effort human title for the finished cron run.
+
+    Primary: the job NAME from the cron store — the hook's ``task_id`` carries
+    ``cron:<job id>:<run id>``, and ``<home>/cron/jobs.json`` resolves it without
+    any race. Secondary: the session row's '<job name> · <date>' title in the
+    profile's state.db (Hermes's public session store, READ-ONLY — but the title
+    is written at cron FINALIZE, seconds AFTER this hook fires, so it's usually
+    still pending; live-measured 2026-11-09). Any miss degrades to the generic
     copy; the notification never depends on it."""
     home = _profile_home(profile)
-    if home is None or not session_id:
+    if home is None:
+        return "cron run"
+    job_id = (str(task_id or "").split(":", 2)[1]
+              if str(task_id or "").startswith("cron:") else "")
+    if job_id:
+        try:
+            import json as _json
+            doc = _json.loads((home / "cron" / "jobs.json").read_text(encoding="utf-8"))
+            rows = (doc.get("jobs") if isinstance(doc, dict) else doc) or []
+            if isinstance(rows, dict):
+                rows = list(rows.values())
+            for j in rows:
+                if isinstance(j, dict) and str(j.get("id") or "") == job_id and j.get("name"):
+                    return str(j["name"])[:120]
+        except Exception:
+            pass
+    if not session_id:
         return "cron run"
     try:
         import sqlite3
+        sid = str(session_id)[:128]
         con = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1.0)
         try:
-            row = con.execute("select title from sessions where id=?",
-                              (str(session_id)[:128],)).fetchone()
+            # Cron rows key the id as 'local-<sha256>'; match id or chat_id.
+            row = con.execute("select title from sessions where id=? or chat_id=?",
+                              (sid, sid)).fetchone()
         finally:
             con.close()
         if row and row[0]:
@@ -495,7 +544,8 @@ def _on_session_end(**kw: Any) -> None:
         failed = bool(kw.get("failed"))
         if pref == "fail" and not failed:
             return
-        title = _cron_title(profile, str(kw.get("session_id") or ""))
+        title = _cron_title(profile, str(kw.get("session_id") or ""),
+                            str(kw.get("task_id") or ""))
         mark = "✗ failed" if failed else "✓ finished"
         text = f"⏰ {title} {mark}"
         for name, dev in eng.devices().items():

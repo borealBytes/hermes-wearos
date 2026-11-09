@@ -291,6 +291,23 @@ def test_failed_cron_says_failed(wearos):
     assert "failed" in text and text.startswith("⏰")
 
 
+def test_cron_alert_names_the_job_no_race(wearos, tmp_path):
+    """The state.db title is committed at cron FINALIZE — AFTER the hook fires
+    (live 2026-11-09: the DB lookup always fell back). task_id carries
+    'cron:<job id>:<run id>'; the job name comes from the cron store instead."""
+    import json
+    (tmp_path / "cron").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "cron" / "jobs.json").write_text(json.dumps(
+        {"jobs": [{"id": "73254b", "name": "nightly digest"}], "updated_at": 0}
+    ), encoding="utf-8")
+    name, _ = _enrolled(wearos)
+    wearos._on_session_end(platform="cron", session_id="local-abc", completed=True,
+                           failed=False, task_id="cron:73254b:run9")
+    ev = wearos._lane_events("default", name, 0)["events"][0]
+    assert ev["text"] == "⏰ nightly digest ✓ finished"
+    assert ev["title"] == "nightly digest"
+
+
 # ── grants (D17) ────────────────────────────────────────────────────────────────
 def test_own_agent_key_always_flows_cross_needs_grant(wearos):
     """THE GRANT LAW, live-fixed 2026-11-09: the device's OWN agent's key needs no
