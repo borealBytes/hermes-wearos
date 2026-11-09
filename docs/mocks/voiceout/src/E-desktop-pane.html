@@ -1,67 +1,59 @@
 <!doctype html><html><head><meta charset=utf-8><style>
 *{margin:0;box-sizing:border-box}
-body{width:1180px;height:860px;background:#EEF1F5;font-family:Inter,'Roboto',system-ui,sans-serif;padding:22px;display:flex}
-.modal{flex:1;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.18);display:flex;overflow:hidden}
-.side{width:258px;border-right:1px solid #E5E7EB;padding:12px 8px;color:#374151}
-.srow{display:flex;align-items:center;gap:9px;height:37px;border-radius:8px;padding:0 12px;font-size:14px;font-weight:500}
-.srow.ico{color:#6B7280;font-size:13px;width:16px}
-.sel{background:#E8EEFB;color:#1F2937}
-.kid{margin-left:26px}
-.chev{margin-left:auto;color:#9CA3AF;font-size:11px}
-.main{flex:1;padding:26px 34px;position:relative}
-.crumb{font-size:13px;color:#9CA3AF}.crumb b{color:#374151;font-weight:500}
-.save{position:absolute;top:24px;right:30px;background:#4F7DF3;color:#fff;font-size:13.5px;font-weight:500;border-radius:8px;padding:8px 14px;box-shadow:0 1px 2px rgba(79,125,243,.4)}
-.hero{margin-top:16px;font-size:17px;font-weight:700;letter-spacing:.4px}
-.hero .k{color:#4F7DF3}
-.sub{color:#6B7280;font-size:13px;margin-top:4px}
-h3{font-size:12px;font-weight:600;letter-spacing:.8px;color:#9CA3AF;margin:26px 0 6px}
-.frow{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:14px 0}
-.frow .l{font-size:14px;font-weight:600;color:#1F2937}
-.frow .d{font-size:12.5px;color:#6B7280;margin-top:2px;max-width:520px}
-.inp{border:1px solid #D1D5DB;border-radius:8px;height:34px;min-width:150px;padding:0 10px;font-size:13px;color:#111827;display:flex;align-items:center;justify-content:flex-end;background:#fff;white-space:nowrap;flex:none}
-.btn{background:#4F7DF3;color:#fff;border-radius:8px;height:34px;padding:0 14px;font-size:13px;display:flex;align-items:center}
-.ok{background:#DCFCE7;color:#166534;border-radius:999px;padding:3px 10px;font-size:11.5px;font-weight:600;white-space:nowrap;flex:none}
-.new{background:#E8EEFB;color:#3B5BDB;border-radius:999px;padding:3px 9px;font-size:10.5px;font-weight:700;letter-spacing:.4px;vertical-align:2px;margin-left:8px}
-table{width:100%;border-collapse:collapse;margin-top:6px}
-td,th{font-size:13px;color:#374151;text-align:left;padding:7px 6px;border-bottom:1px solid #F1F3F5}
-th{color:#9CA3AF;font-size:11px;font-weight:600;letter-spacing:.4px}
-.sel2{color:#1F2937}.sel2::after{content:" ▾";color:#9CA3AF;font-size:10px}
-.aud{color:#4F7DF3;font-size:12px}.del{color:#9CA3AF;font-size:12px}
-.drop{margin-top:14px;border:1.5px dashed #C9D2DE;border-radius:10px;padding:14px 16px;font-size:12.5px;color:#6B7280;line-height:1.5;background:#FAFBFD}
-.drop code{color:#4B5563}
-.pillrow{display:flex;gap:6px}.miniP{border:1px solid #D1D5DB;border-radius:999px;padding:3px 11px;font-size:12px;color:#6B7280}
-.miniP.on{background:#E8EEFB;border-color:#B9CBF2;color:#3B5BDB;font-weight:600}
-</style></head><body><div class=modal>
-<div class=side>
- <div class=srow><span class=ico>⚙</span>General<span class=chev>›</span></div>
- <div class=srow><span class=ico>🗂</span>Sessions<span class=chev>›</span></div>
- <div class="srow sel"><span class=ico>🧩</span>Plugins<span class=chev>⌄</span></div>
- <div class="srow kid sel">wearos</div>
- <div class=srow><span class=ico>🧠</span>Memory<span class=chev>›</span></div>
- <div class=srow><span class=ico>⚡</span>Providers<span class=chev>›</span></div>
-</div>
-<div class=main>
- <div class=crumb>Settings › Plugins › <b>wearos</b></div>
- <div class=save>💾 Save settings</div>
- <div class=hero>HERMES <span class=k>WEAR KIT</span> <span style="font-size:11px;color:#9CA3AF;font-weight:400">v0.9.0 · pairing v2 · mock</span></div>
- <div class=sub>Watch client for your Hermes gateway — tailnet pairing, per-device tokens, approvals, voice both ways.</div>
+body{width:380px;height:930px;background:#141519;color:#c9ccd4;font-family:Inter,'Roboto',system-ui,sans-serif;font-size:13px;padding:14px}
+.wm{font-size:13px;font-weight:600;letter-spacing:.26em;color:#8b8f99;margin:2px 0 10px}
+.card{border:1px solid #2a2c33;border-radius:6px;padding:9px 10px;margin-bottom:8px}
+.card .t{font-weight:500;color:#dfe2e8;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sub{font-size:11px;color:#6b707a;margin-top:3px;line-height:1.45}
+.btn{border:1px solid #3a3d45;border-radius:5px;padding:3px 9px;font-size:11px;color:#c9ccd4;background:transparent;white-space:nowrap}
+.btn.dis{opacity:.45}
+.row2{display:flex;gap:6px;margin-top:6px;align-items:center}
+input.code{width:96px;border:1px solid #3a3d45;border-radius:5px;background:transparent;color:#fff;padding:4px 7px;font-size:11px}
+.chk{display:inline-flex;align-items:center;gap:6px;margin:2px 10px 2px 0;color:#9aa0ab;font-size:12px}
+.ok{color:#79c08a;font-size:10.5px;font-weight:600;white-space:nowrap}
+.danger{color:#d76c6c}
+.new{background:#2b3b5e;color:#9db8e8;border-radius:999px;font-size:9px;font-weight:700;padding:2px 7px;letter-spacing:.5px;margin-left:6px;vertical-align:1px}
+.tip{position:relative;border:1px solid #3a3d45;background:#1d1f25;border-radius:6px;padding:6px 8px;font-size:10.5px;color:#9aa0ab;margin-top:6px;line-height:1.4}
+.tip .arr{position:absolute;top:-5px;left:30px;width:8px;height:8px;background:#1d1f25;border-left:1px solid #3a3d45;border-top:1px solid #3a3d45;transform:rotate(45deg)}
+table{width:100%;border-collapse:collapse;margin-top:5px}
+td{font-size:11.5px;color:#c9ccd4;padding:4px 3px;border-bottom:1px solid #22242a}
+td .m{color:#6b707a} .mode{color:#9db8e8}
+.mini{font-size:10px;color:#6b707a}
+.slider{flex:1;height:3px;background:#2a2c33;border-radius:2px;position:relative;margin:0 8px}
+.slider i{position:absolute;left:38%;top:-4px;width:11px;height:11px;border-radius:50%;background:#7A9CC6}
+.drop{border:1.5px dashed #34373f;border-radius:6px;padding:8px;font-size:10.5px;color:#6b707a;line-height:1.5;margin-top:6px}
+.bug2{font-size:9.5px;color:#4a4d55;text-align:center;margin-top:6px}
+</style></head><body>
+<div class=wm>HERMES WEAR KIT</div>
+<div class=card><div class=t>⌚ One watch. Your tailnet. No middleman.</div>
+<div class=sub>The watch app is <u>borealBytes/hermes-wearos</u> — this plugin is its pairing + provisioning half.</div></div>
 
- <h3>PAIRING</h3>
- <div class=frow><div><div class=l>Pairing window</div><div class=d>Open ~5 min, then the watch shows a 6-digit code · never model-visible</div></div><div class=btn>Open window</div></div>
- <div class=frow><div><div class=l>Devices</div><div class=d>wear → agent <b>wear</b> · device token issued · grants: read+execute, alerts: cron</div></div><div class=inp style="color:#9CA3AF;width:90px;justify-content:center">Remove</div></div>
+<div class=card><div class=t>Pair a watch <span class=btn>open window</span></div>
+<div class=row2><input class=code value="418265"><span class=btn>Approve</span><span class=ok>approved: wear → agent wear</span></div></div>
 
- <h3>VOICE IN</h3>
- <div class=frow><div><div class=l>Parakeet STT</div><div class=d">Pinned e3b0c4…1f9a · sha256 verified · word timestamps on</div></div><div class=ok>installed and verified ✓</div></div>
+<div class=card><div class=t><span>✓ <b>1.</b> Enable Wear Kit for your agents</span></div>
+<span class=chk>☑ wear</span><span class=chk>☑ wear-demo</span><span class=chk>☑ news-cron</span></div>
 
- <h3>VOICE OUT<span class=new>NEW</span></h3>
- <div class=frow><div><div class=l>Engine · NeuTTS Air</div><div class=d>Apache-2.0 · ~0.5 GB GGUF · zero-shot cloning from a 3 s reference · word timings via MMS_FA aligner</div></div><div style=display:flex;gap:8px;flex:none><div class=ok>installed and verified ✓</div><div class=inp style=min-width:80px color:#6B7280>q8 · pin 9f2a…c41</div></div></div>
- <div class=frow><div><div class=l>Backend</div><div class=d>One response schema — watch UI doesn't care where the voice was cooked</div></div>
-  <div class=pillrow><span class="miniP on">Air</span><span class=miniP>CosyVoice2</span><span class=miniP>Kokoro</span><span class=miniP>None</span></div></div>
+<div class=card><div class=t>Paired watches</div>
+<div class=row2 style=justify-content:space-between><span>wear · wear · node ✓</span><span class=btn class=danger>Remove</span></div></div>
 
- <h3>AGENT VOICES</h3>
- <table><tr><th>AGENT</th><th>VOICE CARD</th><th>SYNTHESIS</th><th>ACTIONS</th></tr>
- <tr><td>wear</td><td>You <span style=color:#9CA3AF>(recorded · 9 s)</span></td><td class=sel2>Gateway</td><td><span class=aud>▶ audition</span>&nbsp;&nbsp;<span class=del>remove</span></td></tr>
- <tr><td>wear-demo</td><td>Tide <span style=color:#9CA3AF>(default)</span></td><td class=sel2>On watch</td><td><span class=aud>▶ audition</span>&nbsp;&nbsp;<span class=del>remove</span></td></tr>
- <tr><td>news-cron</td><td>Farmhands <span style=color:#9CA3AF>(file · 22 s)</span></td><td class=sel2>Gateway</td><td><span class=aud>▶ audition</span>&nbsp;&nbsp;<span class=del>remove</span></td></tr></table>
- <div class=drop>⬆ <b>Drop an audio file anywhere in this pane</b> — or tell the agent “make this a voice” in chat — <code>wearkit voice add &lt;file&gt; --name Farmhands --agent news-cron</code>. Gateway trims + normalizes to 24 kHz mono, stores it as a voice card, and mirrors it to every paired watch.</div>
-</div></div></body></html>
+<div class=card><div class=t>Voice in — Parakeet STT</div>
+<div class=sub>streaming · pinned <span class=mini>e3b0c4…1f9a</span> · ~600 MB · word timestamps</div>
+<div class=row2 style=justify-content:flex-end><span class=btn>install</span></div></div>
+
+<div class=card><div class=t><span>Voice out — NeuTTS Air<span class=new>NEW</span></span><span class="btn dis">install</span></div>
+<div class=sub>Apache-2.0 · ~0.5 GB GGUF · zero-shot cloning from a 3 s reference · sentence streaming</div>
+<div class=tip><span class=arr></span>🔒 install Parakeet first — its word timestamps are how karaoke works. The aligner rides the STT engine you already have.</div></div>
+
+<div class=card><div class=t>Agent voices</div>
+<table><tr><td>wear</td><td class=m>You · recorded 9 s</td><td class=mode>gateway ▾</td></tr>
+<tr><td>wear-demo</td><td class=m>Tide · default</td><td class=mode>on watch ▾</td></tr>
+<tr><td>news-cron</td><td class=m>Farmhands · file 22 s</td><td class=mode>gateway ▾</td></tr></table>
+<div class=row2><span class=mini style=white-space:nowrap>Playback speed</span><span class=slider><i></i></span><span class=mini>1.0×</span></div>
+<div class=mini style=margin-top:2px>one global dial — 1.0× = each clone's own pace (ref_rate)</div></div>
+
+<div class=card><div class=t>Voice cards</div>
+<div class=sub>You · recorded · 9 s · ref_rate 178 spm &nbsp;▸ audition&nbsp; · remove<br>Farmhands · file · 22 s &nbsp;▸ audition&nbsp; · remove<br>Juniper, Cedar, Tide … defaults (10 seeded)</div>
+<div class=drop>⬆ drop an audio file here — or tell the agent “make this a voice”. Gateway trims + normalizes to 24 kHz mono, records ref_rate, mirrors to every paired watch.</div></div>
+<div class=bug2>v0.9.0 · pairing v2 · mock</div>
+</body></html>

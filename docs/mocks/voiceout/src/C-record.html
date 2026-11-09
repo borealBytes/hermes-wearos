@@ -1,44 +1,43 @@
 <!doctype html><html><head><meta charset=utf-8><style>
 *{margin:0;box-sizing:border-box}
 html,body{width:466px;height:466px;background:#000;font-family:'Roboto','Google Sans',system-ui,sans-serif;color:#fff;overflow:hidden}
-.screen{width:466px;height:466px;display:flex;flex-direction:column;align-items:center;text-align:center;padding:30px 44px 24px}
-.time{font-size:17px;color:#fff}
-.title{font-size:23px;margin-top:14px}
-.back{font-size:14px;color:#fff;margin-top:6px}
-.back .chev{color:#9AA0A6;margin-right:5px}
-.sec{color:#9AA0A6;font-size:12.5px;margin:16px 0 2px}
-.row{display:flex;align-items:center;justify-content:center;gap:10px;margin:9px 0;font-size:18px}
+.screen{position:relative;width:466px;height:466px;padding:28px 68px 24px}
+.hdr{display:flex;flex-direction:column;align-items:center;text-align:center}
+.time{font-size:17px} .title{font-size:23px;margin-top:10px}
+.back{font-size:14px;margin-top:5px} .back .chev{color:#9AA0A6;margin-right:5px}
+.sec{color:#9AA0A6;font-size:12.5px;margin:15px 0 2px}
+.row{display:flex;align-items:center;justify-content:space-between;margin:11px 0;font-size:18px}
 .pill{background:#1A1D22;color:#7A9CC6;border-radius:999px;padding:4px 11px;font-size:13px}
 .pill .d{font-size:9px;margin-left:4px}
-.pill.on{color:#B8CCe8}
-.sw{width:38px;height:22px;border-radius:999px;background:#5F6368;position:relative;flex:none}
-.sw i{position:absolute;left:1px;top:1px;width:20px;height:20px;border-radius:50%;background:#9AA0A6}
-.sw.on{background:#3D5A80}.sw.on i{left:17px;background:#7A9CC6}
-.vrow{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:17px}
-.vmeta{color:#9AA0A6;font-size:11.5px;margin-top:2px;text-align:left}
-.vname{text-align:left}
-.play{width:26px;height:26px;border:1.5px solid #7A9CC6;border-radius:50%;color:#7A9CC6;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none;padding-left:2px}
-.plus{margin-top:auto;margin-bottom:64px;border:1.5px solid #7A9CC6;color:#7A9CC6;border-radius:999px;padding:7px 20px;font-size:15px}
-.bug{position:absolute;bottom:44px;width:466px;text-align:center;font-size:10.5px;color:#4A4F55}
-.hint{color:#9AA0A6;font-size:13px}
-.big{font-size:46px;font-weight:300;margin:16px 0 4px;letter-spacing:1px}
-.orb{width:96px;height:96px;border-radius:50%;background:radial-gradient(circle at 38% 32%,#D34A3A,#C0392B 60%);box-shadow:0 0 0 7px rgba(192,57,43,.14),0 0 34px rgba(192,57,43,.35);display:flex;align-items:center;justify-content:center;margin-top:8px}
-.stop{width:34px;height:34px;border-radius:8px;background:#3A1310}
-.wave{display:flex;gap:3px;align-items:center;height:26px;margin-top:12px}
+.sw{width:38px;height:22px;border-radius:999px;background:#3D5A80;position:relative;flex:none}
+.sw i{position:absolute;left:17px;top:1px;width:20px;height:20px;border-radius:50%;background:#7A9CC6}
+.vrow{display:flex;align-items:center;gap:12px;margin:10px 0;font-size:17px}
+.vmeta{color:#9AA0A6;font-size:11.5px;margin-top:2px}
+.orbplay{width:26px;height:26px;border-radius:50%;background:#3D5A80;display:flex;align-items:center;justify-content:center;flex:none}
+.orbplay i{width:0;height:0;border-left:9px solid #CFE2F5;border-top:6px solid transparent;border-bottom:6px solid transparent;margin-left:3px}
+.plus{position:absolute;bottom:56px;left:50%;transform:translateX(-50%);border:1.5px solid #7A9CC6;color:#7A9CC6;border-radius:999px;padding:7px 20px;font-size:15px;white-space:nowrap}
+.bug{position:absolute;bottom:34px;width:466px;text-align:center;font-size:10.5px;color:#4A4F55;left:0}
+.sb{position:absolute;right:56px;top:150px;width:3px;height:110px;border-radius:2px;background:#3A3F46}
+.sb i{position:absolute;top:0;width:3px;height:44px;border-radius:2px;background:#7A9CC6}
+.hint{color:#9AA0A6;font-size:13px;margin-top:2px}
+.big{font-size:44px;font-weight:300;margin:10px 0 2px;letter-spacing:1px}
+.orb{width:92px;height:92px;border-radius:50%;background:radial-gradient(circle at 38% 32%,#D34A3A,#C0392B 60%);box-shadow:0 0 0 7px rgba(192,57,43,.14),0 0 34px rgba(192,57,43,.35);margin:6px auto 0}
+.stop{width:30px;height:30px;border:2px solid #C0392B;border-radius:7px;display:flex;align-items:center;justify-content:center;margin:0 auto}
+.stop i{width:11px;height:11px;background:#C0392B;border-radius:2px}
+.small{color:#9AA0A6;font-size:11.5px}
+.wave{display:flex;gap:3px;align-items:center;height:24px;margin-top:10px;justify-content:center}
 .wave b{width:3px;border-radius:2px;background:#7A9CC6;display:block}
-.status{color:#8A8A8A;font-size:12px;margin-top:16px}
-.kara{font-size:16.5px;line-height:2.05;max-width:340px;margin-top:14px}
-.kara .said{color:#fff}
-.kara .now{background:#2E4B6E;color:#CFE2F5;padding:2px 9px;border-radius:999px}
-.kara .next{color:#5A5F66}
-.mini{width:220px;height:3px;background:#1A1D22;border-radius:2px;margin-top:14px;position:relative}
-.mini i{position:absolute;left:0;top:0;bottom:0;width:46%;background:#C0392B;border-radius:2px}
-.small{color:#9AA0A6;font-size:11.5px;margin-top:5px}
-</style></head><body><div class=screen>
+.status{color:#8A8A8A;font-size:12px;text-align:center;margin-top:12px}
+.kara{font-size:16px;line-height:1.75;margin-top:8px}
+.kara .now{background:#2E4B6E;color:#fff;padding:2px 8px;border-radius:8px}
+.kara .said{color:#fff} .kara .next{color:#5A5F66}
+.player{display:flex;align-items:center;justify-content:center;gap:26px;margin-top:4px}
+</style></head><body><div class=screen><div class=hdr>
 <div class=time>22:04</div><div class=title>New voice</div>
-<div class=hint>Speak naturally · 3 s min, 60 s max</div>
+<div class=hint>Speak naturally · 3 s min, 60 s max</div></div>
 <div class=big>00:07</div>
 <div class=wave><b style=height:8px></b><b style=height:16px></b><b style=height:24px></b><b style=height:12px></b><b style=height:20px></b><b style=height:26px></b><b style=height:14px></b><b style=height:18px></b><b style=height:9px></b><b style=height:22px></b><b style=height:12px></b><b style=height:16px></b><b style=height:7px></b><b style=height:13px></b><b style=height:19px></b><b style=height:11px></b><b style=height:24px></b><b style=height:15px></b><b style=height:8px></b><b style=height:17px></b></div>
-<div class=orb><div class=stop></div></div>
-<div class=small>minimum reached ✓ · tap to stop</div>
+<div class=orb></div>
+<div class=small style="text-align:center;margin-top:10px">minimum reached ✓ · tap orb to stop</div>
+<div class=small style="text-align:center;margin-top:4px">ref_rate measured at stop → card</div>
 <div class=bug>v0.9.0 · wear-demo · mock</div></div></body></html>

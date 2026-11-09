@@ -7,8 +7,8 @@ semantics), stamp the `· mock` bug. Watch screens obey the round-glass safe are
 
 | file | screen |
 |---|---|
-| mock-A-voiceout.png | Settings → Voice out: per-agent mode, library entry, karaoke toggle |
-| mock-B-library.png | Voice library: defaults + recorded cards, audition, + New voice |
+| mock-A-voiceout.png | Settings → Voice out: per-agent mode (mirrored prefs), karaoke toggle, global speed pill |
+| mock-B-library.png | Voice library: 10 seeded defaults + recorded cards (ref_rate shown), audition, + New voice |
 | mock-C-record.png | New voice: tap-start/tap-stop recorder, 3 s floor, 60 s cap |
-| mock-D-karaoke.png | Karaoke playback: said → current pill → upcoming |
+| mock-D-karaoke.png | Karaoke (watch-native): whole-sentence highlight; orb carries the 300° progress arc (7→5 o'clock); stop its own button; timer in the gap |
 | mock-E-desktop-pane.png | Hermes Desktop Wear Kit pane: Voice-out section, agent voice table, drop-to-clone |
