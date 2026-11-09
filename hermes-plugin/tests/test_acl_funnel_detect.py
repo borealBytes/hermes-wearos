@@ -58,31 +58,32 @@ def test_funnel_attr_present_is_detected():
     assert ok is True and "funnel" in detail
 
 
-def test_delete_device_resolves_numeric_node_ref():
-    # Measured live 2026-11-09: a real-watch revoke captured the engine-self-reported
-    # NUMERIC nodeId at bootstrap, but DELETE devices/{id} is keyed by the object id —
-    # the numeric call 404s ("404 page not found"), the resolver finds the device by
-    # nodeId, and the retry deletes the object id.
+def test_delete_device_resolves_odd_ref_via_device_list():
+    # Measured live 2026-11-09: the device-scoped route is the SINGULAR /device/{id}
+    # (the nested /tailnet/{t}/devices/{id} the v1 line used 404s for everything).
+    # The captured ref usually IS the API id; when it isn't (a hostname, a nodeId),
+    # the bare 404 resolves through GET devices and retries once on the right route.
     client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
                                      tailnet="example.ts.example")
     calls: list = []
     devices = {"devices": [
-        {"id": "nRealId12345CNTRL", "nodeId": 6528413509656018, "name": "wear-demo-watch-2"},
+        {"id": "6528413509656018", "nodeId": "nwd6MTMjys11CNTRL",
+         "name": "wear-demo-watch-2.tailb12aa5.ts.net", "hostname": "wear-demo-watch"},
     ]}
 
     def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
                      auth=True, if_match=None, accept=None, want_headers=False):
         calls.append((method, path))
-        if path.endswith("/devices/6528413509656018"):
+        if path == "/device/wear-demo-watch-2.tailb12aa5.ts.net":
             raise tailscale.TailnetAPIError(404, "404 page not found")
-        return b'{"deleting": true}'
+        return b"null"
 
     client._request = fake_request
     client._get = lambda path: (calls.append(("GETLIST", path)), devices)[1]
 
-    out = client.delete_device("6528413509656018")
-    assert out == {"deleted": "nRealId12345CNTRL", "resolved_from": "6528413509656018"}
-    assert calls[-1] == ("DELETE", "/tailnet/example.ts.example/devices/nRealId12345CNTRL")
+    out = client.delete_device("wear-demo-watch-2.tailb12aa5.ts.net")
+    assert out == {"deleted": "6528413509656018", "resolved_from": "wear-demo-watch-2.tailb12aa5.ts.net"}
+    assert ("DELETE", "/device/6528413509656018") in calls
 
 
 def test_delete_device_object_id_skips_resolver():
@@ -93,11 +94,12 @@ def test_delete_device_object_id_skips_resolver():
     def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
                      auth=True, if_match=None, accept=None, want_headers=False):
         calls.append((method, path))
-        return b'{"deleting": true}'
+        return b"null"  # the measured happy-path response
 
     client._request = fake_request
     client._get = lambda path: pytest.fail("resolver must not run when the id matches")
-    assert client.delete_device("nDirectId999CNTRL") == {"deleted": "nDirectId999CNTRL"}
+    assert client.delete_device("6528413509656018") == {"deleted": "6528413509656018"}
+    assert calls == [("DELETE", "/device/6528413509656018")]
 
 
 def test_delete_device_unknown_ref_keeps_the_404():
@@ -109,7 +111,7 @@ def test_delete_device_unknown_ref_keeps_the_404():
         raise tailscale.TailnetAPIError(404, "404 page not found")
 
     client._request = fake_request
-    client._get = lambda path: {"devices": [{"id": "nOther", "nodeId": 1, "name": "elsewhere"}]}
+    client._get = lambda path: {"devices": [{"id": "1", "nodeId": "nOther", "name": "elsewhere"}]}
     with pytest.raises(tailscale.TailnetAPIError):
         client.delete_device("999999999")
 

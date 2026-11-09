@@ -4,6 +4,10 @@ Endpoints verified LIVE against the API surface and the official client
 `tailscale/tailscale-client-go-v2` (probe 2026-11-06, /tmp/opencode/tsprobe/REPORT.md):
   OAuth   POST /api/v2/oauth/token            grant_type=client_credentials
   Devices GET  /api/v2/tailnet/-/devices      credential validation (any readable tailnet)
+  Device  DELETE /api/v2/device/{id}          remove one node (full-revoke, D12). Measured
+            2026-11-09: the NESTED /tailnet/{t}/devices/{id} route answers 404 "404 page
+            not found" for GET/DELETE/logout alike — the device-scoped surface is the
+            SINGULAR /device/{id} without a tailnet segment. 200 + body null = accepted.
   Keys    POST /api/v2/tailnet/{t}/keys       one-use, pre-authorized, tagged enrollment keys
             body: capabilities.devices.create{reusable:false, ephemeral:false,
                   preauthorized:true, tags:["tag:x"]} + TOP-LEVEL expirySeconds
@@ -250,17 +254,19 @@ class TailnetClient:
 
     def delete_device(self, node_id: str) -> Any:
         """Remove a node from the tailnet (full-revoke, D12). 404 afterwards is the
-        proof of removal. Route measured against the v2 API: DELETE devices/{id}.
+        proof of removal.
 
-        Measured on the first REAL-WATCH revoke (2026-11-09): the API's device `id`
-        IS the numeric the engine self-reports, so the captured ref is right — but
-        this token 404s every device-scoped route, GET included: Tailscale masks
-        missing scopes as 404s, and the minted key carries create-keys + ACL-write,
-        not device delete. The list-resolve retry below stays as format-proofing
-        (accepts id, nodeId or hostname from any future capture); the revoke report
-        names the capability gap when the API answers 404."""
+        Measured on the first REAL-WATCH revoke (2026-11-09): the device-scoped
+        surface is SINGULAR and tailnet-less — DELETE /device/{id} (200, body null).
+        The nested /tailnet/{t}/devices/{id} route this first used answers 404 for
+        GET/DELETE/logout alike (a MUX 404, not a scope denial — the same token
+        deletes fine on the right route). The API's device `id` IS the numeric the
+        engine self-reports, so a captured ref is usually the right one; a bare 404
+        resolves it through the device list (id, nodeId, hostname) and retries once
+        on the correct route, which also accepts a hostname or nodeId from any future
+        capture. Unknown refs keep the original 404, which revoke reports as a step."""
         try:
-            self._request("DELETE", f"/tailnet/{self._tn()}/devices/{urllib.parse.quote(node_id)}")
+            self._request("DELETE", f"/device/{urllib.parse.quote(node_id)}")
         except TailnetAPIError as exc:
             if exc.status != 404:
                 raise
@@ -269,7 +275,7 @@ class TailnetClient:
                 if want in (str(d.get("id", "")), str(d.get("nodeId", "")),
                             str(d.get("name", "")), str(d.get("hostname", ""))):
                     self._request("DELETE",
-                                  f"/tailnet/{self._tn()}/devices/{urllib.parse.quote(str(d['id']))}")
+                                  f"/device/{urllib.parse.quote(str(d['id']))}")
                     return {"deleted": str(d["id"]), "resolved_from": want}
             raise
         return {"deleted": node_id}
