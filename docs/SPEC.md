@@ -475,7 +475,8 @@ the fingertip** (`ICON_RING_REF` > activation radius)
 commits. Once the direction is memorized the whole gesture is a blind flick — the icons are for
 learning, not for aiming. Sectors activate past `ACTIVATE_RADIUS_REF` (never a jitter) and the
 lane only arms on a drag that crosses before the long-press timeout, so **tap = record is untouched**
-(owner batch 6 made the bare hold inert — hold-to-talk retired so the hold belongs to the dial;
+(owner batch 6 retired hold-to-talk so the hold belongs to the dial; batch 7 closed the loop — a
+stationary hold now BLOOMS THE DIAL on the idle orb too, it was only wired for thinking/speaking.
 `OrbGesture` keeps the race, `OrbDial` classifies the direction).
 
 **Re-aim (owner batch 5: "if I go up I should still be able to move over to one of the others"):**
@@ -804,13 +805,18 @@ thing instead of just above the orb".
   `pending > 0` in `SpeakAloud`) shows a **🔇 speaker** — each promise matches exactly what the tap
   does. Tap always means "stop what the orb is doing": thinking →
   cancel the run AND flush the voice queue in one breath (`stopActiveRun` + `speak.stop()`);
-  speaking → MUTE only (the answer already landed; orb returns to the mic). A stationary HOLD in
-  either state BLOOMS THE DIAL IN PLACE (hold-timeout routes to `onDialArm`): grab the keyboard, a
-  `/steer`, any lane mid-answer — the run is never disturbed by the hold (short tap does that), and
-  release-at-home cancels the bloom. Gesture state reads LIVE via `rememberUpdatedState`, never as
-  `pointerInput` keys: a flip mid-hold (queue drains while the finger sits) must not restart the
-  detector, which would cancel the gesture without `onDialEnd` and freeze the ring open. Idle orb
-  semantics untouched (tap-to-talk, come-home-cancel, drag-dial, dwell-volume).
+  speaking → MUTE only (the answer already landed; orb returns to the mic). A stationary HOLD
+  BLOOMS THE DIAL IN PLACE (hold-timeout routes to `onDialArm`): grab the keyboard, a `/steer`, any
+  lane mid-answer — the run is never disturbed by the hold (short tap does that), and
+  release-at-home cancels the bloom. **Batch 7 on real glass closed two holes in this promise:**
+  the bloom fired ONLY while thinking/speaking (an IDLE stationary hold fell to the no-op
+  `onHoldStart` lane — "the orb don't show up"), and `Tracker.move` froze dx/dy once the hold
+  locked, so even a bloomed ring could not be aimed or spun ("it's not letting me select, it's not
+  spinning"). Now: the hold-timeout arms the dial in EVERY state, and the vector is live until the
+  pointer lifts — HOLD freezes the VERDICT, never the stream (JVM-tested). The detector reads no
+  orb state at all, so a flip mid-hold (queue drains while the finger sits) can never restart the
+  gesture without `onDialEnd` and freeze the ring open. Idle orb semantics otherwise untouched
+  (tap-to-talk, come-home-cancel, drag-dial, dwell-volume).
 - **Karaoke follow (`SpeakAloud.speakingOffset` + `MainActivity` ChatBody effect)**: the utterance
   registry carries each sentence's STREAM OFFSET (`Utt(text, step, offset)`); `onStart` publishes
   it, and while speaking + tail-follow is engaged the chat anchors the spoken line ~34 % down the

@@ -778,10 +778,11 @@ class MainActivity : ComponentActivity() {
                             },
                             onHoldStart = {
                                 // HOLD BELONGS TO THE DIAL (owner batch 6: long-press-to-listen is
-                                // retired — it fought the hold+drag selector). A bare hold with no
-                                // drag now means nothing; the dial arms on drag, recording starts
-                                // on TAP. TalkOrb still reports hold so callers that want it (none
-                                // today) can react; the dial path is onDialArm/onDialMove/onDialEnd.
+                                // retired — it fought the hold+drag selector; batch 7: the hold now
+                                // BLOOMS THE DIAL in every state inside TalkOrb itself). This
+                                // callback is a notification only; the dial path is
+                                // onDialArm/onDialMove/onDialEnd, and callers that want the bare
+                                // hold fact (none today) can still react here.
                             },
                             onHoldEnd = { /* dial semantics only — nothing to flush on bare hold */ },
                             // PINCH FONT-SCALE: multiplicative 0.05-step apply (persisted). Same-value

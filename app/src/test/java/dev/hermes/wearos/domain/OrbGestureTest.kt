@@ -6,7 +6,9 @@ import org.junit.Test
 /**
  * ORB GESTURE classifier table. Originally the drag-up → keyboard ask; batch 3 grew that one
  * direction into the 8-lane DIAL (SPEC §12.1), so the orb still sees ONE raw pointer stream and
- * must split it: TAP = hands-free toggle, HOLD = press-to-talk, DRAG_UP = the 12:00 lane (keyboard,
+ * must split it: TAP = hands-free toggle, HOLD = stationary press → the dial blooms in place
+ * (batch 6/7 — hold-to-talk retired; the VERDICT freezes, the aim vector never does),
+ * DRAG_UP = the 12:00 lane (keyboard,
  * byte-identical contract), DRAG = any other direction, whose lane `OrbDial.laneAt` decides.
  *
  * All px+ms: at the emulator's density 2 the dp gates are 40dp→80px up and 30dp→60px drift;
@@ -68,18 +70,18 @@ class OrbGestureTest {
         )
     }
 
-    @Test fun `HOLD locks first - an upward slide AFTER the timeout stays PTT`() {
+    @Test fun `HOLD locks first - an upward slide AFTER the timeout stays a HOLD`() {
         // 40px up at 300ms (not enough), then 120px up at 450ms — hold won the race at 400ms,
-        // dragging the finger while talking must not hijack PTT into the editor.
+        // and the VERDICT never re-arms; the live vector (below) is what the bloomed dial aims with.
         assertEquals(
             OrbGesture.Verdict.HOLD,
             verdict(listOf(Move(200f, 560f, 1_300L), Move(200f, 480f, 1_450L)), releaseT = 1_700L),
         )
     }
 
-    @Test fun `a slow drag past the dial gate after the timeout is still PTT, not a lane`() {
-        // The dial is a FLICK. Cross the 51px gate at 450ms (after the 400ms hold lock) and the
-        // hold stands — hold-then-slide keeps talking (unchanged owner semantics).
+    @Test fun `a slow drag past the dial gate after the timeout is still a HOLD, not a lane`() {
+        // The dial flick is a FLICK. Cross the 51px gate at 450ms (after the 400ms hold lock) and
+        // the hold stands — hold-then-slide blooms the ring and aims it, it is not a fresh flick.
         assertEquals(
             OrbGesture.Verdict.HOLD,
             verdict(listOf(Move(200f, 560f, 1_300L), Move(200f, 500f, 1_450L)), releaseT = 1_700L, minDrag = 51f),
@@ -118,6 +120,21 @@ class OrbGestureTest {
         assertEquals(-100f, tracker.dy, 0.01f)
         tracker.move(140f, 500f, 1_250L) // steer left mid-drag: the vector follows, it does not latch
         assertEquals(-60f, tracker.dx, 0.01f)
+    }
+
+    @Test fun `HOLD locks the verdict but the vector stays live for the bloomed dial`() {
+        // Regression (owner on real glass, batch 7): the hold branch of TalkOrb feeds THIS
+        // tracker through feedDialUntilUp. If move() early-returned on holdFired, every
+        // onDialMove after the bloom reported the arm point — the ring opened but could neither
+        // be aimed nor spun ("it's not letting me select, it's not spinning").
+        val tracker = OrbGesture.Tracker(downX, downY, 1_000L, longPress, minUp, maxDrift, 51f)
+        tracker.move(200f, 600f, 1_450L) // jitter past the timeout: HOLD locks
+        assertEquals(OrbGesture.Verdict.HOLD, tracker.verdict(1_700L))
+        tracker.move(320f, 540f, 1_550L) // finger slides toward the 2:00 wedge post-bloom
+        assertEquals(120f, tracker.dx, 0.01f)
+        assertEquals(-60f, tracker.dy, 0.01f)
+        // …and the decision stays frozen: a slow post-hold drag is never re-armed into a flick.
+        assertEquals(OrbGesture.Verdict.HOLD, tracker.verdict(1_700L))
     }
 
     @Test fun `dp gate constants match the owner spec`() {

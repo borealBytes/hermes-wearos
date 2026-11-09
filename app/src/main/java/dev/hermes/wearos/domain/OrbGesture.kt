@@ -13,8 +13,9 @@ import kotlin.math.sqrt
  *  - DRAG (new): any OTHER direction past the dial's activation gate before the hold locks. Which
  *    lane it means is `OrbDial.laneAt(vector)` — the dial decides by sector at release, so this
  *    classifier only answers "was this a drag at all".
- *  - HOLD: the long-press timeout wins first (hold-to-talk, unchanged). Once hold is locked,
- *    an upward slide that crosses later stays a HOLD (PTT while talking is natural).
+ *  - HOLD: the long-press timeout wins first. Once hold is locked the VERDICT is final (a slide
+ *    that crosses the gate later is not a flick; the classifier never re-arms), but the vector
+ *    stays live: since batch 6 the hold BLOOMS THE DIAL IN PLACE and aim/spin ride the stream.
  *  - TAP: released before the timeout without crossing any gate — incl. small upward slides
  *    (<40dp) and the tap-with-slop jitter a real watch touch always has.
  *
@@ -57,7 +58,11 @@ object OrbGesture {
         var holdFired = false
             private set
 
-        /** Live drag vector — what `OrbDial.laneAt` aims with. Updated on every move until hold locks. */
+        /**
+         * Live drag vector — what `OrbDial.laneAt` aims with. Updated on EVERY move until the
+         * pointer lifts: the verdict freezes when the hold wins the race, the vector never does
+         * (the hold blooms the dial in place and aim/spin must keep flowing — batch 7).
+         */
         var dx = 0f
             private set
         var dy = 0f
@@ -74,7 +79,16 @@ object OrbGesture {
          * change of mind becomes impossible.
          */
         fun move(x: Float, y: Float, tMs: Long) {
-            if (holdFired) return
+            if (holdFired) {
+                // HOLD locks the VERDICT, never the vector (owner on real glass, batch 7: the
+                // hold bloomed the dial but "it's not spinning" — a frozen dx/dy meant every
+                // move after the timeout still reported the arm point). A stationary hold opens
+                // the ring IN PLACE and the finger then aims/spins from there, so the stream
+                // stays live until the pointer lifts; `verdict` stays HOLD either way.
+                dx = x - downX
+                dy = y - downY
+                return
+            }
             dx = x - downX
             dy = y - downY
             if (dragArmed) return // armed = live vector until UP, no timers apply

@@ -10,7 +10,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.wear.compose.material.Text
 import androidx.compose.foundation.layout.padding
@@ -21,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,8 +58,9 @@ private val OrbStopRing = Color(0xFFFF5252)
  *  - listening: red base + PULSE RING (expanding/fading circle), glyph kept.
  *  - running (a reply streams): red ring + a STOP square over the dimmed glyph — tap/hold-release
  *    stops the run (ask #3 semantics UNCHANGED).
- * Tap = hands-free listening (VAD auto-send), hold = push-to-talk, exactly as before; a DRAG out of
- * the disc now reports a vector stream ([onDialArm]/[onDialMove]/[onDialEnd]) and the caller decides
+ * Tap = hands-free listening (VAD auto-send); a stationary HOLD now blooms the dial IN PLACE in
+ * every state (§12.1 batch 6+7: hold-to-talk is retired — the hold belongs to the dial); a DRAG out
+ * of the disc reports a vector stream ([onDialArm]/[onDialMove]/[onDialEnd]) and the caller decides
  * the lane with `OrbDial` — because the ring lives in the parent (it must be drawn around the orb,
  * and the contextual rise moves the orb itself). The up-drag that used to open the keyboard is now
  * simply the 12:00 lane, so `onDragUp` is gone. Not a Material `Button`: wear Buttons swallow
@@ -89,12 +88,10 @@ fun TalkOrb(
     onDialEnd: (dxPx: Float, dyPx: Float) -> Unit = { _, _ -> },
 ) {
     var pressed by remember { mutableStateOf(false) }
-    // State read LIVE inside the gesture loop (rememberUpdatedState), never as a pointerInput
-    // key: if thinking/speaking flipped mid-hold (queue drained while the finger sat there),
-    // restarting the detector would cancel the gesture WITHOUT onDialEnd and freeze the ring
-    // open (owner 2026-10-29 state machine).
-    val runningLive by androidx.compose.runtime.rememberUpdatedState(running)
-    val speakingLive by androidx.compose.runtime.rememberUpdatedState(speaking)
+    // The detector reads NO orb state (batch 7): a stationary hold arms the dial in EVERY state,
+    // so there is nothing for a mid-hold flip to race against — and pointerInput keys only on
+    // dialScale, so thinking→idle (queue drains while the finger sits) can never restart the
+    // gesture mid-stream and freeze the ring open (the owner 2026-10-29 state-machine bug).
     // STOP face = thinking OR speaking (same red ⏹ everywhere: tap always means "stop what the
     // orb is doing" — cancel the answer while running, mute while speaking).
     val stopped = running || speaking
@@ -145,8 +142,9 @@ fun TalkOrb(
                             OrbDial.ACTIVATE_REF * dialScale,
                         )
                         // The dial stream, shared by BOTH entries: the drag gate AND the
-                        // stopped-state hold-pop. Feeds moves until the finger leaves. (Extension
-                        // receiver: awaitPointerEvent is a @RestrictsSuspension member.)
+                        // hold-pop (which arms in every state). Feeds moves until the finger
+                        // leaves. (Extension receiver: awaitPointerEvent is a @RestrictsSuspension
+                        // member.)
                         val feedDialUntilUp: suspend androidx.compose.ui.input.pointer.AwaitPointerEventScope.() -> Unit = {
                             while (true) {
                                 val ev = awaitPointerEvent()
@@ -189,24 +187,22 @@ fun TalkOrb(
                                 pressed = false
                                 onTap()
                             }
-                            runningLive || speakingLive -> {
-                                // HOLD-POPS-THE-DIAL (owner 2026-10-29: *"press and hold should
-                                // still pop out the clock scrolly thing … maybe I want the
-                                // keyboard, a steer, a slash command"*). While it thinks OR reads
-                                // aloud, a stationary hold blooms the ring IN PLACE — the run is
-                                // NOT stopped (short tap does that) and is not disturbed on
-                                // release-at-home (come-home = cancel). Aim after the bloom and
-                                // release on a lane to fire it.
+                            else -> {
+                                // HOLD-POPS-THE-DIAL IN EVERY STATE (owner batch 6 doctrine,
+                                // SPEC §12.1: "hold-to-talk retired — the hold belongs to the
+                                // dial"; batch 7 on real glass: the state gate that made the pop
+                                // thinking/speaking-only was the regression — a stationary hold on
+                                // the IDLE orb went to the no-op lane and the dial never bloomed).
+                                // The run is NOT stopped by the hold (short tap does that);
+                                // release-at-home = cancel. Aim after the bloom — the vector is
+                                // live post-hold (OrbGesture batch 7) — and release on a wedge to
+                                // fire that lane, spin included.
+                                onHoldStart()
                                 onDialArm()
                                 onDialMove(tracker.dx, tracker.dy)
                                 this.feedDialUntilUp()
                                 pressed = false
                                 onDialEnd(tracker.dx, tracker.dy)
-                            }
-                            else -> {
-                                onHoldStart()
-                                waitForUpOrCancellation()
-                                pressed = false
                                 onHoldEnd()
                             }
                         }
