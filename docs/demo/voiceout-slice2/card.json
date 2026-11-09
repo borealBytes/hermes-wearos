@@ -1,0 +1,14 @@
+{
+  "card_id": "synthetic-demo-6c76eb50",
+  "label": "synthetic-demo",
+  "source": "docker-demo",
+  "license": "owner-recorded",
+  "seeded": false,
+  "sha256": "6c76eb5055ea834f34eef4b30e2cccd7a7f2d37d320db4f2c823ead5c4da2432",
+  "created": 1794255293.8546567,
+  "transcript": "Your cron digest is ready: three farm alerts, no incidents, sprayer window opens Thursday at six ten.",
+  "ref_rate": 316.8,
+  "voiced_s": 3.22,
+  "words": 17,
+  "seconds_total": 5.2
+}

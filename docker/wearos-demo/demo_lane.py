@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-os.environ.setdefault("HERMES_HOME", "/opt/wearos-home")
+os.environ["HERMES_HOME"] = os.environ.get("WEAROS_HOME", "/tmp/wearos-home")
 os.environ.setdefault("API_SERVER_KEY", "sk-demo...tion")
 os.environ["tailscale_api_token"] = "tskey-api-demo"   # _cred() fallback (conftest trick)
 OUT = Path(os.environ.get("WEAROS_OUT", "/opt/wearos-out"))
@@ -128,6 +128,7 @@ print(f"   {st} card={cid} measured_ref_rate={card.get('ref_rate')}"
 if cid:
     print("== GET /voice/card_wav (raw audio lane) ==")
     st, raw = call("GET", f"/voice/card_wav?card_id={cid}", raw=True)
+    (OUT / "card.wav").write_bytes(raw)
     print(f"   {st}, {len(raw)} bytes round-tripped: {raw == wav}")
 
 print("== POST /voice/synthesize ==")
