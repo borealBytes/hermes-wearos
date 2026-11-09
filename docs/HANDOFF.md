@@ -42,3 +42,4 @@ Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karao
 ## How to run me (the desk)
 
 `weardev` (alias) or `hermes -p weardev` on the desktop, opened at `/run/media/clay/Data/dev/hermes-wearos-worktrees` (this folder's AGENTS.md loads from cwd). The owner drives by demo and review: ship small, show screenshots on the PR, state guesses as guesses, bottom line first.
+ 2026-11-09 hackathon compliance pass: `hermes plugins validate` run against the branch (passed; the sole sudo_usage caution is a PRINTED suggestion, documented in README). HF token rerouted to the declared `config_schema` secret `hf_token` (rule 11 — no bare env reads, no vendor-cache reads in-host); README gained the voice-out disclosure section (rule 13); version 0.3.0 with voice-out description + voice/tts tags. Demo proof packs will land at docs/demo/voiceout-slice3/proof/ (desktop + watch + install + card, all captured in Docker).
