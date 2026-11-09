@@ -868,6 +868,34 @@ class WearApp : Application() {
         /** Dev-only (adb `-e tailnet_reenroll`). */
         fun devTailnetReenroll() = tailnetReenroll()
 
+        /**
+         * Dev-only (adb `-e pair_knock <handle>`): the WHOLE pairing v2 ceremony from a script —
+         * same code path the Pair screen's Knock runs (begin → code → poll → ack → pickup).
+         * The code lands in logcat (`pair code …`) so setup.sh/verify scripts can read it back
+         * and type it to the CLI; the rest (lane session, keys) rides the ACTIVE edge by itself.
+         */
+        fun devPairKnock(rawHandle: String) = scope.launch {
+            val h = dev.hermes.wearos.domain.PairingCode.normalizeHandle(rawHandle)
+            if (h.isEmpty()) { Log.w(TAG, "pair_knock: bad handle"); return@launch }
+            settings.setTailnetHandle(h)
+            val client = dev.hermes.wearos.net.PairingClient()
+            val secret = client.newSecret()
+            val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                client.pair(h, secret, android.os.Build.MODEL,
+                    onCode = { code -> Log.i(TAG, "pair code $code — type it: hermes watch pair $code") })
+            }
+            when (out) {
+                is dev.hermes.wearos.net.PairingClient.Outcome.Completed -> {
+                    Log.i(TAG, "pair_knock done — pickup + token in hand")
+                    pairApplyPickup(out.packet, secret, out.deviceToken)
+                }
+                else -> Log.w(TAG, "pair_knock ended: $out")
+            }
+        }
+
+        /** Dev-only (adb `-e unpair 1`): the watch-side revoke (lane forget + local wipe). */
+        fun devUnpair() = unpair()
+
         fun setWatchkitBase(url: String) {
             scope.launch {
                 settings.setMermaidBaseUrl(url)
