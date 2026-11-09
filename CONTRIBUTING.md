@@ -31,7 +31,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://<host>:8642/p/wear-demo/v1/healt
 ```bash
 scripts/setup.sh --api http://<host>:8642/p/wear-demo --token <wear-demo key>
 # or on-device: Settings ▸ Gateways (add endpoint + token); seed every profile's key map with
-scripts/setup.sh --agent-keys   # watchkit then serves GET /agent_keys to the watch too
+scripts/setup.sh --agent-keys   # the whole per-profile key map rides set_agent_key (lane re-learns per D17)
 ```
 
 The app itself is agent-agnostic — the profile lives in the endpoint path (`/p/wear-demo`) and

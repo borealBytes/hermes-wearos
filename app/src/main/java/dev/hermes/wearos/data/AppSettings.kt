@@ -89,6 +89,15 @@ class AppSettings(private val context: Context) {
         private val KEY_BODY_SPO2 = booleanPreferencesKey("body_watch_spo2")
         private val KEY_BODY_LOC = booleanPreferencesKey("body_watch_location")
 
+        // PAIRING v2 (D8/D13/D15): the PRIVATE LANE address (the plugin's tailnet-IP server),
+        // the device token that authenticates it, the live pairing secret (only until the first
+        // session binds our node — then wiped), and the outbox cursor (cron alerts D14).
+        // token/tailnet_key/watchkit_token/device_token/pairing_secret are Keystore-sealed (D15).
+        private val KEY_LANE_BASE = stringPreferencesKey("lane_base")
+        private val KEY_DEVICE_TOKEN = stringPreferencesKey("device_token")
+        private val KEY_PAIRING_SECRET = stringPreferencesKey("pairing_secret")
+        private val KEY_OUTBOX_CURSOR = longPreferencesKey("outbox_cursor")
+
         // Example default: tailnet hostname placeholder + wear profile — edit in-app or via
         // scripts/setup.sh; the production path is the Pair flow (Settings ▸ Gateways ▸ Pair, S5).
         // Mirrors GatewayModel.seed() — tailnet-FQDN-only since §11.4 shipped.
@@ -124,12 +133,12 @@ class AppSettings(private val context: Context) {
     }
 
     suspend fun baseUrl(): String = context.dataStore.data.first()[KEY_BASE_URL] ?: DEFAULT_BASE_URL
-    suspend fun token(): String = context.dataStore.data.first()[KEY_TOKEN] ?: ""
+    suspend fun token(): String = readSealed(KEY_TOKEN)
     suspend fun sessionId(): String = context.dataStore.data.first()[KEY_SESSION_ID] ?: ""
     suspend fun lastRun(): String = context.dataStore.data.first()[KEY_LAST_RUN] ?: ""
 
     // EMBEDDED TAILNET accessors (SPEC §11.4).
-    suspend fun tailnetKey(): String = context.dataStore.data.first()[KEY_TAILNET_KEY] ?: ""
+    suspend fun tailnetKey(): String = readSealed(KEY_TAILNET_KEY)
     suspend fun tailnetHostname(): String = context.dataStore.data.first()[KEY_TAILNET_HOSTNAME] ?: DEFAULT_TAILNET_HOSTNAME
     /**
      * Force-ON in release ("tailnet only, always"): only a DEBUGGABLE build may ride the
@@ -137,7 +146,7 @@ class AppSettings(private val context: Context) {
      */
     suspend fun tailnetEnabled(): Boolean =
         !debuggable || (context.dataStore.data.first()[KEY_TAILNET_ENABLED] ?: true)
-    suspend fun setTailnetKey(v: String) { context.dataStore.edit { it[KEY_TAILNET_KEY] = v.trim() } }
+    suspend fun setTailnetKey(v: String) = writeSealed(KEY_TAILNET_KEY, v)
     suspend fun setTailnetHostname(v: String) {
         context.dataStore.edit { it[KEY_TAILNET_HOSTNAME] = v.trim().ifEmpty { DEFAULT_TAILNET_HOSTNAME } }
     }
@@ -164,7 +173,7 @@ class AppSettings(private val context: Context) {
         if (foldRegistry && list.isNotEmpty()) {
             val sel = selectedGatewayId().ifEmpty { list.first().id }
             val folded = GatewayModel.foldBaseUrl(list, sel, t)
-            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+            context.dataStore.edit { it[KEY_GATEWAYS] = encodeGateways(folded) }
             gatewaysCache = folded
         }
     }
@@ -195,6 +204,17 @@ class AppSettings(private val context: Context) {
         context.dataStore.data.first()[KEY_CURRENT_AGENT]?.takeIf { ProfileLogic.isValidProfile(it) }
             ?: ProfileLogic.FALLBACK_AGENT
 
+    /**
+     * PAIRING v2: remember the AGENT a pickup paired this watch to. The paired base URL carries
+     * no `/p/` segment (the profile is the pairing's, not the wearer's pick), so without this
+     * the boot lane-restore would dial `/watch/default/…` for a watch paired to a named agent —
+     * and the lane honestly 403s that ("paired to agent 'wear-demo'", live 2026-11-09).
+     */
+    suspend fun notePairedAgent(agent: String) {
+        val a = agent.trim().lowercase()
+        if (ProfileLogic.isValidProfile(a)) context.dataStore.edit { it[KEY_CURRENT_AGENT] = a }
+    }
+
     /** Agent at cold start (or `wear` first open) with the base URL's `/p/` segment rebuilt to it. */
     suspend fun loadProfile(): String {
         val agent = savedAgent()
@@ -224,12 +244,12 @@ class AppSettings(private val context: Context) {
     }.let { }
 
     suspend fun setToken(v: String) {
-        context.dataStore.edit { it[KEY_TOKEN] = v.trim() }
+        writeSealed(KEY_TOKEN, v)
         val list = gateways()
         if (list.isNotEmpty()) {
             val sel = selectedGatewayId().ifEmpty { list.first().id }
-            val folded = GatewayModel.foldToken(list, sel, v)
-            context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+            val folded = GatewayModel.foldToken(list, sel, v.trim())
+            context.dataStore.edit { it[KEY_GATEWAYS] = encodeGateways(folded) }
             gatewaysCache = folded
         }
     }
@@ -576,9 +596,81 @@ class AppSettings(private val context: Context) {
         _mediaAudioKbps.value = k
     }
 
-    suspend fun watchkitToken(): String = context.dataStore.data.first()[KEY_WATCHKIT_TOKEN] ?: ""
+    suspend fun watchkitToken(): String = readSealed(KEY_WATCHKIT_TOKEN)
     suspend fun setMermaidBaseUrl(v: String) = context.dataStore.edit { it[KEY_WATCHKIT_URL] = v.trim().trimEnd('/') }.let { }
-    suspend fun setWatchkitToken(v: String) = context.dataStore.edit { it[KEY_WATCHKIT_TOKEN] = v.trim() }.let { }
+    suspend fun setWatchkitToken(v: String) = writeSealed(KEY_WATCHKIT_TOKEN, v)
+
+    // ─── PRIVATE LANE (pairing v2, SPEC §11.4 / D8/D13/D15) ─────────────────────────────────
+    suspend fun laneBase(): String = context.dataStore.data.first()[KEY_LANE_BASE] ?: ""
+    suspend fun setLaneBase(v: String) =
+        context.dataStore.edit { it[KEY_LANE_BASE] = v.trim().trimEnd('/') }.let { }
+    suspend fun deviceToken(): String = readSealed(KEY_DEVICE_TOKEN)
+    suspend fun setDeviceToken(v: String) = writeSealed(KEY_DEVICE_TOKEN, v)
+    suspend fun pairingSecret(): String = readSealed(KEY_PAIRING_SECRET)
+    suspend fun setPairingSecret(v: String) = writeSealed(KEY_PAIRING_SECRET, v)
+    suspend fun outboxCursor(): Long = context.dataStore.data.first()[KEY_OUTBOX_CURSOR] ?: 0L
+    suspend fun setOutboxCursor(v: Long) = context.dataStore.edit { it[KEY_OUTBOX_CURSOR] = v }.let { }
+
+    /** Self-unpair (watch ▸ Unpair): every credential pairing ever gave us, gone. */
+    suspend fun wipePairingSecrets() {
+        context.dataStore.edit {
+            it[KEY_DEVICE_TOKEN] = ""
+            it[KEY_PAIRING_SECRET] = ""
+            it[KEY_TAILNET_KEY] = ""
+            it[KEY_LANE_BASE] = ""
+            it[KEY_OUTBOX_CURSOR] = 0L
+        }
+    }
+
+    // ─── KEYSTORE SEALS (D15) ────────────────────────────────────────────────────────────────
+    // Secret scalars sit in DataStore as `ks1:`-sealed blobs; a legacy plaintext value still
+    // READS (upgrade keeps working) and is re-sealed on the spot (lazy migration). The gateway
+    // registry carries per-record tokens + per-agent keys, sealed field-wise at the encode/decode
+    // boundary — the in-memory list the whole app reads always holds plaintext.
+    private suspend fun readSealed(key: androidx.datastore.preferences.core.Preferences.Key<String>): String {
+        val raw = context.dataStore.data.first()[key] ?: ""
+        if (raw.isEmpty()) return ""
+        if (!KeystoreSecrets.needsSeal(raw)) return KeystoreSecrets.unseal(context, raw)
+        context.dataStore.edit { it[key] = KeystoreSecrets.seal(context, raw) } // migrate the legacy value
+        return raw
+    }
+
+    private suspend fun writeSealed(key: androidx.datastore.preferences.core.Preferences.Key<String>, v: String) {
+        val t = v.trim()
+        context.dataStore.edit { it[key] = if (t.isEmpty()) "" else KeystoreSecrets.seal(context, t) }
+    }
+
+    /** Same read as [readSealed] but for a caller already holding the prefs snapshot. A legacy
+     *  plaintext value is re-sealed by [migrateSecrets] / the next `token()` read (suspend paths). */
+    private fun readSealedSync(prefs: androidx.datastore.preferences.core.Preferences): String {
+        val raw = prefs[KEY_TOKEN] ?: ""
+        if (raw.isEmpty()) return ""
+        return if (KeystoreSecrets.needsSeal(raw)) raw else KeystoreSecrets.unseal(context, raw)
+    }
+
+    private fun sealGatewayFields(g: Gateway) = g.copy(
+        token = KeystoreSecrets.seal(context, g.token),
+        agentKeys = g.agentKeys.mapValues { KeystoreSecrets.seal(context, it.value) },
+    )
+
+    private fun unsealGatewayFields(g: Gateway) = g.copy(
+        token = KeystoreSecrets.unseal(context, g.token),
+        agentKeys = g.agentKeys.mapValues { KeystoreSecrets.unseal(context, it.value) },
+    )
+
+    private fun encodeGateways(list: List<Gateway>): String =
+        GatewayModel.encode(list.map { sealGatewayFields(it) })
+
+    private fun decodeGateways(raw: String): List<Gateway> =
+        GatewayModel.decode(raw).map { unsealGatewayFields(it) }
+
+    /** First boot after an upgrade: re-seal every secret scalar + the whole registry once. */
+    suspend fun migrateSecrets() {
+        sequenceOf(KEY_TOKEN, KEY_WATCHKIT_TOKEN, KEY_TAILNET_KEY, KEY_DEVICE_TOKEN, KEY_PAIRING_SECRET)
+            .forEach { readSealed(it) }
+        val list = gateways()
+        if (list.isNotEmpty()) saveGateways(list)
+    }
 
     // ─── GATEWAY REGISTRY (owner epic, SPEC §11) ───────────────────────────────────────────
     // The registry (gateways_json + gateway_selected) is the source of truth; the legacy keys
@@ -597,19 +689,19 @@ class AppSettings(private val context: Context) {
 
     suspend fun gateways(): List<Gateway> {
         val raw = context.dataStore.data.first()[KEY_GATEWAYS].orEmpty()
-        val list = GatewayModel.decode(raw)
+        val list = decodeGateways(raw)
         if (list.isNotEmpty()) { gatewaysCache = list; return list }
         if (raw.isNotBlank() && gatewaysCache.isNotEmpty()) return gatewaysCache
         return list
     }
 
     suspend fun saveGateways(list: List<Gateway>) {
-        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(list) }
+        context.dataStore.edit { it[KEY_GATEWAYS] = encodeGateways(list) }
         gatewaysCache = list
     }
 
     suspend fun selectedGatewayId(): String = context.dataStore.data.first().let {
-        (it[KEY_GW_SELECTED].orEmpty()).ifEmpty { GatewayModel.decode(it[KEY_GATEWAYS].orEmpty()).firstOrNull()?.id ?: "" }
+        (it[KEY_GW_SELECTED].orEmpty()).ifEmpty { decodeGateways(it[KEY_GATEWAYS].orEmpty()).firstOrNull()?.id ?: "" }
     }
 
     suspend fun setSelectedGatewayId(id: String) = context.dataStore.edit { it[KEY_GW_SELECTED] = id }.let { }
@@ -631,14 +723,14 @@ class AppSettings(private val context: Context) {
     suspend fun ensureGateways(): Gateway? {
         val prefs = context.dataStore.data.first()
         val raw = prefs[KEY_GATEWAYS].orEmpty()
-        val existing = GatewayModel.decode(raw)
+        val existing = decodeGateways(raw)
         if (existing.isNotEmpty()) return existing.firstOrNull { it.id == (prefs[KEY_GW_SELECTED].orEmpty()) } ?: existing.first()
         if (raw.isNotBlank()) return gatewaysCache.firstOrNull()
         val (list, selected) = GatewayModel.migrate(
-            prefs[KEY_BASE_URL] ?: "", prefs[KEY_TOKEN] ?: "", prefs[KEY_WATCHKIT_URL] ?: "",
+            prefs[KEY_BASE_URL] ?: "", readSealedSync(prefs), prefs[KEY_WATCHKIT_URL] ?: "",
         )
         context.dataStore.edit {
-            it[KEY_GATEWAYS] = GatewayModel.encode(list)
+            it[KEY_GATEWAYS] = encodeGateways(list)
             it[KEY_GW_SELECTED] = selected
         }
         gatewaysCache = list
@@ -649,7 +741,7 @@ class AppSettings(private val context: Context) {
     suspend fun saveGateway(gw: Gateway, select: Boolean = false): List<Gateway> {
         val list = GatewayModel.upsert(gateways(), gw)
         context.dataStore.edit {
-            it[KEY_GATEWAYS] = GatewayModel.encode(list)
+            it[KEY_GATEWAYS] = encodeGateways(list)
             if (select) it[KEY_GW_SELECTED] = gw.id
         }
         gatewaysCache = list
@@ -662,7 +754,7 @@ class AppSettings(private val context: Context) {
         val next = GatewayModel.remove(list, id)
         val selected = GatewayModel.selectedAfterRemove(selectedGatewayId(), list, id)
         context.dataStore.edit {
-            it[KEY_GATEWAYS] = GatewayModel.encode(next)
+            it[KEY_GATEWAYS] = encodeGateways(next)
             it[KEY_GW_SELECTED] = selected
         }
         gatewaysCache = next
@@ -675,7 +767,7 @@ class AppSettings(private val context: Context) {
         if (list.isEmpty()) return
         val folded = GatewayModel.foldWatchkit(list, selectedGatewayId(), url)
         if (folded === list) return
-        context.dataStore.edit { it[KEY_GATEWAYS] = GatewayModel.encode(folded) }
+        context.dataStore.edit { it[KEY_GATEWAYS] = encodeGateways(folded) }
         gatewaysCache = folded
     }
 
@@ -691,7 +783,7 @@ class AppSettings(private val context: Context) {
         context.dataStore.edit {
             it[KEY_BASE_URL] = base
             if (watchkitEndpoint.isNotEmpty()) it[KEY_WATCHKIT_URL] = watchkitEndpoint
-            if (token != null) it[KEY_TOKEN] = token.trim()
+            if (token != null) it[KEY_TOKEN] = if (token.isBlank()) "" else KeystoreSecrets.seal(context, token.trim())
         }
     }
 
@@ -724,19 +816,24 @@ class AppSettings(private val context: Context) {
 
     /**
      * LEARN the keys instead of typing 64 hex chars on a watch (owner: "switching agents gives
-     * errors on some agents"). watchkit reads `~/.hermes/profiles/<p>/.env` on the gateway box, so
-     * any profile the operator already configured just WORKS the first time it is picked.
-     * Returns how many keys landed; failures are the caller's message, never an exception path
-     * that could break agent switching (the mirror keeps the previous keys either way).
+     * errors on some agents"). PAIRING v2 (D17): watchkit's whole-map `/agent_keys` export is
+     * RETIRED (410) — keys now arrive per-agent over the PRIVATE LANE, and a foreign agent's key
+     * only answers when the Wear Kit pane granted it. Every granted agent lands; an ungranted
+     * one keeps whatever key the owner typed by hand. Returns how many keys landed; failures are
+     * the caller's message, never an exception path (the mirror keeps the previous keys either way).
      */
     suspend fun refreshAgentKeys(): Int {
         val gw = selectedGateway() ?: return 0
-        // Same guard doctrine as refreshSlashCatalog: unreachable watchkit returns 0 (the mirror
-        // keeps previous keys), it does NOT throw into the caller's launch.
-        val rows = runCatching { Watchkit.agentKeys() }.getOrNull() ?: return 0
-        if (rows.isEmpty()) return 0
+        if (!dev.hermes.wearos.net.PrivateLane.configured) return 0
+        val names = (runCatching { dev.hermes.wearos.net.Watchkit.fetchAgentList() }.getOrDefault(emptyList())
+            + gw.agentKeys.keys + _profile.value).filter { it.isNotBlank() }.distinct()
         val next = gw.agentKeys.toMutableMap()
-        for (r in rows) if (r.key.isNotBlank()) next[r.profile] = r.key.trim()
+        for (a in names) {
+            val out = runCatching { dev.hermes.wearos.net.PrivateLane.sessionFor(a, "") }.getOrNull()
+            if (out is dev.hermes.wearos.net.PrivateLane.Outcome.Session && out.session.apiKey.isNotBlank())
+                next[a] = out.session.apiKey.trim()
+        }
+        if (next == gw.agentKeys) return 0
         saveGateway(gw.copy(agentKeys = next), select = true)
         _agentKeys.value = next
         return next.size

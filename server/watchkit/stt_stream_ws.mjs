@@ -39,39 +39,82 @@ export const STT_ENGINES = ['whisper', 'parakeet']; // mirrors stt_stream.py --e
 // 731 MB), so /health serves the CACHE and this refreshes it in the background at most every
 // STT_PROBE_TTL_MS. First health beat may show engines:[] — the watch handles that by falling
 // back to the single-engine label (pre-selection behavior), never a wrong answer.
+//
+// v2 (D16): the engine may live in ANOTHER python — the Wear Kit pane installs a pinned,
+// checksum-verified Parakeet into the plugin's OWN data dir (private venv + built .so + model).
+// Candidates therefore come from the caller: [{python, env}] in preference order; each is
+// probed with the same --check and results merge per ENGINE (a ready row wins). Sessions then
+// run the engine on the python that reported it ready — whisper stays on watchkit's venv, a
+// plugin-installed parakeet runs from the plugin venv with PARAKEET_GGUF/TRANSCRIBE_LIBRARY
+// pointed at its files. No candidate → the old single-venv behavior verbatim.
 const STT_PROBE_TTL_MS = 120_000;
 let sttEngines = null;
 let sttEnginesAt = 0;
 let sttProbeLive = false;
+const sttEngineRun = new Map(); // engine -> {python, env} that reported it ready
 
-function sttProbe(venvPy, wkDir) {
-  if (sttProbeLive || !fs.existsSync(venvPy) || !fs.existsSync(path.join(wkDir, 'stt_stream.py'))) return;
+function sttProbe(probes) {
+  if (sttProbeLive) return;
   sttProbeLive = true;
-  const child = spawn(venvPy, [path.join(wkDir, 'stt_stream.py'), '--check'],
-    { cwd: wkDir, stdio: ['ignore', 'pipe', 'pipe'] });
-  let out = '', timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { } }, 30_000);
-  child.stdout.on('data', (d) => { out += d.toString('utf8'); });
-  child.on('exit', () => {
-    clearTimeout(timer);
+  const queue = probes.filter((p) => p && fs.existsSync(p.python));
+  const rows = [];
+  const finish = () => {
     sttProbeLive = false;
     sttEnginesAt = Date.now();
-    try {
-      const rows = out.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-      if (rows.length) sttEngines = rows; // keep the old list on a broken probe (never blank the picker)
-    } catch { /* malformed probe output: keep cache */ }
-  });
-  child.on('error', () => { clearTimeout(timer); sttProbeLive = false; });
+    if (!rows.length) return; // broken probe: keep the old list, never blank the picker
+    const merged = new Map();
+    for (const r of rows) {
+      const prev = merged.get(r.engine);
+      if (!prev || (!prev.ready && r.ready)) merged.set(r.engine, r);
+    }
+    sttEngines = [...merged.values()];
+  };
+  const runNext = () => {
+    const p = queue.shift();
+    if (!p) { finish(); return; }
+    const child = spawn(p.python, [p.script, '--check'],
+      { cwd: p.cwd, env: p.env ? { ...process.env, ...p.env } : process.env,
+        stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { } }, 30_000);
+    child.stdout.on('data', (d) => { out += d.toString('utf8'); });
+    child.on('exit', () => {
+      clearTimeout(timer);
+      try {
+        for (const l of out.trim().split('\n').filter(Boolean)) {
+          const row = JSON.parse(l);
+          if (row && row.engine) {
+            rows.push(row);
+            if (row.ready) sttEngineRun.set(row.engine, { python: p.python, env: p.env || null });
+          }
+        }
+      } catch { /* malformed probe output: this candidate contributes nothing */ }
+      runNext();
+    });
+    child.on('error', () => { clearTimeout(timer); runNext(); });
+  };
+  runNext();
 }
 
-export function sttEngineStatus(cfg, venvPy, wkDir) {
+export function sttEngineStatus(cfg, venvPy, wkDir, extraProbes) {
   const engine = cfg.stt_stream_engine || 'whisper';
-  const ready = fs.existsSync(venvPy) && fs.existsSync(path.join(wkDir, 'stt_stream.py'));
-  if (ready && Date.now() - sttEnginesAt > STT_PROBE_TTL_MS) sttProbe(venvPy, wkDir);
+  const probes = [{ python: venvPy, script: path.join(wkDir, 'stt_stream.py'), cwd: wkDir },
+    ...(extraProbes || [])];
+  const usable = probes.filter((p) => p.python && fs.existsSync(p.python) && fs.existsSync(p.script));
+  if (usable.length && Date.now() - sttEnginesAt > STT_PROBE_TTL_MS) sttProbe(usable);
+  const ready = usable.length > 0;
   return {
     engine, ready,
     missing: ready ? null : 'run scripts/whisper-env.sh',
     engines: sttEngines || [], // [] until the first probe lands — honest "don't know yet"
   };
+}
+
+/** The {python, env} that reported ENGINE ready (fall back to the primary venv, exactly
+ *  the pre-D16 behavior for engines watchkit itself hosts). */
+export function sttEngineRunner(engine, fallbackPython, fallbackScript, wkDir) {
+  const hit = sttEngineRun.get(engine);
+  if (hit) return { python: hit.python, env: hit.env, script: fallbackScript };
+  return { python: fallbackPython, env: null, script: fallbackScript };
 }
 
 export function attachSttStream(server, ctx) {
@@ -170,7 +213,7 @@ export function sniffWire(p) {
 }
 
 function pipeSession(socket, head, ctx, ip, engineOverride) {
-  const status = sttEngineStatus(ctx.cfg, ctx.venvPy, ctx.wkDir);
+  const status = sttEngineStatus(ctx.cfg, ctx.venvPy, ctx.wkDir, ctx.sttProbes);
   const engine = engineOverride || status.engine;
   const t0 = Date.now();
   ctx.logLine({ ev: 'stt-stream', ip, ep: '/stt/stream', engine, status: 101, ms: 0 });
@@ -193,8 +236,14 @@ function pipeSession(socket, head, ctx, ip, engineOverride) {
 
   const startEngine = () => {
     if (!status.ready) { sendText(JSON.stringify({ error: status.missing })); cleanup('not-ready'); return; }
-    child = spawn(ctx.venvPy, [path.join(ctx.wkDir, 'stt_stream.py'), '--engine', engine],
-      { cwd: ctx.wkDir, env: ctx.CHILD_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
+    // v2 (D16): run the chosen engine on the python that PROBED it ready — watchkit's venv
+    // for its own installs, the Wear Kit plugin's private venv for a pane-installed Parakeet.
+    const runner = sttEngineRunner(engine, ctx.venvPy, path.join(ctx.wkDir, 'stt_stream.py'), ctx.wkDir);
+    child = spawn(runner.python, [runner.script, '--engine', engine],
+      { cwd: ctx.wkDir, env: runner.env
+          ? { ...ctx.CHILD_ENV, ...runner.env }
+          : ctx.CHILD_ENV,
+        stdio: ['pipe', 'pipe', 'pipe'] });
     stdinOpen = true;
     let outBuf = '', errTail = '';
     child.stdout.on('data', (d) => {

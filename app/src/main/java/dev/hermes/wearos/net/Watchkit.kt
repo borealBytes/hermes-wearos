@@ -339,26 +339,10 @@ object Watchkit {
     }
 
     /**
-     * PER-AGENT GATEWAY KEYS (SPEC §12.2): `GET /agent_keys` — watchkit reads
-     * `~/.hermes/profiles/<p>/.env` on the gateway box, which is the only place the truth lives: a
-     * multiplexed gateway resolves `API_SERVER_KEY` per profile and fails CLOSED for a named
-     * profile with no key, while the unauthenticated `/v1/health` keeps answering 200. Learning
-     * the keys here is what makes "switch agent" work the first time instead of 401-ing until the
-     * owner types 64 hex characters on a watch.
+     * RETIRED (pairing v2 / D17): watchkit `GET /agent_keys` answers 410 — per-agent gateway
+     * keys arrive per-device over the PRIVATE LANE behind explicit grants (AppSettings.
+     * refreshAgentKeys). The client half is gone; nothing on the watch calls the route anymore.
      */
-    suspend fun agentKeys(): List<AgentKey> = withContext(Dispatchers.IO) {
-        val cfg = _config.value
-        val req = Request.Builder()
-            .url("${cfg.baseUrl}/agent_keys")
-            .get()
-            .header("Authorization", "Bearer ${cfg.token}")
-            .build()
-        clientCall(req) { r ->
-            val text = r.body?.string().orEmpty()
-            if (!r.isSuccessful) throw ApiException(r.code, "agent_keys ${r.code}: ${text.take(120)}")
-            AgentKeysResponse.parse(text).agents.filter { it.profile.isNotBlank() }
-        }
-    }
 
     /**
      * FULL-TEXT SESSION SEARCH (SPEC §12.4): watchkit `GET /search` runs the store's own FTS5
@@ -496,12 +480,15 @@ object Watchkit {
      * Cross-profile sessions (owner walkthrough): GET /sessions?profile=<p>&limit=<n> — watchkit
      * reads the profile's state.db directly (see server/watchkit). Body is the gateway
      * `/api/sessions` shape + a per-row `profile`, so GatewaySessions.parse handles it verbatim.
+     * [source] (pairing v2 / D14): "chat" (default desktop-sidebar view) | "cron" — the ⏰ chip's
+     * list of CRON RUNS, the sessions an outbox alert opens into. Server 400s anything else.
      * Throws ApiException/IOException — the caller degrades to the single-profile list.
      */
     suspend fun fetchSessionsJson(
         profile: String,
         limit: Int = GatewaySessions.MAX_ROWS,
         archived: Boolean = false,
+        source: String = "chat",
     ): String = withContext(Dispatchers.IO) {
         val cfg = _config.value
         val url = cfg.baseUrl.toHttpUrl().newBuilder()
@@ -509,6 +496,7 @@ object Watchkit {
             .addQueryParameter("profile", profile)
             .addQueryParameter("limit", limit.coerceIn(1, GatewaySessions.MAX_ROWS).toString())
             .apply { if (archived) addQueryParameter("archived", "1") }
+            .apply { if (source != "chat") addQueryParameter("source", source) }
             .build().toString()
         val req = Request.Builder().url(url).get()
             .header("Authorization", "Bearer ${cfg.token}")
@@ -589,19 +577,6 @@ data class CatalogResponse(
         private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
         fun parse(text: String): CatalogResponse =
             json.decodeFromJsonElement(CatalogResponse.serializer(), json.parseToJsonElement(text))
-    }
-}
-
-/** One row of watchkit `GET /agent_keys`. `key` is empty exactly when `has_key` is false. */
-@kotlinx.serialization.Serializable
-data class AgentKey(val profile: String = "", val has_key: Boolean = false, val key: String = "")
-
-@kotlinx.serialization.Serializable
-data class AgentKeysResponse(val agents: List<AgentKey> = emptyList()) {
-    companion object {
-        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
-        fun parse(text: String): AgentKeysResponse =
-            json.decodeFromJsonElement(AgentKeysResponse.serializer(), json.parseToJsonElement(text))
     }
 }
 

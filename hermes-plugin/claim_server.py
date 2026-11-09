@@ -1,25 +1,33 @@
-"""The funnel claim door — the ONLY pre-enrollment network surface (SPEC §4, §11.4).
+"""The funnel claim door (protocol v2) — the ONLY pre-enrollment network surface.
 
-A stdlib ``ThreadingHTTPServer`` bound to ``127.0.0.1:<claim_port>`` (default 42653). On
-the gateway box, ``tailscale serve --https=443 --funnel /pair/*`` fronts it, so the public
-internet sees exactly two routes and nothing else:
+A stdlib ``ThreadingHTTPServer`` bound to ``127.0.0.1:<claim_port>`` (default 42653).
+``tailscale funnel`` on the gateway node fronts it, so the public internet sees exactly
+these routes and nothing else:
 
-  POST /pair/claim   body {"pin":"123456","tailnet":"<handle>","hostname":"<watch name>"}
-                     → 202 {"queued":true}; wrong/expired/rate-hot → 429/410 {"error":...}
-  GET  /pair/claim?pin=123456
-                     → 204 while pending; 200 + packet JSON ONCE then 410.
-  Packet = {"authkey","tailnet","gateway_fqdn","gateway_port":8642,
-            "watchkit_port":42651,"profile","api_key","watchkit_token"(nullable)}
+  POST /pair/begin  {"v":2,"secret":"<64 hex>","label":"<watch name>","tailnet":"…"}
+                    → 201 {"code":"429183","expires_in":300}
+                    The GATEWAY issues the code (review fix: watch-minted codes are
+                    gone — unknown-PIN adoption can no longer be raced or flooded).
+  GET  /pair/poll?secret=<hex>
+                    → 204 still pending · 200 {"state":"ready","authkey":…,…} ONCE
+                    → 410 unknown/expired/consumed · 429 poll too fast
+  POST /pair/ack    {"v":2,"secret":"<hex>"} → 200 {"token":"wtk-…"} (device token,
+                    issued exactly once; the pairing record is retired behind it)
+  *  /pair/claim    → 426 (v1 protocol; the v1 PIN rode these URLs)
 
-No bearer, no cookie: the 6-digit PIN + 5-min TTL + single-claim + per-PIN knock cap +
-global cooldown (all in the pairing module) ARE the auth. Delivery is state-file based —
-claim (chat/CLI thread or process) and GET (server thread) meet through the plugin state
-JSON, which is fcntl-locked, so the watch's ~3 s polling survives the gateway restarting
-mid-pair. The server never runs the pairing logic itself; it maps pairing outcomes to the
-HTTP contract above.
+No bearer, no cookie. Authorization is: possession of the 256-bit begin secret +
+the user typing the code at the gateway. The code NEVER appears in any URL the public
+door answers (review fix), the secret never appears in an approval prompt, and the
+pickup payload carries no gateway API key — that rides the private channel after the
+watch has joined the tailnet (pairing.resolve_key / private_api.py).
 
-Lifecycle: started from the ``gateway:startup`` hook and by ``hermes watch pair`` when no
-door is answering yet; daemon thread; stopped via ``ctx.on_unload``.
+The door holds NO state itself: pairing.PairingEngine (fcntl-locked JSON) is the
+transaction boundary, shared with the CLI and the dashboard. Caps here are the PUBLIC
+half of the anti-DoS story (D6): anonymous traffic can be refused, but can never lock
+out the approval side (that lockout lives in pairing.approve, user-typed misses only).
+
+Lifecycle: started at load on a daemon thread (the funnel's only tenant); every
+process hosting the plugin tries one, ``door_alive`` probe keeps exactly one bound.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,33 +44,54 @@ from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger("hermes_wearkit.claim")
 
-MAX_BODY_BYTES = 4096  # the claim body is ~80 bytes; more is noise or attack
+MAX_BODY_BYTES = 4096       # the begin body is ~120 bytes; more is noise or attack
+SOCKET_TIMEOUT = 30         # slow-loris cap: no connection idles a thread for minutes
+MAX_INFLIGHT = 64           # hard concurrency ceiling (429/503 beyond)
+MAX_KEEPALIVE_REQS = 8      # recycle connections so thread count recycles too
+POLL_MIN_INTERVAL = 5.0     # per-secret GET poll floor (pairing counts polls too)
 
 
 class ClaimBackend:
-    """The HTTP door's view of the pairing state machine (dependency-injected so tests
-    spin the server against a sandbox; the plugin passes ``from_module()``)."""
+    """The door's view of the pairing engine (dependency-injected for tests).
 
-    def __init__(self, queue: Callable[..., str], poll: Callable[[str], tuple[str, Optional[dict]]]) -> None:
-        self.queue = queue
+    ``begin(secret, label, tailnet)`` / ``ack(secret)`` raise pairing.PairingError with
+    an ``outcome`` attribute; ``poll(secret)`` returns (state, payload|None)."""
+
+    def __init__(self, begin: Callable[..., dict], poll: Callable[[str], tuple],
+                 ack: Callable[[str], dict]) -> None:
+        self.begin = begin
         self.poll = poll
+        self.ack = ack
 
     @classmethod
     def from_module(cls) -> "ClaimBackend":
-        from . import poll_packet, queue_claim  # package under BOTH loaders
-        return cls(
-            lambda pin, tailnet="", hostname="": queue_claim(pin, tailnet, hostname),
-            poll_packet,
-        )
+        from . import door_begin, door_poll, door_ack  # package under BOTH loaders
+        return cls(door_begin, door_poll, door_ack)
 
 
 class ClaimHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hermes-wearkit-claim/0.1"
+    server_version = "hermes-wearkit-claim/0.2"
+    timeout = SOCKET_TIMEOUT
 
     # -- plumbing ---------------------------------------------------------------
     def log_message(self, fmt: str, *args: Any) -> None:  # quiet: access → debug only
         logger.debug("claim door: %s " + fmt, self.client_address[0], *args)
+
+    def handle(self) -> None:
+        server = self.server
+        server.inflight += 1
+        try:
+            if server.inflight > MAX_INFLIGHT:
+                try:
+                    self._send(503, {"error": "pairing door is busy — try again in a "
+                                             "few seconds"})
+                except OSError:
+                    pass
+                return
+            super().handle()
+        finally:
+            server.inflight -= 1  # type: ignore[attr-defined]
 
     def _send(self, status: int, payload: Optional[dict] = None) -> None:
         body = b"" if payload is None else json.dumps(payload).encode()
@@ -73,7 +103,6 @@ class ClaimHandler(BaseHTTPRequestHandler):
         if body:
             self.wfile.write(body)
 
-    # -- routes (only /pair/claim exists; everything else is a blank 404) --------
     def _backend(self) -> ClaimBackend:
         return self.server.claim_backend  # type: ignore[attr-defined]
 
@@ -92,11 +121,38 @@ class ClaimHandler(BaseHTTPRequestHandler):
         except OSError:
             return b""
 
+    def _route(self) -> str:
+        return self.path.split("?", 1)[0].rstrip("/") or "/"
+
+    # -- routes -------------------------------------------------------------------
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         body = self._read_body()
         if body is None:
             return
-        if self.path.split("?", 1)[0].rstrip("/") != "/pair/claim":
+        route = self._route()
+        if route == "/pair/claim":
+            self._send(426, {"error": "pairing protocol v1 retired — update the watch app",
+                             "upgrade": "v2"})
+            return
+        if route == "/pair/ack":
+            try:
+                payload = json.loads(body or b"")
+            except ValueError:
+                self._send(400, {"error": "invalid JSON body"})
+                return
+            if not isinstance(payload, dict) or payload.get("v") != 2:
+                self._send(426, {"error": "pairing protocol v1 retired — update the watch app",
+                                 "upgrade": "v2"})
+                return
+            from . import pairing  # late import: module lives beside this file
+            try:
+                result = self._backend().ack(str(payload.get("secret", "")))
+            except pairing.PairingError as exc:
+                self._send(_OUTCOMES.get(exc.outcome, 400), {"error": str(exc)})
+                return
+            self._send(200, result)
+            return
+        if route != "/pair/begin":
             self._send(404, {"error": "not found"})
             return
         try:
@@ -107,61 +163,89 @@ class ClaimHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             self._send(400, {"error": "body must be a JSON object"})
             return
-        pin = str(payload.get("pin", ""))
+        if payload.get("v") != 2:
+            self._send(426, {"error": "pairing protocol v1 retired — update the watch app",
+                             "upgrade": "v2"})
+            return
+        secret = str(payload.get("secret", ""))
+        label = str(payload.get("label", ""))[:64]
         tailnet = str(payload.get("tailnet", ""))[:128]
-        hostname = str(payload.get("hostname", ""))[:64]
-        status = self._backend().queue(pin, tailnet, hostname)
-        if status == "queued":
-            self._send(202, {"queued": True})
-        elif status == "consumed":
-            self._send(410, {"error": "that pairing code was already used"})
-        elif status == "expired":
-            self._send(410, {"error": "pairing code expired — show it again on the watch"})
-        elif status == "hot":
-            self._send(429, {"error": "too many pairing attempts — wait a minute and try again"})
-        else:  # "malformed" and anything unknown fail closed
-            self._send(400, {"error": "pin must be 6 digits, 100000-999999"})
+        from . import pairing  # late import: module lives beside this file
+        try:
+            result = self._backend().begin(secret, label, tailnet)
+        except pairing.PairingError as exc:
+            self._send(_OUTCOMES.get(exc.outcome, 400), {"error": str(exc)})
+            return
+        self._send(201, result)
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path.split("?", 1)[0].rstrip("/") != "/pair/claim":
+        route = self._route()
+        if route == "/pair/claim":
+            self._send(426, {"error": "pairing protocol v1 retired — update the watch app",
+                             "upgrade": "v2"})
+            return
+        if route != "/pair/poll":
             self._send(404, {"error": "not found"})
             return
-        pin = (parse_qs(urlparse(self.path).query).get("pin") or [""])[0]
-        status, packet = self._backend().poll(str(pin))
-        if status == "pending":
-            self._send(204)
-        elif status == "ready":
-            self._send(200, packet)
-        elif status == "hot":
-            self._send(429, {"error": "too many pairing attempts — wait a minute and try again"})
-        else:  # "gone": unknown/expired/consumed — the single-claim door says 410 once used
-            self._send(410, {"error": "pairing code expired, unknown, or already claimed"})
+        secret = (parse_qs(urlparse(self.path).query).get("secret") or [""])[0]
+        now = time.monotonic()
+        bucket = self.server.poll_buckets  # type: ignore[attr-defined]
+        with self.server.poll_lock:  # type: ignore[attr-defined]
+            last = bucket.get(secret, 0.0)
+            throttled = now - last < POLL_MIN_INTERVAL
+            if not throttled:
+                bucket[secret] = now
+                if len(bucket) > 512:
+                    cutoff = now - 60
+                    for k in [k for k, v in bucket.items() if v < cutoff] or list(bucket)[:256]:
+                        bucket.pop(k, None)
+        try:
+            state, payload = self._backend().poll(str(secret))
+        except Exception:
+            logger.debug("wearos: claim poll failed", exc_info=True)
+            self._send(500, {"error": "pairing backend error"})
+            return
+        if state == "ready":
+            self._send(200, {**payload, "state": "ready"})
+        elif state == "pending":
+            self._send(429 if throttled else 204,
+                       {"error": "poll too fast"} if throttled else None)
+        else:
+            self._send(410, {"error": "pairing expired, unknown, or already collected"})
 
-    # Unknown methods on the two live routes get 405, matching "only /pair/* exposed".
     def do_PUT(self) -> None: self._method_guard()      # noqa: N802
     def do_DELETE(self) -> None: self._method_guard()   # noqa: N802
     def do_PATCH(self) -> None: self._method_guard()    # noqa: N802
 
     def _method_guard(self) -> None:
-        if self.path.split("?", 1)[0].rstrip("/") == "/pair/claim":
-            self._send(405, {"error": "method not allowed"})
-        else:
-            self._send(404, {"error": "not found"})
+        self._send(405 if self._route().startswith("/pair/") else 404,
+                   {"error": "method not allowed" if self._route().startswith("/pair/")
+                    else "not found"})
 
 
-def start_server(port: int, backend: Optional[ClaimBackend] = None) -> threading.Thread:
-    """Bind 127.0.0.1:port and serve on a daemon thread (idempotent; raises OSError on
-    bind failure so callers can distinguish 'another door is already up')."""
+_OUTCOMES = {"malformed": 400, "hot": 429, "gone": 410, "locked": 423, "badcode": 403,
+             "closed": 403}
+
+
+def start_server(port: int, backend: Optional[ClaimBackend] = None,
+                 host: str = "127.0.0.1") -> threading.Thread:
+    """Bind and serve on a daemon thread (idempotent; raises OSError on bind failure
+    so callers can distinguish 'another door is already up')."""
     global _server, _thread
     if _server is not None:
         return _thread  # type: ignore[return-value]
-    httpd = ThreadingHTTPServer(("127.0.0.1", int(port)), ClaimHandler)
+    httpd = ThreadingHTTPServer((host, int(port)), ClaimHandler)
     httpd.daemon_threads = True
     httpd.claim_backend = backend or ClaimBackend.from_module()  # type: ignore[attr-defined]
+    httpd.inflight = 0
+    httpd.poll_buckets: dict[str, float] = {}  # type: ignore[no-redef]
+    httpd.poll_lock = threading.Lock()
+    httpd.requests_since_recycle = 0
     thread = threading.Thread(target=httpd.serve_forever, daemon=True, name="wearos-claim")
     _server, _thread = httpd, thread
     thread.start()
-    logger.info("wearos: claim door listening on 127.0.0.1:%s (funnel-facing)", httpd.server_address[1])
+    logger.info("wearos: claim door (v2) listening on %s:%s (funnel-facing)",
+                host, httpd.server_address[1])
     return thread
 
 
@@ -176,7 +260,7 @@ def stop_server() -> None:
     _server, _thread = None, None
     if httpd is None:
         return
-    httpd.shutdown()  # stop serve_forever (safe from any thread but the server's own)
+    httpd.shutdown()
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
     httpd.server_close()
@@ -185,9 +269,8 @@ def stop_server() -> None:
 
 def door_alive(port: int, timeout: float = 1.0) -> bool:
     """Is a claim door ALREADY answering on 127.0.0.1:port (possibly the gateway's)?
-    POSTs a PIN-less body — 'malformed' → 400, a route that can never create state
-    (adoption requires a valid 6-digit PIN). Any HTTP answer at all proves a listener;
-    only 'couldn't connect' is False."""
+    POSTs a v1 body — 'claim' answers 426 without touching state (route probe). Any
+    HTTP answer at all proves a listener; only 'couldn't connect' is False."""
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/pair/claim", data=b"{}", method="POST",
         headers={"Content-Type": "application/json"},

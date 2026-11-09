@@ -1,28 +1,37 @@
-"""Hermes Wear Kit — pairing state machine, device registry, tools, CLI, hooks.
+"""Hermes Wear Kit — pairing v2, device registry, private channel, tools, CLI, hooks.
 
-Doctrine (docs/SPEC.md §11.4, handoff §2.5): the watch enrolls ONLY into the user's own
-tailnet with its own embedded tsnet node — no LAN transport, no phone relay, ever. The
-funnel claim door (claim_server.py) is the single pre-enrollment network exchange; after
-enrollment every byte rides the tunnel.
+Doctrine (docs/SPEC.md §4/§11.4 + the 2026-11-09 review): the watch enrolls ONLY into
+the user's own tailnet with its own embedded tsnet node — no LAN transport, no phone
+relay, ever. The funnel door (claim_server.py) is the single pre-enrollment network
+exchange; after enrollment every byte rides the tunnel through the private lane
+(private_api.py).
 
-Flow (handoff §4):
-  1. The watch cold-starts and shows a 6-digit PIN (5-min TTL, single-claim). The same
-     PIN can also be minted from the plugin side (``watch_pair`` tool / ``hermes watch
-     pair --show``) for the Desktop "show PIN" verb.
-  2. The watch POSTs {pin, tailnet, hostname} to the claim endpoint (behind Funnel:
-      https://pair.<tailnet>.ts.net/pair/claim) — Mode B — or the user speaks/types the
-      PIN to Hermes anywhere (``/pair 429183``).
-  3. On the FIRST match of a queued claim + a spoken PIN, the plugin mints a single-use,
-      pre-authorized, tagged auth key (tailscale.py) and assembles the enrollment packet
-      — {"authkey","tailnet","gateway_fqdn","gateway_port","watchkit_port","profile",
-      "api_key","watchkit_token"} — onto the PIN record. The watch's polling
-      GET /pair/claim?pin=… collects it ONCE; the authkey is zeroed right after.
-  4. Registry lives in profile-scoped plugin state (ctx.state → HERMES_HOME/plugin-data/
-      wearos/state.json): key ``devices``, keyed by the hostname THE WATCH SENT.
+Flow (protocol v2):
+  1. Pairing is CLOSED by default. A human opens the window at the gateway:
+     ``hermes watch pair``, the pane's Pair button, or ``/pair`` on a local surface.
+  2. The watch taps Pair, mints a 256-bit device secret, POSTs its hash to the door.
+     The GATEWAY issues the 6-digit code (the watch never chooses it — no squatting
+     race) and the watch displays it.
+  3. The human types the code at the gateway (``/pair <code>``, CLI, or pane). The
+     code never passes through any model in either direction. Three wrong typed
+     codes lock claiming (anonymous traffic can be rate-limited but can never lock
+     the approval side out).
+  4. Approved: a single-use tagged tailnet key is minted; the watch picks it up by
+     its secret (the code appears in no URL) and acks to collect its device token.
+  5. The watch joins the tailnet, then GETs its credentials over the PRIVATE lane:
+     the gateway's API_SERVER_KEY (delivered only after the node is verified with
+     ``tailscale whois`` on the socket — D13) plus the watchkit bearer.
+  6. The device registry lives in one fcntl-locked file (pairing.py) shared across
+     the CLI, gateway and dashboard processes.
 
-Wave status: claim HTTP door + delivery + wizard fix-verbs are LIVE here; the Node
-sidecar stays the documented media fallback until media.py finishes its port (handoff
-cut line).
+Revoke (D12) cuts everything: device token, queue, tailnet node (DELETE via the
+admin API, id captured at bootstrap via whois — not a watch self-report) and the
+agent's API key (rotated through Hermes's own ``config set``; named profiles pick
+it up hot, the default profile needs the restart the confirmation warns about).
+
+Cron (D14): the ``on_session_end`` hook turns every finished cron run for this
+agent into a watch notification through the outbox; the Sessions screen's ⏰ view
+reads the runs themselves from watchkit.
 """
 
 from __future__ import annotations
@@ -33,43 +42,44 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:
-    from . import claim_server, tailscale
+    from . import claim_server, pairing, private_api, stt_install, tailscale
 except ImportError:  # flat loader outside a package context (see tests/conftest.py)
     import claim_server  # type: ignore[no-redef]
+    import pairing  # type: ignore[no-redef]
+    import private_api  # type: ignore[no-redef]
+    import stt_install  # type: ignore[no-redef]
     import tailscale  # type: ignore[no-redef]
 
 logger = logging.getLogger("hermes_wearkit")
 
-STATE_DEVICES = "devices"        # ctx.state key: {hostname: device-record}
-STATE_PINS = "pins"              # ctx.state key: {pin-hash: pin-record}
-STATE_CLAIM_RATE = "claim_rate"  # ctx.state key: global miss streak + cooldown window
-PIN_TTL_SECONDS = 300            # SPEC §4: 5-minute TTL, single-claim
-CLAIM_RATE_LIMIT = 10            # failed claim attempts per window before cooldown
-CLAIM_MISS_WINDOW = 60           # seconds the global miss streak accumulates over
-CLAIM_COOLDOWN_SECONDS = 60      # how long the door slams (429) once the streak trips
-PACKET_TTL_SECONDS = 900         # how long a claimed packet waits for the watch to poll
-MAX_LIVE_PINS = 500              # ledger bound: random-PIN POST floods die on the cap, not the disk
+PRIVATE_PORT = 42654             # tailnet-bound private lane (SPEC §11.4)
 WATCHKIT_PORT = 42651            # fixed by SPEC §11.4
 GATEWAY_PORT = 8642              # Hermes API (per-profile /p/<profile>)
-DEFAULT_CLAIM_PORT = 42653       # loopback listener behind tailscale serve/funnel
-CLAIM_WAIT_SECONDS = 30          # `hermes watch pair <PIN>` waits this long for pickup
+DEFAULT_CLAIM_PORT = 42653       # loopback listener behind tailscale funnel
+PAIR_WINDOW_SECONDS = 300        # how long an open pairing window lives
+CLAIM_WAIT_SECONDS = 60          # `hermes watch pair <code>` waits this long for pickup
+RELEASES_LATEST = "https://github.com/borealBytes/hermes-wearos/releases/latest"
 
-_PIN_RE = re.compile(r"[1-9][0-9]{5}")  # 6 digits, no leading zero (mint format)
-_HOSTNAME_ALLOWED = re.compile(r"[^a-z0-9._-]+")
+# Surfaces allowed to CLAIM a code (D4): the typed claim rides these only; messaging
+# platforms get "approve on your computer". "" = direct/local invocation (CLI, tests).
+APPROVAL_SURFACES = {"", "cli", "tui", "local", "desktop", "desktop-app", "webui"}
 
 _CTX: Any = None                 # module singleton for handlers wired at register()
 _secrets: Callable[[str], Optional[str]] | None = None
+_lane_state: dict = {"bound": None, "error": ""}   # private-lane status for the checklist
 
 
 def _get_secret(name: str) -> Optional[str]:
-    """Read a config_schema secret the Hermes way (rule 11: never os.environ/.env)."""
+    """Read a declared secret the Hermes way (rule 11: never os.environ/.env)."""
     global _secrets
     if _secrets is None:
         try:
@@ -109,281 +119,22 @@ def _client() -> tailscale.TailnetClient:
     return tailscale.TailnetClient(_cred(), tailnet=str(_cfg("tailnet", "") or "-"))
 
 
-# ── PIN state machine ─────────────────────────────────────────────────────────
-def _hash_pin(pin: str) -> str:
-    # Pins are 6 digits (low entropy) — hash only to keep state files clean-looking;
-    # the rate limiter below is what actually bounds guessing.
-    return hashlib.sha256(pin.encode()).hexdigest()[:16]
-
-
-def _now() -> float:
-    return time.time()
-
-
-def _pins() -> dict:
-    return dict(_CTX.state.get(STATE_PINS) or {})
-
-
-def _prune_pins(pins: dict, now: float) -> dict:
-    """Drop records past their horizon. A plugin-minted PIN that expired WITHOUT ever
-    knocking survives as an ``expired`` tombstone for one more TTL, so the watch's late
-    knock hears the truth (410 expired) instead of silently re-adopting a dead code."""
-    for key, rec in list(pins.items()):
-        if not isinstance(rec, dict) or rec.get("expires", 0) > now:
-            continue
-        tombstoned = rec.get("expired") or (rec.get("origin") == "plugin" and not rec.get("claims"))
-        if tombstoned and rec.get("created", now) + 2 * PIN_TTL_SECONDS > now:
-            rec["expired"] = True
-            pins[key] = rec
-        else:
-            del pins[key]
-    return pins
-
-
-def _rate_hot(now: float) -> bool:
-    meta = _CTX.state.get(STATE_CLAIM_RATE) or {}
+def _running_profile() -> str:
+    """The profile THIS process runs as: get_hermes_home() IS the active profile home
+    (named profiles live at <root>/profiles/<name>)."""
     try:
-        return float(meta.get("cooldown_until", 0)) > now
-    except (TypeError, ValueError):
-        return False
-
-
-def _note_miss(now: float) -> None:
-    """Count a door miss (unknown/consumed PIN, per-PIN cap hit). CLAIM_RATE_LIMIT
-    misses inside CLAIM_MISS_WINDOW trip a global cooldown — 429 for everyone."""
-    meta = dict(_CTX.state.get(STATE_CLAIM_RATE) or {})
-    if now - float(meta.get("window_start") or 0) > CLAIM_MISS_WINDOW:
-        meta = {"window_start": now, "misses": 0}
-    meta["misses"] = int(meta.get("misses", 0)) + 1
-    if meta["misses"] >= CLAIM_RATE_LIMIT:
-        meta["cooldown_until"] = now + CLAIM_COOLDOWN_SECONDS
-        meta["misses"] = 0
-    _CTX.state.set(STATE_CLAIM_RATE, meta)
-
-
-def _clear_misses() -> None:
-    _CTX.state.set(STATE_CLAIM_RATE, {})
-
-
-def mint_pin() -> str:
-    """Create a plugin-side PIN (Desktop 'show PIN' / watch_pair). 6 digits, no leading
-    zeros, TTL PIN_TTL_SECONDS, single-claim."""
-    pins = _pins()
-    pins = _prune_pins(pins, _now())
-    pin = ""
-    for _ in range(8):
-        pin = str(secrets.randbelow(900_000) + 100_000)
-        if _hash_pin(pin) not in pins:
-            break
-    pins[_hash_pin(pin)] = {
-        "created": _now(),
-        "expires": _now() + PIN_TTL_SECONDS,
-        "claims": 0,
-        "origin": "plugin",
-    }
-    _CTX.state.set(STATE_PINS, pins)
-    return pin
-
-
-def queue_claim(pin: str, tailnet_hint: str = "", hostname: str = "") -> str:
-    """A watch knocked on the claim door with its PIN: remember the pending claim
-    (adopting watch-minted PINs on first knock). Returns the outcome the door maps to
-    HTTP: 'queued' (202) | 'hot' (429) | 'expired'/'consumed' (410) | 'malformed' (400)."""
-    if not isinstance(pin, str) or not _PIN_RE.fullmatch(pin):
-        return "malformed"
-    now = _now()
-    if _rate_hot(now):
-        return "hot"
-    pins = _prune_pins(_pins(), now)
-    rec = pins.get(_hash_pin(pin))
-    if rec is None:
-        # Watch-minted PIN arriving first: adopt it as pending with a fresh TTL window.
-        if len(pins) >= MAX_LIVE_PINS:
-            _note_miss(now)  # random-PIN flood creating ledger records faster than TTLs die
-            return "hot"
-        rec = {"created": now, "expires": now + PIN_TTL_SECONDS, "claims": 0, "origin": "watch"}
-    if rec.get("expired"):
-        _note_miss(now)
-        return "expired"
-    if rec.get("delivered"):
-        _note_miss(now)
-        return "consumed"
-    rec["claims"] = int(rec.get("claims", 0)) + 1
-    if rec["claims"] > CLAIM_RATE_LIMIT:
-        _note_miss(now)
-        return "hot"
-    prev = rec.get("pending_claim") or {}
-    rec["pending_claim"] = {
-        "at": now,
-        "tailnet_hint": tailnet_hint or prev.get("tailnet_hint", ""),
-        "hostname": hostname or prev.get("hostname", ""),
-    }
-    pins[_hash_pin(pin)] = rec
-    _CTX.state.set(STATE_PINS, pins)
-    return "queued"
-
-
-def claim_pin(pin: str) -> dict:
-    """Match a spoken/typed PIN against a pending watch claim, enroll, return the
-    device record. The packet rides along on the PIN record until the watch's polling
-    GET collects it (poll_packet)."""
-    if not isinstance(pin, str) or not _PIN_RE.fullmatch(pin):
-        raise ValueError("pairing code must be 6 digits, 100000-999999")
-    now = _now()
-    pins = _prune_pins(_pins(), now)
-    rec = pins.get(_hash_pin(pin))
-    if rec is None or rec.get("expired") or rec.get("expires", 0) <= now:
-        raise ValueError("pairing code expired or unknown — show it again on the watch")
-    if rec.get("packet") or rec.get("delivered"):
-        raise ValueError("that pairing code was already claimed")
-    pending = rec.get("pending_claim")
-    if pending is None:
-        raise ValueError("that watch hasn't knocked yet — make sure the PIN is on screen")
-    packet = _build_packet()
-    device = _register_device(packet, hostname=str(pending.get("hostname", "")),
-                              tailnet_hint=str(pending.get("tailnet_hint", "")))
-    rec.pop("pending_claim", None)
-    rec["packet"] = packet
-    rec["claimed_at"] = now
-    rec["expires"] = now + PACKET_TTL_SECONDS
-    pins[_hash_pin(pin)] = rec
-    _CTX.state.set(STATE_PINS, pins)
-    _clear_misses()  # a successful pairing clears the door's suspicion
-    return device
-
-
-def poll_packet(pin: str) -> tuple[str, Optional[dict]]:
-    """The watch's polling GET. ('pending', None) while the user hasn't claimed yet;
-    ('ready', packet) ONCE — the stored authkey is zeroed on pickup; ('gone', None) for
-    unknown/expired/consumed; ('hot', None) during the global cooldown."""
-    if not isinstance(pin, str) or not _PIN_RE.fullmatch(pin):
-        return "gone", None
-    now = _now()
-    if _rate_hot(now):
-        return "hot", None
-    pins = _prune_pins(_pins(), now)
-    rec = pins.get(_hash_pin(pin))
-    if rec is None or rec.get("expired") or rec.get("delivered") or rec.get("expires", 0) <= now:
-        _note_miss(now)
-        return "gone", None
-    packet = rec.get("packet")
-    if packet is None:
-        return "pending", None  # knocked, awaiting the user's claim — a 204, not a miss
-    rec = dict(rec)
-    packet = dict(packet)
-    rec.pop("packet", None)
-    rec["delivered"] = True
-    pins[_hash_pin(pin)] = rec
-    _CTX.state.set(STATE_PINS, pins)
-    return "ready", packet  # the ledger copy is already packet-less above — zeroed
-
-
-def _build_packet() -> dict:
-    """Single-use, pre-authorized, tagged key + everything the watch needs to skip the
-    console entirely (SPEC §4, handoff §4). Shape is the claim API contract — the watch
-    client is built against EXACTLY these keys; adding or nesting breaks the lane."""
-    tag = str(_cfg("watch_tag", "tag:hermes-watch"))
-    expiry = str(_cfg("key_expiry", "24h"))
-    profile = str(_cfg("gateway_profile", "wear"))
-    client = _client()
-    authkey = client.mint_enrollment_key(tag=tag, expiry=expiry)
-    fqdn = gateway_fqdn()
-    if not fqdn:
-        # Loud fail beats a packet the watch can't dial — and never leave the minted
-        # key orphaned: this is exactly what last_key_id exists for.
-        try:
-            client.expire_key(client.last_key_id)
-        except Exception:
-            pass
-        raise ValueError("gateway FQDN unknown (tailscale status reports none) — "
-                         "cannot hand the watch a tunnel it can't dial")
-    return {
-        "authkey": authkey,                       # zeroed after pickup (poll_packet)
-        "tailnet": (client.tailnet if client.tailnet not in ("", "-")
-                    else tailnet_name()) or "-",
-        "gateway_fqdn": fqdn,
-        "gateway_port": GATEWAY_PORT,
-        "watchkit_port": WATCHKIT_PORT,           # present only when the sidecar is detected
-        "profile": profile,
-        "api_key": _gateway_api_key(profile),
-        "watchkit_token": _get_secret("watchkit_token"),  # nullable by contract
-    }
-
-
-def _sanitize_hostname(name: str) -> str:
-    clean = _HOSTNAME_ALLOWED.sub("-", str(name or "").strip().lower()).strip("-.")
-    return clean[:64]
-
-
-def _register_device(packet: dict, hostname: str = "", tailnet_hint: str = "") -> dict:
-    """Registry entry under the hostname THE WATCH SENT (falling back to
-    <profile>-watch when the knock carried none). Re-pairing the same watch updates the
-    record in place and notes re_enrolled_at; first_seen never moves."""
-    devices = dict(_CTX.state.get(STATE_DEVICES) or {})
-    name = _sanitize_hostname(hostname) or f"{packet['profile']}-watch"
-    now = _now()
-    prev = devices.get(name) or {}
-    record = {
-        "hostname": name,
-        "tag": str(_cfg("watch_tag", "tag:hermes-watch")),
-        "tailnet": packet["tailnet"],
-        "gateway_fqdn": packet["gateway_fqdn"],
-        "profile": packet["profile"],
-        "first_seen": prev.get("first_seen") or prev.get("enrolled_at") or now,
-        "enrolled_at": now,
-    }
-    if prev:
-        record["re_enrolled_at"] = now
-    if tailnet_hint:
-        record["tailnet_hint"] = tailnet_hint
-    devices[name] = record
-    _CTX.state.set(STATE_DEVICES, devices)
-    return record
-
-
-def _gateway_api_key(profile: str) -> Optional[str]:
-    """Resolve the gateway profile's API_SERVER_KEY for the packet.
-
-    Measured against hermes-agent v0.22.5 (agent/secret_scope.py):
-      get_secret(name: str, default: Optional[str] = None) -> Optional[str]
-    reads a CONTEXTVAR-bound per-task scope — there is NO profile argument. Our claim
-    server answers on its own threads, where no scope is bound: with multiplexing
-    active a bare read RAISES UnscopedSecretError (fail-closed), and in a CLI process
-    it silently falls through to os.environ — the LAUNCH profile's value, which can be
-    the wrong profile's key. So we bind the configured profile's own scope explicitly
-    (build_profile_secret_scope is a pure filesystem read — thread-safe), and only
-    then fall back: ambient read → declared gateway_api_key secret (README).
-    """
-    try:  # tier 1: the configured profile's own scope, on any thread
-        scope_home = _profile_home(profile)
-        if scope_home is not None:
-            from agent.secret_scope import (build_profile_secret_scope, get_secret,
-                                            reset_secret_scope, set_secret_scope)
-            token = set_secret_scope(build_profile_secret_scope(scope_home),
-                                     profile_home=str(scope_home))
-            try:
-                key = get_secret("API_SERVER_KEY")
-            finally:
-                reset_secret_scope(token)
-            if key:
-                return key
+        from hermes_constants import get_hermes_home
+        home = Path(get_hermes_home())
+        if home.parent.name == "profiles" and home.name != "default":
+            return home.name
     except Exception:
-        logger.debug("wearos: profile-scoped API_SERVER_KEY read failed", exc_info=True)
-    try:  # tier 2: ambient scope / single-profile os.environ pass-through
-        from agent.secret_scope import get_secret as _gs
-        key = _gs("API_SERVER_KEY")
-        if key:
-            return key
-    except Exception:  # UnscopedSecretError under multiplex on a server thread: expected
         pass
-    return _get_secret("gateway_api_key")  # tier 3: declared fallback (config_schema)
+    return "default"
 
 
 def _profile_home(profile: str) -> Optional[Path]:
-    """Named profile's HERMES_HOME via the public host constants: ``<root>/profiles/<name>``
-    (PROFILE_ID_RE is THE canonical id gate — same regex hermes_cli.profiles enforces,
-    and it refuses traversal). ``hermes_cli.profiles.get_profile_dir`` would be the
-    authority but is a private module per validate rule 9; the layout is stable contract."""
+    """Named profile's HERMES_HOME via the host's own resolver; id-gated, traversal-
+    refusing (same regex hermes_cli.profiles enforces)."""
     profile = str(profile or "default").strip().lower()
     try:
         from hermes_constants import PROFILE_ID_RE, get_default_hermes_root
@@ -397,584 +148,572 @@ def _profile_home(profile: str) -> Optional[Path]:
     return None
 
 
-# ── profile enablement (watch_enable / `hermes watch enable`) ─────────────────
-# The pane's checklist and the CLI share ONE engine: a MINIMAL LINE-LEVEL edit of
-# each profile's config.yaml. No yaml round-trip — a dump would silently drop the
-# user's comments, blank lines, key order and quoting; the anchor walker below
-# touches only the item it must add/remove, or appends one small block when the
-# section is absent. Shapes handled are exactly what core and the README document:
-#
-#   plugins:            plugins:                plugins:
-#     enabled:            enabled: [a]            enabled: {}      /  (no plugins: at all)
-#     - a               (no enabled key)
-#
-# Anything less recognizable (a scalar value where our list belongs) is reported
-# as a refusal, not a rewrite: the file is the user's, and we only ever hold an
-# anchor we actually understand.
-_PLUGINS = "wearos"                    # the id as written in plugins.enabled
-DEFAULT_GATEWAY_PROFILE = "wear"       # entries.settings.gateway_profile default
-RELEASES_LATEST = "https://github.com/borealBytes/hermes-wearos/releases/latest"
-# Same pattern as hermes_constants.PROFILE_ID_RE / hermes_cli.profiles (import-time
-# fallback for hosts where that module is unresolvable; the host copy still wins).
-_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-# hermes_constants._PROFILE_IDENTITY_MARKERS — mirrored so the pane checklist sees
-# exactly the profiles `hermes profile list` sees (ghost dirs carry none of these).
-_PROFILE_IDENTITY_MARKERS = ("config.yaml", ".env", "SOUL.md", "profile.yaml",
-                             "auth.json", "state.db")
-_DELETED_MARK = ".deleted"  # hermes_constants._DELETED_PROFILES_DIR
-
-
-def _hermes_root() -> Optional[Path]:
-    """HERMES_HOME through the host's own resolver (env-sandboxable, memoized),
-    falling back to the raw env var; None when neither answers."""
+def _all_profile_names() -> list:
+    """default + every live profiles/<dir> (identity-gated — ghost shells can't be
+    adopted, #95188 lesson)."""
     try:
-        from hermes_constants import get_default_hermes_root
-        return Path(get_default_hermes_root())
+        from hermes_constants import PROFILE_ID_RE, get_default_hermes_root
+        root = Path(get_default_hermes_root())
     except Exception:
-        env = str(os.environ.get("HERMES_HOME", "") or "").strip()
-        return Path(env) if env else None
-
-
-def _line_indent(line: str) -> int:
-    stripped = line.rstrip("\r\n")
-    return len(stripped) - len(stripped.lstrip(" \t"))
-
-
-def _line_content(line: str) -> str:
-    return line.rstrip("\r\n").strip()
-
-
-def _after_comment(value: str) -> str:
-    """YAML: a '#' opens a comment only at line start or after whitespace."""
-    for i, ch in enumerate(value):
-        if ch == "#" and (i == 0 or value[i - 1] in " \t"):
-            return value[:i].strip()
-    return value.strip()
-
-
-def _unquote(item: str) -> str:
-    if len(item) >= 2 and item[0] == item[-1] and item[0] in "\"'":
-        return item[1:-1]
-    return item
-
-
-def _split_eol(text: str) -> tuple[list, str]:
-    """Lines keeping their terminators, plus the file's dominant newline (CRLF
-    survives the patch). The caller works on the normalized COPY and returns the
-    ORIGINAL text untouched whenever nothing changed — no trailing-newline diffs."""
-    nl = "\r\n" if "\r\n" in text else "\n"
-    if not text:
-        return [], nl
-    return [ln if ln.endswith(("\n", "\r\n")) else ln + nl
-            for ln in text.splitlines(keepends=True)], nl
-
-
-def _plugins_span(lines: list) -> Optional[dict]:
-    """Locate the top-level ``plugins:`` block → {at, lo, hi}. hi excludes the
-    trailing blank/comment run so inserts land after the last real line (a comment
-    sitting there belongs to the NEXT top-level key). None when the key is absent
-    or carries a nontrivial inline value (no safe spot for children)."""
-    for i, ln in enumerate(lines):
-        c = _line_content(ln)
-        if c.startswith("#"):
-            continue
-        if _line_indent(ln) != 0 or not c.startswith("plugins:"):
-            continue
-        value = _after_comment(c[len("plugins:"):])
-        if value not in ("", "{}", "[]"):
-            return None  # `plugins: <scalar>` — no safe spot for children; refuse, don't rewrite
-        j = i + 1
-        while j < len(lines):
-            cj = _line_content(lines[j])
-            if cj == "" or cj.startswith("#") or _line_indent(lines[j]) > 0:
-                j += 1
-                continue
-            break
-        k = j
-        while k > i + 1:
-            tail = _line_content(lines[k - 1])
-            if tail == "" or tail.startswith("#"):
-                k -= 1
-            else:
-                break
-        return {"at": i, "lo": i + 1, "hi": k, "value": value}
-    return None
-
-
-def _find_key(lines: list, lo: int, hi: int, key: str) -> Optional[tuple]:
-    """(idx, indent, inline_value) of the first ``key:`` in the block span — only
-    ever called with spans that already exclude parent siblings, so no cross-section
-    matches are reachable."""
-    for j in range(lo, hi):
-        c = _line_content(lines[j])
-        if c == "" or c.startswith("#") or _line_indent(lines[j]) < 1:
-            continue
-        if c.startswith(key + ":"):
-            rest = c[len(key) + 1:]
-            if rest == "" or rest[0] in " \t":
-                return (j, _line_indent(lines[j]), _after_comment(rest))
-    return None
-
-
-def _child_span(lines: list, idx: int, hi: int) -> tuple:
-    """Half-open span of the block under the key at idx (lines strictly deeper than
-    the key, plus interior blanks/comments; trailing blanks/comments trimmed)."""
-    ind = _line_indent(lines[idx])
-    j = idx + 1
-    while j < hi:
-        c = _line_content(lines[j])
-        if c == "" or c.startswith("#") or _line_indent(lines[j]) > ind:
-            j += 1
-            continue
-        break
-    k = j
-    while k > idx + 1:
-        tail = _line_content(lines[k - 1])
-        if tail == "" or tail.startswith("#"):
-            k -= 1
-        else:
-            break
-    return idx + 1, k
-
-
-def _first_child_indent(lines: list, lo: int, hi: int) -> int:
-    """Indent of the first real child line in a block span (style reuse), 0 if none."""
-    for j in range(lo, hi):
-        c = _line_content(lines[j])
-        if c != "" and not c.startswith("#"):
-            return _line_indent(lines[j])
-    return 0
-
-
-def _block_items(lines: list, anchor: int, hi: int) -> tuple:
-    """([ (idx, dash_indent, value) ... ], end_idx) for the block sequence under the
-    key at anchor. PyYAML style (dashes at the key indent) and deeper-indent style
-    both read; a blank/comment ends the run conservatively; complex items (nested
-    maps) are consumed whole and contribute their first line's value."""
-    items: list = []
-    key_indent = _line_indent(lines[anchor])
-    j = anchor + 1
-    while j < hi:
-        c = _line_content(lines[j])
-        if c == "" or c.startswith("#") or _line_indent(lines[j]) < key_indent:
-            break
-        if not (c == "-" or c.startswith("- ")):
-            break
-        items.append((j, _line_indent(lines[j]), _after_comment(c[1:].strip())))
-        j += 1
-        while j < hi and _line_content(lines[j]) != "" and _line_indent(lines[j]) > items[-1][1]:
-            j += 1  # continuation lines of this item — opaque to us
-    return items, j
-
-
-def _flow_items(value: str) -> Optional[list]:
-    """Items of an inline ``[a, b]`` list; None when the value isn't flow."""
-    v = _after_comment(value)
-    if not (v.startswith("[") and v.endswith("]")):
-        return None
-    inner = v[1:-1].strip()
-    return [p.strip() for p in inner.split(",")] if inner else []
-
-
-def _rewrite_key_line(lines: list, idx: int, key: str, new_value: str, nl: str) -> None:
-    """Replace the inline value on a key line, keeping its indent and trailing comment."""
-    old = lines[idx].rstrip("\r\n")
-    m = re.match(r"^([ \t]*" + re.escape(key) + r":[ \t]*)([^#]*?)([ \t]*#[^\r\n]*)?$", old)
-    head = m.group(1) if m else " " * _line_indent(lines[idx]) + key + ": "
-    comment = (m.group(3) or "") if m else ""
-    if new_value and not head.endswith((" ", "\t")):
-        head = head.rstrip() + " "
-    if not new_value:
-        head = head.rstrip()
-    lines[idx] = head + new_value + comment + nl
-
-
-def _new_plugins_block(nl: str, gateway_profile: str) -> str:
-    return "".join([
-        "plugins:" + nl,
-        "  enabled:" + nl,
-        "  - " + _PLUGINS + nl,
-        "  entries:" + nl,
-        "    " + _PLUGINS + ":" + nl,
-        "      settings:" + nl,
-        f"        gateway_profile: {gateway_profile}" + nl,
-    ])
-
-
-def _ensure_enabled_item(lines: list, span: dict, enable: bool, nl: str) -> bool:
-    """True when lines changed. Item style follows the list already there; a fresh
-    list lands PyYAML-style (dash at the key's indent)."""
-    en = _find_key(lines, span["lo"], span["hi"], "enabled")
-    if en is None:
-        if not enable:
-            return False
-        child = _first_child_indent(lines, span["lo"], span["hi"]) or 2
-        lines[span["hi"]:span["hi"]] = [
-            " " * child + "enabled:" + nl,
-            " " * child + "- " + _PLUGINS + nl,
-        ]
-        return True
-    j, ind, value = en
-    if value == "[]":
-        _rewrite_key_line(lines, j, "enabled", "", nl)
-    if value in ("", "{}", "[]"):
-        items, end = _block_items(lines, j, span["hi"])
-        hit = next((it for it in items if _unquote(it[2]) == _PLUGINS), None)
-        if enable and hit is None:
-            dash = items[0][1] if items else ind
-            lines.insert(end if items else j + 1, " " * dash + "- " + _PLUGINS + nl)
-            return True
-        if not enable and hit is not None:
-            del lines[hit[0]]
-            return True
-        return False
-    flow = _flow_items(value)
-    if flow is not None:
-        has = any(_unquote(p) == _PLUGINS for p in flow)
-        if enable == has:
-            return False
-        keep = flow + [_PLUGINS] if enable else [p for p in flow if _unquote(p) != _PLUGINS]
-        _rewrite_key_line(lines, j, "enabled", "[" + ", ".join(keep) + "]", nl)
-        return True
-    # bare scalar (`enabled: wearos`) — the ONLY value that counts as listed
-    if _unquote(value) == _PLUGINS and not enable:
-        _rewrite_key_line(lines, j, "enabled", "[]", nl)
-        return True
-    return False
-
-
-def _ensure_entries(lines: list, span: dict, gateway_profile: str, nl: str) -> bool:
-    """Create plugins.entries.wearos.settings.gateway_profile at whatever depth is
-    missing — never overwrite a value the user already set."""
-    ent = _find_key(lines, span["lo"], span["hi"], "entries")
-    if ent is None:
-        child = _first_child_indent(lines, span["lo"], span["hi"]) or 2
-        lines[span["hi"]:span["hi"]] = [
-            " " * child + "entries:" + nl,
-            " " * (child + 2) + _PLUGINS + ":" + nl,
-            " " * (child + 4) + "settings:" + nl,
-            " " * (child + 6) + f"gateway_profile: {gateway_profile}" + nl,
-        ]
-        return True
-    j, ind, value = ent
-    if value == "{}":
-        _rewrite_key_line(lines, j, "entries", "", nl)
-    if value not in ("", "{}"):
-        return False  # `entries: <scalar>` — not ours to fix
-    clo, chi = _child_span(lines, j, span["hi"])
-    wr = _find_key(lines, clo, chi, _PLUGINS)
-    child = _first_child_indent(lines, clo, chi) or (ind + 2)
-    if wr is None:
-        lines[j + 1:j + 1] = [
-            " " * child + _PLUGINS + ":" + nl,
-            " " * (child + 2) + "settings:" + nl,
-            " " * (child + 4) + f"gateway_profile: {gateway_profile}" + nl,
-        ]
-        return True
-    w, wind, wval = wr
-    if wval == "{}":
-        _rewrite_key_line(lines, w, _PLUGINS, "", nl)
-    if wval not in ("", "{}"):
-        return False
-    slo, shi = _child_span(lines, w, chi)
-    st = _find_key(lines, slo, shi, "settings")
-    schild = _first_child_indent(lines, slo, shi) or (wind + 2)
-    if st is None:
-        lines[w + 1:w + 1] = [
-            " " * schild + "settings:" + nl,
-            " " * (schild + 2) + f"gateway_profile: {gateway_profile}" + nl,
-        ]
-        return True
-    s, sind, sval = st
-    if sval == "{}":
-        _rewrite_key_line(lines, s, "settings", "", nl)
-    if sval not in ("", "{}"):
-        return False
-    glo, ghi = _child_span(lines, s, shi)
-    if _find_key(lines, glo, ghi, "gateway_profile") is not None:
-        return False  # user's value survives
-    lines[s + 1:s + 1] = [" " * ((sind + 2)) + f"gateway_profile: {gateway_profile}" + nl]
-    return True
-
-
-def enablement_patch(text: str, enable: bool,
-                     gateway_profile: str = DEFAULT_GATEWAY_PROFILE) -> tuple:
-    """(new_text, changed) — add/remove ``wearos`` from plugins.enabled in config.yaml
-    TEXT, and on enable make sure plugins.entries.wearos.settings.gateway_profile
-    exists (created with ``gateway_profile``, never overwritten). Pure line-level edit:
-    comments, spacing, key order and CRLF survive; disable leaves the settings block
-    standing (re-enabling keeps the user's tuning). Idempotent both ways; unrecognized
-    shapes report unchanged rather than rewritten."""
-    lines, nl = _split_eol(text)
-    span = _plugins_span(lines)
-    if span is None:
-        if not enable:
-            return text, False
-        if any(_line_indent(ln) == 0 and _line_content(ln).startswith("plugins:")
-               for ln in lines):
-            return text, False  # a scalar `plugins:` exists — refuse, never duplicate the key
-        base = "".join(lines)
-        glue = nl if base.strip() else ""
-        return base + glue + _new_plugins_block(nl, gateway_profile), True
-    changed = False
-    if span["value"]:  # `plugins: {}` / `plugins: []` — promote the empty inline node
-        _rewrite_key_line(lines, span["at"], "plugins", "", nl)
-        changed = True
-    changed |= _ensure_enabled_item(lines, span, enable, nl)
-    if enable:
-        span = _plugins_span(lines)  # an insertion above shifted the indices
-        changed |= _ensure_entries(lines, span, gateway_profile, nl)
-    if not changed:
-        return text, False
-    return "".join(lines), True
-
-
-def _wearos_enabled(text: str) -> bool:
-    """The checkbox truth for the pane: is wearos LISTED in plugins.enabled? (the
-    settings block alone never counts — enablement is the list)."""
-    lines, _ = _split_eol(text)
-    span = _plugins_span(lines)
-    if span is None:
-        return False
-    en = _find_key(lines, span["lo"], span["hi"], "enabled")
-    if en is None:
-        return False
-    j, ind, value = en
-    if value in ("", "{}", "[]"):
-        items, _end = _block_items(lines, j, span["hi"])
-        return any(_unquote(v) == _PLUGINS for _, _, v in items)
-    flow = _flow_items(value)
-    if flow is not None:
-        return any(_unquote(p) == _PLUGINS for p in flow)
-    return _unquote(value) == _PLUGINS
-
-
-def _profile_config_path(name: str) -> tuple[Optional[Path], str]:
-    """(config.yaml path, error) for a profile ON THIS MACHINE — default = the root
-    config, named = ``<root>/profiles/<name>`` ONLY when the host's own listing gates
-    it as live (valid id, identity marker, no tombstone — ghost dirs can't be adopted)."""
-    name = str(name or "").strip().lower()
-    root = _hermes_root()
-    if root is None:
-        return None, "cannot resolve HERMES_HOME from this process"
-    if name == "default":
-        return root / "config.yaml", ""
-    if name not in {p.name for p in _named_profile_dirs(root)}:
-        return None, f"no profile {name!r} on this machine"
-    return root / "profiles" / name / "config.yaml", ""
-
-
-def _named_profile_dirs(root: Path) -> list:
-    """Live named-profile dirs under ``<root>/profiles`` — the same gate hermes_cli.profiles
-    uses (never ``default``, id-grammar legal, identity marker, not tombstoned): cron/log
-    ghost shells must not surface in the pane checklist (#95188 lesson)."""
+        return ["default"]
+    out = ["default"]
     try:
-        children = sorted((root / "profiles").iterdir(), key=lambda p: p.name)
-    except OSError:
-        return []
-    out = []
-    for child in children:
-        try:
-            if child.name == "default" or not _PROFILE_ID_RE.fullmatch(child.name):
+        for child in sorted((root / "profiles").iterdir(), key=lambda p: p.name):
+            if child.name == "default" or not PROFILE_ID_RE.fullmatch(child.name):
                 continue
             if not child.is_dir():
                 continue
-            if not any((child / m).is_file() for m in _PROFILE_IDENTITY_MARKERS):
+            if not any((child / m).is_file() for m in ("config.yaml", "SOUL.md", "profile.yaml",
+                                                       "auth.json", "state.db")):
                 continue
-            if (root / "profiles" / _DELETED_MARK / child.name).exists():
-                continue
-            out.append(child)
-        except OSError:
-            pass
-    return out
-
-
-def _all_profile_names() -> list:
-    """Every profile on the box: default (root config) + each live profiles/<dir>."""
-    root = _hermes_root()
-    if root is None:
-        return []
-    return ["default"] + [p.name for p in _named_profile_dirs(root)]
-
-
-def _parse_agents(agents) -> list:
-    """["wear","wear-demo"] | "wear,wear-demo" | "all" (also None/"" → all)."""
-    if agents is None or (isinstance(agents, str) and not agents.strip()):
-        return _all_profile_names()
-    if isinstance(agents, str):
-        parts = [p.strip().lower() for p in agents.split(",") if p.strip()]
-        return _all_profile_names() if "all" in parts else parts
-    if isinstance(agents, (list, tuple)):
-        out: list = []
-        for part in agents:
-            out.extend(p.strip().lower() for p in str(part).split(",") if p.strip())
-        return out
-    return []
-
-
-def _revision_ledgers(root: Path) -> tuple:
-    """(root revision, {profile: revision}) straight from core's own
-    .install-metadata.json ledgers. An agent with a per-profile copy freezes at
-    the SHA it was installed with (core updates it only via the card's
-    'Update to pin') — without this the pane shows one plugin wearing three
-    versions and every reader blames us."""
-    def _rev(meta: Path) -> Optional[str]:
-        try:
-            entry = (json.loads(meta.read_text(encoding="utf-8")).get("wearos") or {})
-        except (OSError, ValueError):
-            return None
-        return str(entry.get("revision") or "") or None
-    return _rev(root / "plugins" / ".install-metadata.json"), {
-        p.name: _rev(p / "plugins" / ".install-metadata.json") for p in _named_profile_dirs(root)
-    }
-
-
-def _profile_inventory() -> list:
-    """[{name, enabled, has_config, pin, own_copy, update_available}] — the pane's
-    step-2 checklist data; it rides watch_status (the call the pane already makes)
-    rather than a second tool round-trip."""
-    root = _hermes_root()
-    root_rev, per_profile = (_revision_ledgers(root) if root else (None, {}))
-    out = []
-    for name in _all_profile_names():
-        path, _err = _profile_config_path(name)
-        if path is None:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8") if path.is_file() else ""
-        except OSError:
-            text = ""
-        own = per_profile.get(name) if name else None
-        rev = own or root_rev
-        out.append({"name": name, "enabled": _wearos_enabled(text), "has_config": bool(text),
-                    "pin": rev[:8] if rev else None,
-                    "own_copy": bool(own),
-                    "update_available": bool(own and root_rev and own != root_rev)})
-    return out
-
-
-def _write_config(path: Path, text: str) -> None:
-    """Atomic in-place write; keeps the file's mode (config.yaml holds secret-adjacent
-    routing and is often 0600 — and new files get that mode, not the umask's 0644)."""
-    try:
-        mode = path.stat().st_mode & 0o777
+            out.append(child.name)
     except OSError:
-        mode = 0o600
-    tmp = path.with_name(path.name + ".wearos.tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as fh:  # newline='' → CRLF intact
-        fh.write(text)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+        pass
+    return out
 
 
-def apply_enablement(names: list, enable: bool) -> list:
-    """The engine behind BOTH the watch_enable tool and `hermes watch enable`.
-    Per profile: {name, before, after, changed} — or {name, error}."""
-    gp = str(_cfg("gateway_profile", DEFAULT_GATEWAY_PROFILE) or DEFAULT_GATEWAY_PROFILE)
-    results = []
-    for raw in names:
-        name = str(raw or "").strip().lower()
-        path, err = _profile_config_path(name)
-        if path is None:
-            results.append({"name": name or str(raw), "error": err})
-            continue
+# ── the pairing engine (one file, one lock, every process) ─────────────────────
+def _engine() -> pairing.PairingEngine:
+    """Cheap stateless facade over the fcntl-locked store: constructed per call so
+    the HOME (and test sandboxes) resolve fresh every time."""
+    return pairing.PairingEngine(pairing.Store(), mint_key=_mint_key, now=time.time)
+
+
+def _mint_key(profile: str) -> tuple[str, str]:
+    client = _client()
+    key = client.mint_enrollment_key(tag=str(_cfg("watch_tag", "tag:hermes-watch")),
+                                     expiry=str(_cfg("key_expiry", "24h")))
+    return key, client.last_key_id
+
+
+def _expire_key(key_id: str) -> None:
+    try:
+        _client().expire_key(key_id)
+    except Exception:
+        logger.debug("wearos: could not expire unspent key %s", key_id, exc_info=True)
+
+
+_mint_key.expire = staticmethod(_expire_key)  # engine prunes abandoned keys through it
+
+
+def _gateway_fqdn() -> str:
+    """This box's ts.net FQDN via the LOCAL daemon (no API call, load-safe). Measured
+    on 1.102.3: the field is Self.DNSName (capitals)."""
+    st = _tailscale_self()
+    fqdn = str(st.get("DNSName") or st.get("DnsName") or "")
+    return fqdn.rstrip(".")
+
+
+def _tailscale_self() -> dict:
+    try:
+        out = subprocess.run(["tailscale", "status", "--json"], capture_output=True,
+                             text=True, timeout=10)
+        return json.loads(out.stdout).get("Self", {}) or {}
+    except Exception:
+        return {}
+
+
+def _self_tailnet_ips() -> list:
+    return [str(ip) for ip in (_tailscale_self().get("TailscaleIPs") or []) if str(ip)]
+
+
+# ── door backends (claim_server talks to these) ────────────────────────────────
+def door_begin(secret: str, label: str, tailnet_hint: str = "") -> dict:
+    return _engine().begin(secret, label, _running_profile(), tailnet_hint)
+
+
+def door_poll(secret: str) -> tuple:
+    state, payload = _engine().poll(secret)
+    if state == "ready" and payload is not None:
+        payload = dict(payload)
+        payload.update({"gateway_fqdn": _gateway_fqdn(), "gateway_port": GATEWAY_PORT,
+                        "watchkit_port": WATCHKIT_PORT, "private_port": PRIVATE_PORT})
+    return state, payload
+
+
+def door_ack(secret: str) -> dict:
+    result = _engine().ack(secret)
+    if "token" not in result:  # re-ack after the record retired: idempotent gone
+        raise pairing.PairingError("pairing already completed", "gone")
+    return result
+
+
+# ── the human claim (CLI / /pair / pane — never the model) ─────────────────────
+def approve_pair(code: str) -> dict:
+    return _engine().approve(str(code or "").strip(),
+                             tag=str(_cfg("watch_tag", "tag:hermes-watch")))
+
+
+def open_pairing(seconds: int = PAIR_WINDOW_SECONDS) -> dict:
+    ensure_door()
+    return _engine().open_window(_running_profile(), seconds)
+
+
+def pairing_state() -> dict:
+    eng = _engine()
+    return {"window": eng.window(), "pending": eng.pending_list(),
+            "claim_lock": eng.claim_locked(), "door": _door_listening()}
+
+
+# ── full revoke (D12) ──────────────────────────────────────────────────────────
+def _self_node_id() -> str:
+    """Numeric id of THIS machine's tailnet node — ``tailscale whois`` answers the
+    gateway's own IPs, so the check costs two local CLI calls and never touches the
+    API. "" when tailscaled is unreachable (the guard then simply doesn't fire)."""
+    for ip in _self_tailnet_ips():
         try:
-            before_text = path.read_text(encoding="utf-8") if path.is_file() else ""
-        except OSError as exc:
-            results.append({"name": name, "error": f"cannot read config.yaml: {exc}"})
-            continue
-        after_text, changed = enablement_patch(before_text, enable, gateway_profile=gp)
-        if changed:
-            try:
-                _write_config(path, after_text)
-            except OSError as exc:
-                results.append({"name": name, "error": f"cannot write config.yaml: {exc}"})
+            n = private_api._whois_local(ip)
+        except Exception:
+            return ""
+        if n and n.get("node_id"):
+            return str(n["node_id"])
+    return ""
+
+
+def revoke_device(name: str, *, started_from: str = "cli") -> dict:
+    """Cut one watch off completely: token+queue (store), tailnet node (admin API),
+    agent API key (rotated through Hermes). Steps report honestly; a failed later
+    step never re-grants the earlier ones."""
+    dev = _engine().device(name)
+    if dev is None:
+        return {"name": name, "error": f"no paired watch named {name!r}"}
+    report = {"name": name, "profile": dev.get("profile", ""), "steps": []}
+    gone = _engine().revoke(name)          # token+queue+pending records, atomic
+    report["steps"].append({"step": "token", "ok": True,
+                            "detail": "device token and outbox removed"})
+    node_id = str(gone.get("node_id") or dev.get("node_id") or "")
+    if node_id and node_id == _self_node_id():
+        report["steps"].append({"step": "tailnet", "ok": True,
+                                "detail": "captured node was the gateway's own (a NAT'd "
+                                          "dial, never a watch tunnel) — nothing to delete"})
+    elif node_id:
+        try:
+            _client().delete_device(node_id)
+            report["steps"].append({"step": "tailnet", "ok": True,
+                                    "detail": f"node {node_id} removed from your tailnet"})
+        except tailscale.TailnetAPIError as exc:
+            hint = ("" if exc.status != 404 else
+                    " — 404 means the captured ref no longer names a device (the "
+                    "node list retry already tried id/nodeId/hostname); check the "
+                    "admin console for a stale device row.")
+            report["steps"].append({"step": "tailnet", "ok": False,
+                                    "detail": f"node {node_id} NOT deleted: {exc}{hint}"})
+    else:
+        report["steps"].append({"step": "tailnet", "ok": False,
+                                "detail": "node id never captured (watch never opened a "
+                                          "private session) — check the admin console for "
+                                          "a stale "
+                                          f"{dev.get('label', name)!r} device"})
+    report["rotation"] = rotate_agent_key(dev.get("profile") or _running_profile(),
+                                          started_from)
+    return report
+
+
+def rotate_agent_key(profile: str, started_from: str = "cli") -> dict:
+    """Write a fresh API_SERVER_KEY for the profile through Hermes's OWN command (rule
+    11), never by editing the file ourselves. Named profiles authenticate per-request
+    (api_server._expected_api_key re-reads the scope) so the change is LIVE — measured
+    2026-11-09: rotated key 401s the old value on the next request, no restart. The
+    default profile caches its key at startup: it needs the gateway restart, which is
+    why the confirmation copy warns about it (D19)."""
+    hermes = shutil.which("hermes")
+    new_key = "sk-hermes-" + secrets.token_hex(24)
+    if not hermes:
+        return {"rotated": False, "reason": "hermes CLI not on PATH — set "
+                                            f"{profile}'s API_SERVER_KEY yourself"}
+    argv = ([hermes] if profile == "default" else [hermes, "-p", profile]
+            ) + ["config", "set", "API_SERVER_KEY", new_key]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=60,
+                             stdin=subprocess.DEVNULL)
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {"rotated": False, "reason": f"config set failed: {exc}"}
+    if out.returncode != 0:
+        return {"rotated": False,
+                "reason": f"config set failed: {(out.stderr or out.stdout)[-200:]!r}"}
+    result = {"rotated": True, "profile": profile}
+    if profile == "default":
+        if started_from == "watch":
+            threading.Thread(target=_restart_default_gateway, daemon=True,
+                             name="wearos-restart").start()
+            result["restart"] = "scheduled (you confirmed it on the watch)"
+        else:
+            result["restart"] = "REQUIRED for the default profile: hermes gateway restart"
+    return result
+
+
+def _restart_default_gateway() -> None:
+    time.sleep(0.5)  # let the HTTP response flush first
+    hermes = shutil.which("hermes")
+    if hermes:
+        try:
+            subprocess.run([hermes, "gateway", "restart"], capture_output=True,
+                           text=True, timeout=120, stdin=subprocess.DEVNULL)
+        except (subprocess.SubprocessError, OSError):
+            logger.warning("wearos: gateway restart failed — run it yourself")
+
+
+# ── private lane backend (D8/D13) ──────────────────────────────────────────────
+def _read_profile_key(profile: str) -> str:
+    """API_SERVER_KEY for a profile through Hermes's secret route. Own profile: the
+    ambient scope. Another profile (device on a granted agent): bind that profile's
+    scope explicitly (pure filesystem read, thread-safe)."""
+    if profile == _running_profile():
+        return _get_secret("API_SERVER_KEY") or ""
+    home = _profile_home(profile)
+    if home is None:
+        return ""
+    try:
+        from agent.secret_scope import (build_profile_secret_scope, get_secret,
+                                        reset_secret_scope, set_secret_scope)
+        token = set_secret_scope(build_profile_secret_scope(home), profile_home=str(home))
+        try:
+            return get_secret("API_SERVER_KEY") or ""
+        finally:
+            reset_secret_scope(token)
+    except Exception:
+        return ""
+
+
+def _read_watchkit_token(profile: str) -> str:
+    """Watchkit bearer for the ROUTED agent, through that profile's secret scope
+    (same file convention as API_SERVER_KEY: profiles/<p>/.env, root .env for the
+    single-profile box). The plugin host thread has no scope bound — a bare
+    _get_secret here reads the daemon's os.environ and misses the .env body."""
+    home = _profile_home(profile) or Path(os.environ.get("HERMES_HOME",
+                                                         str(Path.home() / ".hermes")))
+    try:
+        from agent.secret_scope import (build_profile_secret_scope, get_secret,
+                                        reset_secret_scope, set_secret_scope)
+        token = set_secret_scope(build_profile_secret_scope(home), profile_home=str(home))
+        try:
+            return get_secret("watchkit_token") or ""
+        finally:
+            reset_secret_scope(token)
+    except Exception:
+        return _get_secret("watchkit_token") or ""
+
+
+def _lane_session(profile: str, device: str, secret: str, node: dict) -> dict:
+    eng = _engine()
+    # A dial whose whois resolves to THIS machine's own node never came through a
+    # watch tunnel — it arrived over the host's own tailnet IP (emulator NAT, or an
+    # app run on the gateway box itself). The guard covers the ONE dangerous moment:
+    # the FIRST session, which would CAPTURE the gateway node as the device's node
+    # and fence the real one out for the device's whole life (measured live
+    # 2026-11-09). Once bound, first_session's node-identity law already refuses a
+    # different node — and a hairpin'd refresh simply retries its next direct dial.
+    if not (eng.device(device) or {}).get("node_id"):
+        me = _self_node_id()
+        if me and str(node.get("node_id") or "") == me:
+            raise PermissionError("the dial arrived from the gateway's own tailnet IP — "
+                                  "pairing must ride the WATCH's tunnel")
+    dev = eng.first_session(device, secret, node)
+    # THE GRANT LAW (D17, live-fixed 2026-11-09): the device's OWN agent's key always
+    # flows over its lane; a session routed at another agent is that agent's key and
+    # requires an explicit grant. The lane host's own running profile is irrelevant —
+    # one shared lane hosts every agent on a multiplexed gateway.
+    key = eng.resolve_key(profile, device, _read_profile_key)
+    payload = {
+        "api_key": key,
+        "profile": profile,
+        "gateway_fqdn": _gateway_fqdn(),
+        "gateway_port": GATEWAY_PORT,
+        "watchkit_port": WATCHKIT_PORT,
+        # The helper bearer, read through the ROUTED agent's secret scope: a plugin
+        # host thread has no scope bound and would otherwise fall to os.environ —
+        # systemd doesn't carry this one (live: every session said wkToken.len=0
+        # while profiles/<p>/.env held the exact bearer). Same trick as
+        # _read_profile_key; empty when watchkit isn't deployed (nullable by design).
+        "watchkit_token": _read_watchkit_token(profile),
+    }
+    return payload
+
+
+def _lane_events(profile: str, device: str, since: int) -> dict:
+    dev = _engine().device(device)
+    if dev is None:
+        raise KeyError(device)
+    if str(dev.get("profile") or "") != str(profile):
+        raise PermissionError(f"this watch is paired to agent {dev.get('profile')!r}")
+    return _engine().events(device, since)
+
+
+def _lane_ack(profile: str, device: str, up_to: int) -> dict:
+    return _engine().ack_events(device, up_to)
+
+
+def _lane_forget(profile: str, device: str) -> None:
+    revoke_device(device, started_from="watch")
+
+
+def _lane_lookup(token: str) -> Optional[str]:
+    return _engine().device_lookup(token)
+
+
+def ensure_private_lane() -> bool:
+    """Bind the private lane to the gateway's FIRST tailnet IP (never 0.0.0.0 — the
+    scanner and the doctrine agree). No tailscaled → no lane → pairing can't finish:
+    the truth, reported in the checklist."""
+    global _lane_state
+    if private_api.actual_port() > 0:
+        return True
+    ips = _self_tailnet_ips()
+    if not ips:
+        _lane_state = {"bound": None, "error": "no tailnet address on this machine "
+                                               "(tailscaled down or logged out)"}
+        return False
+    backend = private_api.PrivateBackend(private_api._whois_local, _lane_session,
+                                         _lane_events, _lane_ack, _lane_forget)
+    for host in ips:
+        try:
+            private_api.start_server(host, _private_port(), backend, _lane_lookup)
+            _lane_state = {"bound": f"{host}:{_private_port()}", "error": ""}
+            return True
+        except OSError:
+            if private_api.lane_alive(host, _private_port()):
+                _lane_state = {"bound": f"{host}:{_private_port()} (owned by another "
+                                        "wearos process)", "error": ""}
+                return True
+    _lane_state = {"bound": None, "error": "could not bind the private lane"}
+    return False
+
+
+def _private_port() -> int:
+    try:
+        return int(_cfg("private_port", PRIVATE_PORT))
+    except (TypeError, ValueError):
+        return PRIVATE_PORT
+
+
+# ── cron → watch notifications (D14) ───────────────────────────────────────────
+def _cron_title(profile: str, session_id: str, task_id: str = "") -> str:
+    """Best-effort human title for the finished cron run.
+
+    Primary: the job NAME from the cron store — the hook's ``task_id`` carries
+    ``cron:<job id>:<run id>``, and ``<home>/cron/jobs.json`` resolves it without
+    any race. Secondary: the session row's '<job name> · <date>' title in the
+    profile's state.db (Hermes's public session store, READ-ONLY — but the title
+    is written at cron FINALIZE, seconds AFTER this hook fires, so it's usually
+    still pending; live-measured 2026-11-09). Any miss degrades to the generic
+    copy; the notification never depends on it."""
+    home = _profile_home(profile)
+    if home is None:
+        return "cron run"
+    job_id = (str(task_id or "").split(":", 2)[1]
+              if str(task_id or "").startswith("cron:") else "")
+    if job_id:
+        try:
+            import json as _json
+            doc = _json.loads((home / "cron" / "jobs.json").read_text(encoding="utf-8"))
+            rows = (doc.get("jobs") if isinstance(doc, dict) else doc) or []
+            if isinstance(rows, dict):
+                rows = list(rows.values())
+            for j in rows:
+                if isinstance(j, dict) and str(j.get("id") or "") == job_id and j.get("name"):
+                    return str(j["name"])[:120]
+        except Exception:
+            pass
+    if not session_id:
+        return "cron run"
+    try:
+        import sqlite3
+        sid = str(session_id)[:128]
+        con = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1.0)
+        try:
+            # Cron rows key the id as 'local-<sha256>'; match id or chat_id.
+            row = con.execute("select title from sessions where id=? or chat_id=?",
+                              (sid, sid)).fetchone()
+        finally:
+            con.close()
+        if row and row[0]:
+            return str(row[0])[:120]
+    except Exception:
+        pass
+    return "cron run"
+
+
+def _on_session_end(**kw: Any) -> None:
+    """on_session_end: every completed/failed turn on platform='cron' becomes a watch
+    notification for this agent (the hook is fire-and-forget — never raises, tiny
+    budget, the outbox is the queue)."""
+    try:
+        if str(kw.get("platform") or "") != "cron":
+            return
+        profile = _running_profile()
+        eng = _engine()
+        pref = eng.alert_pref(profile)
+        if pref == "off":
+            return
+        failed = bool(kw.get("failed"))
+        if pref == "fail" and not failed:
+            return
+        title = _cron_title(profile, str(kw.get("session_id") or ""),
+                            str(kw.get("task_id") or ""))
+        mark = "✗ failed" if failed else "✓ finished"
+        text = f"⏰ {title} {mark}"
+        for name, dev in eng.devices().items():
+            if str(dev.get("profile") or "") != profile:
                 continue
-        results.append({"name": name,
-                        "before": _wearos_enabled(before_text),
-                        "after": _wearos_enabled(after_text),
-                        "changed": changed})
-    return results
-
-
-def gateway_fqdn() -> str:
-    """This box's ts.net FQDN via the local socket. Measured on 1.102.3: the field is
-    Self.DNSName (capitals — AGENTS.md's old `.Self.DnsName` reads null); no
-    fabrication: an empty answer makes claim/wizard red, which is the truth."""
-    try:
-        out = subprocess.run(
-            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=10
-        )
-        self_ = json.loads(out.stdout).get("Self", {})
-        fqdn = str(self_.get("DNSName") or self_.get("DnsName") or "")
-        return fqdn.rstrip(".")
+            try:
+                eng.queue_message(name, text, kind="cron", agent=profile, title=title)
+            except pairing.PairingError:
+                pass
     except Exception:
-        return ""
+        logger.debug("wearos: cron alert failed", exc_info=True)
 
 
-def tailnet_name() -> str:
-    """Real tailnet handle (CurrentTailnet.Name, measured location) for packets/registry
-    — never the '-' placeholder, which is API-internal only."""
+# ── readiness / wizard checklist ───────────────────────────────────────────────
+def local_checks() -> dict:
+    """The LOCAL half of the story — safe at load, no network. Each red item carries
+    one fix verb."""
+    checks: dict[str, dict] = {}
+    st = _tailscale_self()
+    up = bool(st.get("DNSName") or st.get("TailscaleIPs"))
+    checks["tailscaled"] = {
+        "ok": up,
+        "detail": (f"logged in as {st.get('DNSName', '?')}" if up else
+                   "this machine is not on a tailnet (install/run tailscale up)"),
+    }
+    port = _claim_port()
+    door_up = claim_server.door_alive(port) or claim_server.actual_port() > 0
+    checks["claim_door"] = {
+        "ok": door_up, "detail": f"127.0.0.1:{port} {'answering' if door_up else 'DOWN'}",
+        "fix": "hermes watch pair (opens the door with the window)",
+    }
+    lane_up = private_api.actual_port() > 0 or _lane_state.get("bound")
+    checks["private_lane"] = {
+        "ok": bool(lane_up),
+        "detail": str(_lane_state.get("bound") or _lane_state.get("error")
+                      or "not started yet"),
+        "fix": "hermes watch status --api (binds it; needs tailscaled)",
+    }
     try:
-        out = subprocess.run(
-            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=10
-        )
-        return str(json.loads(out.stdout).get("CurrentTailnet", {}).get("Name", ""))
+        fs = subprocess.run(["tailscale", "funnel", "status"], capture_output=True,
+                            text=True, timeout=5)
+        text = (fs.stdout or "") + (fs.stderr or "")
+        funneled = f":{port}" in text.replace("127.0.0.1", "")
+        checks["funnel"] = {
+            "ok": funneled,
+            "detail": ("fronts 127.0.0.1:" + str(port)) if funneled else
+                      ("not fronting the door — " + text.strip().splitlines()[0:1][0]
+                       if text.strip() else "not fronting the door"),
+            "fix": "hermes watch setup --fix serve",
+        }
+    except Exception as exc:
+        checks["funnel"] = {"ok": False, "detail": f"cannot read funnel status: {exc}",
+                            "fix": "hermes watch setup --fix serve"}
+    devices = _engine().devices()
+    online = 0
+    watch_tag = str(_cfg("watch_tag", "tag:hermes-watch"))
+    try:
+        st2 = subprocess.run(["tailscale", "status", "--json"], capture_output=True,
+                             text=True, timeout=10)
+        for peer in (json.loads(st2.stdout).get("Peer") or {}).values():
+            if watch_tag in [str(t) for t in (peer.get("Tags") or [])]:
+                online += 1 if peer.get("Online") else 0
     except Exception:
-        return ""
+        pass
+    checks["devices"] = {"ok": bool(devices),
+                         "detail": f"{len(devices)} paired · ≤{online} tailnet nodes online"}
+    return checks
 
 
-def tailnet_state() -> dict:
-    """The butler's checklist (handoff §3.5): each red item is one fix verb, never a
-    wall of text. Probe order = the wizard order."""
+def api_checks() -> dict:
+    """The API half (never at load — only on explicit status/refresh): credential,
+    MagicDNS, funnel attribute ON THE GATEWAY NODE."""
     checks: dict[str, dict] = {}
     try:
         client = _client()
-        checks["tailscaled"] = {"ok": True, "detail": "socket present"}
+        checks["credential"] = {"ok": True, "detail": client.describe_credential()}
         try:
-            checks["credential"] = {"ok": True, "detail": client.describe_credential()}
-        except tailscale.TailnetAPIError as exc:
-            checks["credential"] = {"ok": False, "detail": str(exc), "fix": "hermes watch setup --fix credential"}
-        try:
-            prefs = client.dns_preferences()
-            magic = bool(prefs.get("magicDNS"))
-            checks["magicdns"] = {"ok": magic, "detail": "enabled" if magic else "disabled",
-                                  "fix": "console: Network ▸ DNS — enable MagicDNS (console.tailscale.com/admin)"}
+            checks["magicdns"] = {
+                "ok": bool(client.dns_preferences().get("magicDNS")),
+                "detail": "MagicDNS enables/disables in the console",
+            }
         except tailscale.TailnetAPIError as exc:
             checks["magicdns"] = {"ok": False, "detail": str(exc)}
+        want = (_self_tailnet_ips() or [""])[0]
         try:
-            funnel_ok, detail = client.funnel_attr_present()
-            checks["funnel_attr"] = {"ok": funnel_ok, "detail": detail,
+            ok, detail = client.funnel_attr_present(want)
+            checks["funnel_attr"] = {"ok": ok, "detail": detail,
                                      "fix": "hermes watch setup --fix funnel"}
         except tailscale.TailnetAPIError as exc:
             checks["funnel_attr"] = {"ok": False, "detail": str(exc)}
     except tailscale.CredentialMissing as exc:
         checks["credential"] = {"ok": False, "detail": str(exc),
-                                "fix": "hermes watch setup — walks you through it (account → install → token)"}
-    port = _claim_port()
-    funneled = False
-    try:
-        fs = subprocess.run(["tailscale", "funnel", "status"],
-                            capture_output=True, text=True, timeout=5)
-        funneled = fs.returncode == 0 and f":{port}" in ((fs.stdout or "") + (fs.stderr or ""))
-    except Exception:
-        pass
-    door_up = claim_server.door_alive(port)
-    checks["claim_door"] = {
-        "ok": funneled and door_up,
-        "detail": (f"127.0.0.1:{port} — funneled:{'yes' if funneled else 'no'}, "
-                   f"door:{'up' if door_up else 'down'}"),
-        "fix": "hermes watch setup --fix serve (fronts the door); hermes watch pair starts the door",
-    }
-    devices = _CTX.state.get(STATE_DEVICES) or {} if _CTX else {}
-    checks["devices_online"] = {
-        "ok": bool(devices),
-        "detail": f"{len(devices)} paired",
-    }
+                                "fix": "hermes watch setup --fix credential"}
     return checks
 
 
-# ── claim door lifecycle ──────────────────────────────────────────────────────
+# ── profile visibility (D10): the pane checklist reads the SAME truth the manage
+#    CLI sees — per-profile `plugins list --json` — never private metadata. ───────
+_INVENTORY_CACHE: dict = {}
+
+
+def _profile_inventory(max_age: float = 10.0) -> list:
+    now = time.monotonic()
+    hit = _INVENTORY_CACHE.get("inv")
+    if hit and now - hit[0] < max_age:
+        return hit[1]
+    hermes = shutil.which("hermes")
+    out = []
+    for name in _all_profile_names():
+        row = {"name": name, "enabled": False, "visible": False, "version": "",
+               "source": ""}
+        if hermes:
+            argv = ([hermes] if name == "default" else [hermes, "-p", name]) + \
+                   ["plugins", "list", "--json"]
+            try:
+                res = subprocess.run(argv, capture_output=True, text=True, timeout=30,
+                                     stdin=subprocess.DEVNULL,
+                                     env=_clean_env())
+                rows = json.loads(res.stdout) if res.returncode == 0 else []
+                for r in rows if isinstance(rows, list) else []:
+                    if str(r.get("name", "")) == "wearos":
+                        row.update({"enabled": r.get("status") == "enabled",
+                                    "visible": True,
+                                    "version": str(r.get("version") or ""),
+                                    "source": str(r.get("source") or "")})
+                        break
+            except (subprocess.SubprocessError, OSError, ValueError):
+                pass
+        out.append(row)
+    _INVENTORY_CACHE["inv"] = (now, out)
+    return out
+
+
+def _clean_env() -> dict:
+    env = dict(os.environ)
+    for k in ("API_SERVER_KEY", "HERMES_TAILNET_KEY"):
+        env.pop(k, None)
+    return env
+
+
+def delegate_enablement(profile: str, enable: bool) -> dict:
+    """One checkbox = one fixed-argv `hermes -p <profile> plugins enable|disable
+    wearos` (review fix: no hand-rolled YAML editor; the CLI's consent flow runs, we
+    NEVER pass --yes; the value lives in core's hands)."""
+    profile = re.sub(r"[^a-z0-9_-]", "", str(profile or "").strip().lower())[:64]
+    if not profile:
+        return {"name": profile, "error": "profile name is required"}
+    hermes = shutil.which("hermes")
+    if not hermes:
+        return {"name": profile, "error": "hermes CLI not on PATH"}
+    verb = "enable" if enable else "disable"
+    argv = ([hermes] if profile == "default" else [hermes, "-p", profile]
+            ) + ["plugins", verb, "wearos"]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=60,
+                             stdin=subprocess.DEVNULL, env=_clean_env())
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {"name": profile, "error": f"{verb} failed: {exc}"}
+    text = ((out.stdout or "") + (out.stderr or "")).strip()
+    return {"name": profile, "ok": out.returncode == 0, "verb": verb,
+            "detail": text[-600:] or ("done" if out.returncode == 0 else "failed")}
+
+
+# ── claim door lifecycle ───────────────────────────────────────────────────────
 def _claim_port() -> int:
     try:
         return int(_cfg("claim_port", DEFAULT_CLAIM_PORT))
@@ -989,8 +728,8 @@ def _door_listening() -> bool:
 
 
 def ensure_door() -> bool:
-    """Start the claim door if nothing is answering on the configured port (the
-    gateway's hook usually beat us here). Returns True when a door answers."""
+    """Start the claim door if nothing answers on the configured port (whichever
+    wearos process got here first owns it). Returns True when a door answers."""
     port = _claim_port()
     if _door_listening():
         return True
@@ -998,23 +737,26 @@ def ensure_door() -> bool:
         claim_server.start_server(port, claim_server.ClaimBackend.from_module())
         return True
     except OSError:
-        return claim_server.door_alive(port)  # raced with another starter: fine
+        return claim_server.door_alive(port)
 
 
-def _await_pickup(pin: str, timeout: float) -> str:
-    """Poll the ledger until the watch collects the packet. 'delivered' | 'waiting'."""
-    deadline = _now() + timeout
-    while _now() < deadline:
-        rec = _pins().get(_hash_pin(pin)) or {}
-        if rec.get("delivered"):
-            return "delivered"
-        if rec.get("expired") or (rec and rec.get("expires", 0) <= _now()):
-            return "pruned"
+def _await_pickup(code: str, timeout: float) -> str:
+    """CLI patience: wait for the watch to collect (and ack) its key."""
+    deadline = time.time() + timeout
+    eng = _engine()
+    while time.time() < deadline:
+        for rec in eng.pending_list():
+            if rec.get("code") == code:
+                if rec.get("state") == "pending":
+                    return "unknown"  # record vanished under the tombstone
+                break
+        else:
+            return "delivered"  # not in the live list anymore: retired or acked
         time.sleep(1.0)
     return "waiting"
 
 
-# ── wizard fix-verbs (hermes watch setup --fix …) ─────────────────────────────
+# ── wizard fix-verbs (hermes watch setup --fix …) ──────────────────────────────
 def _wizard_fix(verb: str, yes: bool = False) -> None:
     if verb == "credential":
         _fix_credential()
@@ -1022,8 +764,43 @@ def _wizard_fix(verb: str, yes: bool = False) -> None:
         _fix_funnel(yes=yes)
     elif verb == "serve":
         _fix_serve()
+    elif verb == "stt":
+        _fix_stt()
     else:
-        print(f"unknown --fix {verb!r} — try credential | funnel | serve")
+        print(f"unknown --fix {verb!r} — try credential | funnel | serve | stt")
+
+
+def _fix_stt() -> None:
+    """Streaming STT install, terminal path (the pane button is the other one)."""
+    prev = stt_install.preview()
+    print("Streaming speech-to-text (Parakeet) — this will:")
+    for step in prev["steps"]:
+        print(f"  · {step}")
+    print(f"  · hosts: {', '.join(prev['hosts'])} · needs: {', '.join(prev['needs'])}"
+          f" · disk: ~{prev['disk_mb']} MB")
+    if not prev["toolchain_ok"]:
+        print("  ✗ toolchain missing (git, cmake, g++) — install those first.")
+        return
+    if sys.stdin.isatty():
+        answer = input("Proceed? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("cancelled.")
+            return
+        r = stt_install.start(interactive=True)
+    else:
+        r = stt_install.start(interactive=False)
+    if not r.get("started"):
+        print(f"  ✗ {r.get('error', 'not started')}")
+        return
+    print("  · installing (progress below; ctrl-c does NOT cancel — use "
+          "hermes watch setup --fix stt again to check, or the pane's Cancel):")
+    while True:
+        st = stt_install.status()
+        print(f"    [{st.get('phase')}] {st.get('detail')}"
+              f"{' — ' + st['error'] if st.get('error') else ''}")
+        if st.get("phase") in ("done", "failed", "cancelled", "idle"):
+            break
+        time.sleep(3.0)
 
 
 def _fix_credential() -> None:
@@ -1034,7 +811,8 @@ def _fix_credential() -> None:
         print(f"  ✗ {exc}")
         print("  set one: hermes plugins configure wearos — prefer the OAuth pair")
         print("  (tailscale_oauth_client_id + tailscale_oauth_client_secret, scoped to")
-        print("  auth_keys + the watch tag) or the tailscale_api_token secret.")
+        print("  auth_keys + devices:core, the watch tag, dns:read, and a policy READ")
+        print("  grant) or the tailscale_api_token secret.")
         return
     try:
         data = client.validate()
@@ -1059,13 +837,17 @@ def _fix_funnel(yes: bool) -> None:
         print(f"  ✗ {exc}")
         print("  run `hermes watch setup --fix credential` first.")
         return
-    # ACL attribute half of the funnel story. The OTHER half — the tailnet-level toggle —
-    # has no API endpoint (measured 2026-11-06: /prefs/funnel 404s); it is console-only
-    # (Settings ▸ General ▸ Funnel ▸ Manage). `--fix serve` is what actually discovers a
-    # disabled toggle, straight from the tailscale CLI's own error + link.
+    # ACL attribute half of the funnel story — granted to THIS GATEWAY NODE (review
+    # fix; v0.1 targeted the watch tag, the wrong node: the funnel fronts the door
+    # here). The OTHER half — enabling Funnel — has no API (measured 2026-11-06):
+    # --fix serve discovers it live from the CLI's own error + link.
     try:
-        ok, detail = client.funnel_attr_present()
-    except tailscale.TailnetAPIError as exc:  # CredentialMissing included: it's the base
+        target = (_self_tailnet_ips() or [""])[0]
+        if not target:
+            print("  ✗ this machine has no tailnet address (tailscaled down?)")
+            return
+        ok, detail = client.funnel_attr_present(target)
+    except tailscale.TailnetAPIError as exc:
         print(f"  ✗ cannot read the tailnet ACL: {exc}")
         print("  run `hermes watch setup --fix credential` first.")
         return
@@ -1073,11 +855,12 @@ def _fix_funnel(yes: bool) -> None:
         print(f"  ✓ funnel attribute already granted — {detail}")
         return
     print(f"  ✗ {detail}")
+    print(f'  one-node grant — add a funnel nodeAttrs entry targeting THIS gateway')
+    print(f'  (its tailscale IP: {target}; the tag rule below lets enrolled watch keys')
+    print('  carry their tag — both sections, all shapes measured):')
     tag = str(_cfg("watch_tag", "tag:hermes-watch"))
-    print('  two-section diff (add to the policy file — the tag must exist before a')
-    print('  key can carry it, and nodeAttrs entries are {target,attr} — all measured):')
     print(json.dumps({"tagOwners": {tag: ["autogroup:member"]},
-                      "nodeAttrs": [{"target": [tag], "attr": ["funnel"]}]},
+                      "nodeAttrs": [{"target": [target], "attr": ["funnel"]}]},
                      indent=2).replace("\n", "\n        "))
     print("        console: console.tailscale.com/admin/acls/visual (Access controls ▸ Policies ▸ JSON editor)")
     if not yes:
@@ -1087,20 +870,20 @@ def _fix_funnel(yes: bool) -> None:
         return
     print("  · preview approved (--yes) — replacing the ACL (etag-guarded)…")
     try:
-        client.add_funnel_attr(tag)
+        client.add_funnel_attr(target, also_tag=str(_cfg("watch_tag", "tag:hermes-watch")))
     except tailscale.TailnetAPIError as exc:
         print(f"  ✗ replace refused: {exc}")
         print("    (conflict = someone edited the ACL meanwhile; apply the diff above in the console)")
         return
-    ok, detail = client.funnel_attr_present()
+    ok, detail = client.funnel_attr_present(target)
     print(f"  {'✓' if ok else '✗'} funnel_attr: {detail}")
 
 
 def _fix_serve() -> None:
-    """Front the claim door AND learn the funnel-toggle truth in one live attempt:
-    `tailscale funnel` fails with 'Funnel is not enabled on your tailnet' + a console
-    link when the (console-only, no-API — measured) toggle is off."""
-    port = int(_cfg("claim_port", 42653))
+    """Front the claim door AND learn the funnel-enable truth in one live attempt:
+    `tailscale funnel` fails with 'Funnel is not enabled on your tailnet' + a per-node
+    approval link."""
+    port = int(_cfg("claim_port", DEFAULT_CLAIM_PORT))
     try:
         out = subprocess.run(["tailscale", "funnel", "status"],
                              capture_output=True, text=True, timeout=10)
@@ -1117,21 +900,16 @@ def _fix_serve() -> None:
         return
     # Flags measured on 1.102.3: funnel is its own verb mirroring serve (--bg/--https);
     # serve has no --funnel flag. Root mount is safe: the door 404s every path except
-    # /pair/claim, so nothing else is internet-reachable even mounted at /.
-    # Measured to the bottom: on a DISABLED toggle `tailscale funnel` prints the enable
-    # link and then WAITS (no flag disables this; --yes makes it wait forever; /dev/tty
-    # and stdin tricks irrelevant — it polls). So we EMBRACE it: the wizard stays alive
-    # up to 4 min, and the moment the user clicks Funnel→enable the command proceeds
-    # and applies itself. One click, zero re-runs.
+    # /pair/begin|poll|ack (and 426s v1), so nothing else is internet-reachable.
+    # Measured to the bottom: on a DISABLED enable `tailscale funnel` prints the
+    # approval link and then WAITS. We EMBRACE it: the wizard stays alive up to 4 min,
+    # and the moment the user approves Funnel the command proceeds and applies itself.
     cmd = ["tailscale", "funnel", "--bg", "--https=443", f"http://127.0.0.1:{port}"]
     print(f"  · running: {' '.join(cmd)}")
-    # The enable approval lives at a per-NODE link (docs Jan 2026: the CLI "triggers a
-    # web interface that prompts you to approve enabling Funnel"; no console toggle
-    # exists in the redesign). We compute it ourselves so it prints BEFORE the wait.
     try:
         st = json.loads(subprocess.run(["tailscale", "status", "--json"],
                                        capture_output=True, text=True, timeout=10).stdout)
-        node_id = st.get("Self", {}).get("ID", "")
+        node_id = (st.get("Self") or {}).get("ID", "")
         if node_id:
             print(f"    enable (one click, approves THIS node): https://login.tailscale.com/f/funnel?node={node_id}")
     except Exception:
@@ -1141,7 +919,7 @@ def _fix_serve() -> None:
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
                              stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
-        print("  ✗ gave up waiting (4 min). Flip the toggle, then re-run this verb.")
+        print("  ✗ gave up waiting (4 min). Approve the link, then re-run this verb.")
         return
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         print(f"  ✗ could not run the tailscale CLI: {exc}")
@@ -1155,7 +933,7 @@ def _fix_serve() -> None:
         print(f"        sudo tailscale set --operator={os.environ.get('USER', '$USER')}")
         print("  …then re-run this verb.")
         return
-    # NB: the disabled-toggle path exits 0 with prose (measured) — parse text BEFORE rc.
+    # NB: the disabled path exits 0 with prose (measured) — parse text BEFORE rc.
     if "funnel is not enabled" in out_text.lower():
         print("  ✗ funnel not enabled yet. Approve it at the per-node link (free,")
         print("    Personal plan ok — there is no console switch; this link IS the UI):")
@@ -1170,173 +948,250 @@ def _fix_serve() -> None:
         url = next((w for w in out_text.split() if w.startswith("https://")), "")
         if url:
             print("  · watch-side pairing address (type on the watch, minus https://):")
-            print(f"      {url.split('//', 1)[1].split('/')[0]}   → POST /pair/claim")
+            print(f"      {url.split('//', 1)[1].split('/')[0]}   → POST /pair/begin")
         return
     print(f"  ✗ funnel refused: {out_text[:300]}")
 
 
-# ── tools ─────────────────────────────────────────────────────────────────────
+# ── tools ──────────────────────────────────────────────────────────────────────
 def _tool_watch_status(args: dict, **kw) -> str:
-    devices = _CTX.state.get(STATE_DEVICES) or {}
-    return json.dumps({
-        "checks": tailnet_state(),
-        "devices": devices,
-        # Additive (pane install-checklist): `profiles` drives the per-profile enable
-        # checkboxes — the inventory rides THIS call (the pane already makes it) rather
-        # than a second round-trip; `apk_release_url` mirrors the plugin config because
-        # the SDK gives panes no config door (see desktop/plugin.js).
+    if set(args or {}) - {"api"}:
+        return json.dumps({"error": "watch_status takes no arguments"})
+    include_api = bool(args.get("api") or kw.get("api"))
+    payload = {
+        "checks": local_checks(),
+        "devices": _engine().devices(),
+        "pairing": pairing_state(),
         "profiles": _profile_inventory(),
+        "grants": _engine().grants(),
         "apk_release_url": str(_cfg("apk_release_url", RELEASES_LATEST) or RELEASES_LATEST),
-    }, indent=2)
-
-
-def _tool_watch_enable(args: dict, **kw) -> str:
-    enable = args.get("enable", True)
-    enable = True if enable is None else bool(enable)
-    results = apply_enablement(_parse_agents(args.get("agents")), enable)
-    return json.dumps({"enable": enable, "results": results}, indent=2)
+    }
+    if include_api:
+        payload["checks"].update(api_checks())
+    return json.dumps(payload, indent=2)
 
 
 def _tool_watch_pair(args: dict, **kw) -> str:
-    if args.get("code"):
-        try:
-            device = claim_pin(str(args["code"]))
-        except ValueError as exc:
-            return json.dumps({"error": str(exc)})
-        return json.dumps({"paired": device,
-                           "claim_door": _door_listening(),
-                           "note": "the watch collects the packet on its next poll (≤3 s)"
-                                   if _door_listening()
-                                   else "claim door not answering — the packet waits in the "
-                                        "ledger; run `hermes watch pair` once the gateway is up"},
-                          indent=2)
-    return json.dumps({"pin": mint_pin(),
-                       "ttl_seconds": PIN_TTL_SECONDS,
-                       "say": "type or say this PIN to Hermes on any surface: /pair <PIN>"}, indent=2)
+    """No arguments at all (review fix): the model opens the pairing WINDOW and reads
+    status — it can neither mint nor approve nor see a claim it can act on."""
+    if args:
+        return json.dumps({"error": "watch_pair takes no arguments — the pairing code "
+                                    "is typed by a human at the gateway, never by a model"})
+    state = open_pairing()
+    return json.dumps({
+        "pairing_window": {"profile": state["profile"],
+                           "seconds_left": max(0, int(state["until"] - time.time()))},
+        "how": "tap Pair on the watch — it shows a 6-digit code; the HUMAN types it at "
+               "the gateway (hermes watch pair <CODE> or /pair <CODE> on the computer). "
+               "The code never passes through a model.",
+        "door": _door_listening(),
+    }, indent=2)
 
 
 def _tool_watch_send(args: dict, **kw) -> str:
-    # TODO(pairing-impl): POST through the tunnel to the paired device's gateway lane.
-    devices = _CTX.state.get(STATE_DEVICES) or {}
-    if not devices:
-        return json.dumps({"error": "no paired watch yet — run hermes watch pair"})
-    return json.dumps({"sent": args.get("text", ""), "to": sorted(devices)}, indent=2)
+    text = str(args.get("text", "") or "")
+    if not text.strip():
+        return json.dumps({"error": "text is required"})
+    target = str(args.get("device", "") or "")
+    profile = _running_profile()
+    eng = _engine()
+    devices = eng.devices()
+    picked = ([target] if target else
+              [name for name, dev in devices.items()
+               if str(dev.get("profile") or "") == profile])
+    if not picked:
+        return json.dumps({"error": f"no paired watch for agent {profile!r} — run "
+                                    "hermes watch pair"})
+    results = []
+    for name in picked:
+        try:
+            r = eng.queue_message(name, text, kind="msg", agent=profile)
+            results.append({"device": name, **r})
+        except pairing.PairingError as exc:
+            results.append({"device": name, "error": str(exc)})
+    return json.dumps({"queued": [r for r in results if r.get("queued")],
+                       "failed": [r for r in results if not r.get("queued")],
+                       "note": "delivered on the watch's next private-lane poll "
+                               "(screen awake ≤ ~30 s; doze can hold it longer)"},
+                      indent=2)
 
 
 _TOOLS = (
     ("watch_send", {
         "type": "object",
-        "properties": {"text": {"type": "string", "description": "Message to show on the watch"}},
+        "properties": {
+            "text": {"type": "string", "description": "Message to show on the watch"},
+            "device": {"type": "string", "description": "Paired watch name (default: every watch paired to this agent)"},
+        },
         "required": ["text"],
     }, _tool_watch_send, "📳"),
-    ("watch_status", {"type": "object", "properties": {}}, _tool_watch_status, "🛰"),
-    ("watch_pair", {
-        "type": "object",
-        "properties": {"code": {"type": "string", "description": "6-digit PIN shown on the watch (omit to mint one here)"}},
-    }, _tool_watch_pair, "🔗"),
-    ("watch_enable", {
-        "type": "object",
-        "properties": {
-            "agents": {
-                "type": ["array", "string"],
-                "items": {"type": "string"},
-                "description": 'Profiles to toggle: ["wear","wear-demo"], a comma list '
-                               '"wear,wear-demo", or "all" — every profile on this machine '
-                               "(named profiles + the default root config).",
-            },
-            "enable": {
-                "type": "boolean",
-                "description": "true (default) lists wearos in the profile's plugins.enabled; "
-                               "false removes it (the settings block is left standing).",
-            },
-        },
-    }, _tool_watch_enable, "🔌"),
+    ("watch_status", {"type": "object", "properties": {
+        "api": {"type": "boolean", "description": "include the tailscale-API checks (credential, MagicDNS, funnel attribute)"}}},
+        _tool_watch_status, "🛰"),
+    ("watch_pair", {"type": "object", "properties": {}}, _tool_watch_pair, "🔗"),
 )
 
 
-# ── in-session /pair command (demo hero: "pair 429183" in any chat surface) ───
-def _cmd_pair(raw_args: str) -> str:
-    pin = (raw_args or "").strip()
-    if not pin:
-        return f"usage: /pair <6-digit PIN from the watch>  (or /pair show to mint one)"
-    if pin.lower() == "show":
-        ensure_door()
-        return f"pair with this PIN (valid {PIN_TTL_SECONDS // 60} min): {mint_pin()}"
+# ── in-session /pair command — the claim surface (D4) ──────────────────────────
+def _cmd_pair(raw_args: str, platform: str = "", **kw) -> str:
+    arg = (raw_args or "").strip()
+    eng = _engine()
+    if not arg:
+        st = pairing_state()
+        w = st["window"]
+        lines = [f"pairing window: OPEN for {w['seconds_left']}s as agent {w['profile']}"
+                 if w else "pairing window: CLOSED (this command opens it)"]
+        for p in st["pending"]:
+            lines.append(f"  code {p['code']} → {p['label']!r} [{p['state']}, "
+                         f"{p['seconds_left']}s]")
+        lines.append("usage: /pair <6-digit code> — after tapping Pair on the watch")
+        return "\n".join(lines)
+    if arg.lower() in ("open", "again"):
+        state = open_pairing()
+        return (f"pairing window open {int(state['until'] - time.time())}s for agent "
+                f"{state['profile']} — tap Pair on the watch to see its code")
+    if arg.lower() in ("close", "stop"):
+        eng.close_window()
+        return "pairing window closed"
+    if platform not in APPROVAL_SURFACES:
+        return (f"watch code {arg} received — approve it on your computer: "
+                f"`hermes watch pair {arg}` in a terminal, or the Wear Kit pane. "
+                "Pairing claims happen on the gateway, never in chat.")
     try:
-        device = claim_pin(pin)
-    except ValueError as exc:
+        approved = approve_pair(arg)
+    except pairing.PairingError as exc:
+        lock = eng.claim_locked()
+        if lock["locked"]:
+            return ("too many wrong codes — pairing approval is locked for a few minutes")
         return f"pairing failed: {exc}"
-    tail = ("the watch collects it on its next poll (≤3 s)"
+    tail = ("the watch collects its key on its next poll (≤5 s)"
             if _door_listening() else
-            "packet queued — start the door with `hermes watch pair` if the watch stalls")
-    return f"watch enrolled on the tailnet → {device['hostname']} ({device['gateway_fqdn']}) — {tail}"
+            "claim door not answering — the approved record waits 2 min; pair once the "
+            "gateway is up (hermes watch setup --fix serve)")
+    return (f"approved: {approved['label']!r} joins agent {approved['profile']}'s tailnet "
+            f"— {tail}")
 
 
-# ── hermes watch CLI ──────────────────────────────────────────────────────────
+# ── hermes watch CLI ───────────────────────────────────────────────────────────
 def _watch_cli_setup(sub) -> None:
     watch_sub = sub.add_subparsers(dest="watch_command")
-    p = watch_sub.add_parser("pair", help="claim the watch's PIN (or mint one with --show)")
-    p.add_argument("code", nargs="?", help="6-digit PIN from the watch")
-    p.add_argument("--show", action="store_true", help="mint a plugin-side PIN instead of claiming")
-    e = watch_sub.add_parser("enable",
-                             help="turn the wearos plugin on/off per profile "
-                                  "(idempotent, comment-preserving config.yaml edits)")
-    e.add_argument("--agents", default="all", metavar="NAMES",
-                   help='profiles to toggle: "wear,wear-demo", or "all" (default — '
-                        "every profile on this machine)")
-    e.add_argument("--disable", action="store_true",
-                   help="remove wearos from plugins.enabled instead of adding it")
-    watch_sub.add_parser("status", help="tailnet readiness checklist + devices")
-    s = watch_sub.add_parser("setup", help="wizard: tailscaled → credential → MagicDNS → funnel → serve")
-    s.add_argument("--fix", choices=["credential", "funnel", "serve"], default=None)
-    s.add_argument("--yes", action="store_true",
+    p = watch_sub.add_parser("pair",
+                             help="open the pairing window, or claim a code: "
+                                  "hermes watch pair [<CODE>]")
+    p.add_argument("code", nargs="?", help="6-digit code shown on the watch")
+    e = watch_sub.add_parser("devices", help="list paired watches")
+    e.add_argument("--revoke", metavar="NAME", help="full removal: token, tailnet node, "
+                                                    "agent key rotation")
+    e.add_argument("--yes", action="store_true", help="skip the confirm prompt")
+    s = watch_sub.add_parser("status", help="readiness checklist (local; --api adds the "
+                                            "tailscale-API half)")
+    s.add_argument("--api", action="store_true")
+    w = watch_sub.add_parser("setup", help="wizard: tailscaled → credential → funnel")
+    w.add_argument("--fix", choices=["credential", "funnel", "serve", "stt"], default=None)
+    w.add_argument("--yes", action="store_true",
                    help="approve the printed preview (currently: --fix funnel PATCHes the ACL)")
-    watch_sub.add_parser("devices", help="paired watch records")
-
-
-def _cli_enable(args) -> None:
-    names = _parse_agents(getattr(args, "agents", "all"))
-    enable = not bool(getattr(args, "disable", False))
-    results = apply_enablement(names, enable)
-    for r in results:
-        if r.get("error"):
-            print(f"  ✗ {r['name']} — {r['error']}")
-        elif r.get("changed"):
-            print(f"  {'✓ enabled' if enable else '− disabled'} · {r['name']}")
-        else:
-            print(f"  · {r['name']} — already {'enabled' if r['after'] else 'off'}")
-    touched = sum(1 for r in results if r.get("changed"))
-    print(f"{len(results)} profile(s) inspected, {touched} changed — each profile picks "
-          "the plugin up when its agent (re)loads plugins. The Wear Kit pane drives the "
-          "same verb (watch_enable).")
+    a = watch_sub.add_parser("alerts", help="cron→watch notifications: on|fail|off|list")
+    a.add_argument("pref", choices=["on", "fail", "off", "list"], nargs="?", default="list")
 
 
 def _cli_pair(args) -> None:
     code = str(getattr(args, "code", "") or "")
-    if code and not getattr(args, "show", False):
-        ensure_door()
+    eng = _engine()
+    if code:
         try:
-            device = claim_pin(code)
-        except ValueError as exc:
+            approved = approve_pair(code)
+        except pairing.PairingError as exc:
             print(f"pairing failed: {exc}")
             raise SystemExit(1)
-        print(json.dumps({"paired": device}, indent=2))
+        print(f"✓ approved {approved['label']!r} for agent {approved['profile']}")
         if not _door_listening():
-            print("⚠ claim door not answering — the gateway must serve it (hermes watch setup --fix serve).")
+            print("⚠ claim door not answering — hermes watch setup --fix serve")
             return
         status = _await_pickup(code, CLAIM_WAIT_SECONDS)
         if status == "delivered":
-            print("✓ the watch collected its enrollment packet")
-        elif status == "pruned":
-            print("⚠ the packet aged out before the watch polled it — re-pair")
+            print("✓ the watch collected its key and its device token")
+        elif status == "unknown":
+            print("⚠ the approved record aged out before the watch polled — re-pair")
         else:
-            print(f"packet queued — the watch polls every ~3 s, still in the ledger after {CLAIM_WAIT_SECONDS}s")
+            print(f"approved — the watch polls every ~3 s; still waiting after {CLAIM_WAIT_SECONDS}s")
         return
-    ensure_door()
-    print(json.dumps({"pin": mint_pin(),
-                      "ttl_seconds": PIN_TTL_SECONDS,
-                      "claim_door_listening": _door_listening(),
-                      "say": "type or say this PIN to Hermes on any surface: /pair <PIN>"}, indent=2))
+    state = open_pairing()
+    print(f"pairing window OPEN for {PAIR_WINDOW_SECONDS // 60} min, agent "
+          f"{state['profile']} — tap Pair on the watch now.")
+    print("waiting for the watch to show its code (ctrl-c stops this; the window stays "
+          "open; re-run to see it):")
+    deadline = time.time() + 45
+    shown = ""
+    while time.time() < deadline:
+        for rec in eng.pending_list():
+            if rec["state"] == "pending" and rec["code"] != shown:
+                shown = rec["code"]
+                print(f"  code on the watch: {shown}  ({rec['label']!r})")
+            elif rec["state"] == "approved" and rec["code"] == shown:
+                print(f"  ✓ {shown} approved — waiting for pickup…")
+                shown = ""
+        if not shown and not eng.pending_list():
+            time.sleep(1.0)
+            continue
+        time.sleep(1.0)
+    if shown:
+        print(f"if the watch is showing {shown}: hermes watch pair {shown}")
+
+
+def _cli_devices(args) -> None:
+    eng = _engine()
+    revoke = str(getattr(args, "revoke", "") or "")
+    if revoke:
+        dev = eng.device(revoke)
+        if dev is None:
+            print(f"no paired watch named {revoke!r}")
+            raise SystemExit(1)
+        prof = str(dev.get("profile") or "")
+        print(f'Remove "{dev.get("label", revoke)}" from agent {prof!r}?')
+        print(" • deletes it from your tailnet (admin API, node id captured at bootstrap)")
+        print(" • invalidates its device token and clears its queue")
+        print(f" • rotates agent {prof!r}'s API key — other paired watches pick the new")
+        print("   key up automatically over the tailnet; scripts using the old value")
+        print("   must update.")
+        if prof == "default":
+            print(" • ⚠ THE GATEWAY WILL RESTART (the default profile caches its key at")
+            print("   startup). Active chats on every agent are interrupted.")
+        if not getattr(args, "yes", False):
+            if not sys.stdin.isatty():
+                print("no terminal to confirm — re-run with --yes.")
+                raise SystemExit(2)
+            answer = input("Type yes to remove it: ").strip().lower()
+            if answer != "yes":
+                print("cancelled.")
+                return
+        report = revoke_device(revoke, started_from="cli")
+        for step in report["steps"]:
+            print(f"  {'✓' if step['ok'] else '✗'} {step['step']}: {step['detail']}")
+        rot = report["rotation"]
+        if rot.get("rotated"):
+            extra = f" — {rot['restart']}" if rot.get("restart") else " (named profile: live on the next request)"
+            print(f"  ✓ rotate: agent {rot['profile']}'s API key replaced{extra}")
+        else:
+            print(f"  ✗ rotate: {rot.get('reason', 'no key was configured')}")
+        return
+    devices = eng.devices()
+    if not devices:
+        print("no paired watches yet — hermes watch pair")
+        return
+    print(json.dumps(devices, indent=2))
+
+
+def _cli_alerts(args) -> None:
+    pref = str(getattr(args, "pref", "list") or "list")
+    eng = _engine()
+    profile = _running_profile()
+    if pref == "list":
+        print(f"agent {profile!r}: cron alerts = {eng.alert_pref(profile)} "
+              "(on = every run, fail = failures only, off = silent)")
+        return
+    mapping = {"on": "all", "fail": "fail", "off": "off"}
+    eng.set_alert_pref(profile, mapping[pref])
+    print(f"agent {profile!r}: cron alerts = {pref}")
 
 
 def _watch_cli_run(args) -> None:
@@ -1344,31 +1199,37 @@ def _watch_cli_run(args) -> None:
     if cmd == "pair":
         _cli_pair(args)
         return
-    if cmd == "enable":
-        _cli_enable(args)
-        return
     if cmd == "devices":
-        print(json.dumps(_CTX.state.get(STATE_DEVICES) or {}, indent=2))
+        _cli_devices(args)
+        return
+    if cmd == "alerts":
+        _cli_alerts(args)
         return
     if cmd == "setup" and getattr(args, "fix", None):
         _wizard_fix(args.fix, yes=bool(getattr(args, "yes", False)))
         return
-    print(json.dumps({"checks": tailnet_state()}, indent=2))
+    checks = local_checks()
+    if getattr(args, "api", False) or cmd == "setup":
+        checks.update(api_checks())
+    print(json.dumps({"checks": checks, "devices": _engine().devices(),
+                      "pairing": pairing_state()}, indent=2))
     if cmd == "setup":
         print("red light? each check carries its own `fix` — `hermes watch setup --fix"
               " credential|funnel|serve [--yes]`.")
 
 
-def _startup_readiness_pass() -> None:
-    """Open the claim door (the funnel's only tenant) and take a readiness first pass so
-    `watch_status` and the Desktop page have fresh lights. Runs on its own daemon thread
-    at LOAD (see register): hermes-agent 0.23 removed the `gateway:startup` plugin hook,
-    and a hook that never fires means the door's silent-failure guard never runs."""
+# ── load-time bring-up (LOCAL ONLY: no external calls here) ────────────────────
+def _startup_pass() -> None:
     try:
         ensure_door()
-        logger.info("wearos: load-time readiness: %s", tailnet_state())
     except Exception:
-        logger.debug("wearos: readiness probe failed at load", exc_info=True)
+        logger.debug("wearos: claim door did not start at load", exc_info=True)
+    try:
+        ensure_private_lane()
+    except Exception:
+        logger.debug("wearos: private lane did not start at load", exc_info=True)
+    logger.info("wearos: local readiness: %s", {k: bool(v.get("ok"))
+                                                for k, v in local_checks().items()})
 
 
 def register(ctx) -> None:
@@ -1378,19 +1239,16 @@ def register(ctx) -> None:
     for name, schema, handler, emoji in _TOOLS:
         ctx.register_tool(name=name, toolset="wearos", schema=schema, handler=handler, emoji=emoji)
     ctx.register_command("pair", handler=_cmd_pair,
-                         description="Pair a Wear OS watch to Hermes with its 6-digit PIN",
+                         description="Pair a Wear OS watch: /pair <6-digit code from the watch>",
                          args_hint="<123456>")
+    ctx.register_hook("on_session_end", _on_session_end)
     ctx.register_cli_command(
-        name="watch", help="Hermes Wear Kit (pair, enable, status, setup, devices)",
+        name="watch", help="Hermes Wear Kit (pair, devices, status, setup, alerts)",
         setup_fn=_watch_cli_setup, handler_fn=_watch_cli_run,
         description="One-command Wear OS watch pairing over your own tailnet.",
     )
-    ctx.on_unload(claim_server.stop_server)
-    # Door + readiness first pass come up at LOAD, not on a lifecycle hook: 0.23's
-    # VALID_HOOKS has no gateway-scoped startup event (registering one logs
-    # "registered unknown hook" on every load and never fires), and a down door is a
-    # SILENT pairing failure. Idempotent (defers to any door already answering); one
-    # daemon thread off the load path; harmless in one-shot CLI processes and
-    # validation probes (they exit; on_unload stops the door where loaded).
-    threading.Thread(target=_startup_readiness_pass, daemon=True,
-                     name="wearos-readiness").start()
+    ctx.on_unload(lambda: (claim_server.stop_server(), private_api.stop_server()))
+    # Door + lane come up at LOAD on a daemon thread (0.23 has no gateway:startup hook;
+    # a door that never comes up is a SILENT pairing failure). The pass is strictly
+    # local: tailscale CLI probes only, never api.tailscale.com.
+    threading.Thread(target=_startup_pass, daemon=True, name="wearos-readiness").start()

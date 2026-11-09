@@ -70,10 +70,19 @@ The Gemini complaint: every press = new chat, no history. Hermes Wear OS flips i
 
 ## 4. Settings & pairing (all on-device)
 
-**Onboarding:** (1) mDNS auto-discovery of the gateway on home Wi-Fi (no typing) · (2) PC runs
-`hermes watch pair` (or equivalent CLI) → 6-digit one-shot code (5-min TTL) · (3) watch taps digits →
-receives token + endpoints, Keystore-encrypted. Fallbacks: manual entry with keyboard/paste, `adb push`
-config for dev. (No QR scan — Ultra has no usable camera.)
+**Onboarding (v2, review-locked):** pairing is a **device-flow code ceremony** — the window is
+closed by default and opened at the gateway (`hermes watch pair` / pane Pair button / bare `/pair`
+on a local surface); the watch types the funnel handle and knocks, carrying a 256-bit device secret
+**it** generated at `begin`; the gateway mints the 6-digit code (never model-visible, never in any
+URL after `begin`) and shows it on the glass; approval happens only on CLI/TUI/Desktop (messaging
+replies honestly point there — and 3 wrong typed codes lock *approval*, never the watch's polls);
+the watch picks up by secret, acks for its device token, enrolls its tsnet node, and binds it to
+the device via `tailscale whois` on the first **private-lane** session (`:42654`, tailnet-only) —
+the same whois-verified lane is the only road `API_SERVER_KEY` and the watchkit bearer ever travel.
+Everything lands Keystore-sealed (AES-256-GCM, non-exported). Revoke is full removal: token+queue,
+tailnet-node DELETE, agent-key rotation (hot for named profiles; `default` warns about its restart).
+Fallbacks: manual authkey entry (Settings ▸ Gateways ▸ Tailnet), `adb push` config for dev. (No QR
+scan — Ultra has no usable camera.)
 
 **Settings tree:** Gateways (registry rows, endpoint winner dots, add/edit/delete, row-tap select,
 the live link readout of §11.6) ·
@@ -326,6 +335,35 @@ does not exist** (GitHub 404; Go module proxy `not found` for both `tailscale/ts
 see the SHIPPED block above; the authkey flow is `-e set_tailnet_key`/Settings ▸ Tailnet, and
 the "Phase B artifact" this section was is now `tailnet/go/` + `TailnetService`.
 
+**Addendum (2026-11-09, pairing v2 — the review's ceremony, lived through the first wear-demo run):**
+the lane/door split and every surprise that cost a fix commit are now pinned in code and tests.
+What the first live ceremonies proved (all re-verified on-wrist after the fixes):
+
+- **The registry is gateway-global.** The door is ONE shared port hosted by the launch profile's
+  process, while `hermes -p <p> watch pair` runs under `…/profiles/<p>`; `pairing._default_home()`
+  therefore collapses a profile home to the gateway root — one fcntl-locked `pairing.json` shared
+  by door, CLI and lane. (Caught live: `begin` 403'd "pairing closed" seconds after opening.)
+- **Parse, don't sniff.** The door serializes with stdlib `json.dumps` (space after every colon);
+  the client's 200-branch dispatches on KEY PRESENCE after a real parse — substring sniffing on
+  compact JSON read a perfectly good pickup as Malformed (caught live).
+- **The grant law:** the device's OWN agent's key always flows over its lane — no grant, whatever
+  profile hosts the lane; a sibling agent's route 403s "no key grant yet" until the pane grants the
+  REQUESTED profile. (v2.0 gated the wrong side; its first live pairing caught it.)
+- **Watchkit bearer rides the lane, read through the routed profile's secret scope** — a plugin-host
+  thread has no scope bound and falls to `os.environ`, so a naive `_get_secret` shipped
+  `wkToken.len=0` forever (watchkit answered the watch's polls with 401).
+- **Self-node guard:** a lane dial whose whois resolves to the gateway's own node is a NAT'd dial
+  (emulator on the gateway box) — the lane refuses it *at the binding moment* (before capture), and
+  `revoke` never DELETEs the gateway's own node for a device bound that way.
+- **Watch side:** pickup folds the legacy mirror immediately (the phase probe reads its host; a
+  placeholder there means DEGRADED forever and the keys-edge never fires), DEGRADED counts as
+  tunnel-up for the lane session (it means the NODE is up; only the probe host lagged), the paired
+  agent persists (boot restore must dial the PAIRED agent's route), and the 20 s outbox beat
+  retries the first session while the secret is unspent.
+- **Cron alert titles** come from the cron store via the hook's `task_id` (`cron:<job>:<run>`): the
+  `state.db` title is written at finalize, seconds after `on_session_end` fires, so a DB-only
+  lookup was structurally doomed.
+
 
 ### 11.5 What "tailnet endpoint" can and cannot mean on the watch (owner bug, 2026-10-29)
 
@@ -475,7 +513,8 @@ the fingertip** (`ICON_RING_REF` > activation radius)
 commits. Once the direction is memorized the whole gesture is a blind flick — the icons are for
 learning, not for aiming. Sectors activate past `ACTIVATE_RADIUS_REF` (never a jitter) and the
 lane only arms on a drag that crosses before the long-press timeout, so **tap = record is untouched**
-(owner batch 6 made the bare hold inert — hold-to-talk retired so the hold belongs to the dial;
+(owner batch 6 retired hold-to-talk so the hold belongs to the dial; batch 7 closed the loop — a
+stationary hold now BLOOMS THE DIAL on the idle orb too, it was only wired for thinking/speaking.
 `OrbGesture` keeps the race, `OrbDial` classifies the direction).
 
 **Re-aim (owner batch 5: "if I go up I should still be able to move over to one of the others"):**
@@ -551,6 +590,9 @@ Fix, three layers:
    `{agents:[{profile, has_key}]}` with the keys themselves, guarded by the existing watchkit
    bearer on a tailnet-only port. The watch refreshes them with the agent list and caches them,
    so switching agents works the first time on a machine that already has keys configured.
+   *(Superseded by pairing v2 / D17: `/agent_keys` is retired — watchkit answers 410 — and the
+   watch learns each agent's key over its own whois-verified private lane, per granted profile;
+   Settings ▸ Gateways ▸ Agent keys shows ✓/— from that lane, with ⟳ re-learning the same way.)*
 3. **Fail loud, degrade kind** — a 401 on submit says `no key for <agent> — Settings ▸ Gateways ▸
    Agent keys`, not `run submit 401: {…}`; `setup.sh --agent-keys` + the `set_agent_key` dev hook
    push every locally-detected key for scripted installs; AGENTS.md §5 documents the trap.
@@ -804,13 +846,18 @@ thing instead of just above the orb".
   `pending > 0` in `SpeakAloud`) shows a **🔇 speaker** — each promise matches exactly what the tap
   does. Tap always means "stop what the orb is doing": thinking →
   cancel the run AND flush the voice queue in one breath (`stopActiveRun` + `speak.stop()`);
-  speaking → MUTE only (the answer already landed; orb returns to the mic). A stationary HOLD in
-  either state BLOOMS THE DIAL IN PLACE (hold-timeout routes to `onDialArm`): grab the keyboard, a
-  `/steer`, any lane mid-answer — the run is never disturbed by the hold (short tap does that), and
-  release-at-home cancels the bloom. Gesture state reads LIVE via `rememberUpdatedState`, never as
-  `pointerInput` keys: a flip mid-hold (queue drains while the finger sits) must not restart the
-  detector, which would cancel the gesture without `onDialEnd` and freeze the ring open. Idle orb
-  semantics untouched (tap-to-talk, come-home-cancel, drag-dial, dwell-volume).
+  speaking → MUTE only (the answer already landed; orb returns to the mic). A stationary HOLD
+  BLOOMS THE DIAL IN PLACE (hold-timeout routes to `onDialArm`): grab the keyboard, a `/steer`, any
+  lane mid-answer — the run is never disturbed by the hold (short tap does that), and
+  release-at-home cancels the bloom. **Batch 7 on real glass closed two holes in this promise:**
+  the bloom fired ONLY while thinking/speaking (an IDLE stationary hold fell to the no-op
+  `onHoldStart` lane — "the orb don't show up"), and `Tracker.move` froze dx/dy once the hold
+  locked, so even a bloomed ring could not be aimed or spun ("it's not letting me select, it's not
+  spinning"). Now: the hold-timeout arms the dial in EVERY state, and the vector is live until the
+  pointer lifts — HOLD freezes the VERDICT, never the stream (JVM-tested). The detector reads no
+  orb state at all, so a flip mid-hold (queue drains while the finger sits) can never restart the
+  gesture without `onDialEnd` and freeze the ring open. Idle orb semantics otherwise untouched
+  (tap-to-talk, come-home-cancel, drag-dial, dwell-volume).
 - **Karaoke follow (`SpeakAloud.speakingOffset` + `MainActivity` ChatBody effect)**: the utterance
   registry carries each sentence's STREAM OFFSET (`Utt(text, step, offset)`); `onStart` publishes
   it, and while speaking + tail-follow is engaged the chat anchors the spoken line ~34 % down the

@@ -234,6 +234,7 @@ class MainActivity : ComponentActivity() {
                 val agentsRefreshing by agents.refreshing.collectAsState()
                 val gatewaySessions by session.gatewaySessions.collectAsState()
                 val archivedSessions by session.archivedSessions.collectAsState()
+                val cronSessions by session.cronSessions.collectAsState()
                 val sessionsMeta by session.sessionsMeta.collectAsState()
                 val devPtt by WearApp.Graph.devPtt.collectAsState()
                 val devEditor by WearApp.Graph.devEditor.collectAsState()
@@ -258,9 +259,11 @@ class MainActivity : ComponentActivity() {
                 var approvalsOpen by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
                 // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
-                // the user on an empty list they can see is empty).
-                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty()) {
-                    if (archivedSessions.isEmpty() && sessionFilter == GatewaySessions.FILTER_ARCHIVED)
+                // the user on an empty list they can see is empty). ⏰ shares the rule.
+                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty(), cronSessions.isEmpty()) {
+                    if (sessionFilter == GatewaySessions.FILTER_ARCHIVED && archivedSessions.isEmpty())
+                        sessionFilter = GatewaySessions.FILTER_ALL
+                    if (sessionFilter == GatewaySessions.FILTER_CRON && cronSessions.isEmpty())
                         sessionFilter = GatewaySessions.FILTER_ALL
                 }
                 // OWNER BATCH 2 (asks #5/#6): long-pressed prompt → sheet → full-screen editor.
@@ -778,10 +781,11 @@ class MainActivity : ComponentActivity() {
                             },
                             onHoldStart = {
                                 // HOLD BELONGS TO THE DIAL (owner batch 6: long-press-to-listen is
-                                // retired — it fought the hold+drag selector). A bare hold with no
-                                // drag now means nothing; the dial arms on drag, recording starts
-                                // on TAP. TalkOrb still reports hold so callers that want it (none
-                                // today) can react; the dial path is onDialArm/onDialMove/onDialEnd.
+                                // retired — it fought the hold+drag selector; batch 7: the hold now
+                                // BLOOMS THE DIAL in every state inside TalkOrb itself). This
+                                // callback is a notification only; the dial path is
+                                // onDialArm/onDialMove/onDialEnd, and callers that want the bare
+                                // hold fact (none today) can still react here.
                             },
                             onHoldEnd = { /* dial semantics only — nothing to flush on bare hold */ },
                             // PINCH FONT-SCALE: multiplicative 0.05-step apply (persisted). Same-value
@@ -826,6 +830,7 @@ class MainActivity : ComponentActivity() {
                                 agent = profile,
                                 sessions = gatewaySessions,
                                 archived = archivedSessions,
+                                cron = cronSessions,
                                 meta = sessionsMeta,
                                 filter = sessionFilter,
                                 onFilter = { sessionFilter = it },

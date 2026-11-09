@@ -119,14 +119,15 @@ fun SettingsScreen(
     var tnTesting by remember { mutableStateOf(false) }
     var tnTestResult by remember { mutableStateOf("") }
     var tnReenrollArmed by remember { mutableStateOf(false) }
-    // PAIR page state (S5, SPEC §4): the funnel handle, the watch-minted PIN + its clock, and
-    // the funnel's last word. pairAttempt++ is the knock trigger for the claim LaunchedEffect.
+    // PAIR page state (pairing v2, SPEC §4): the funnel handle, the CODE THE GATEWAY ISSUES
+    // (we display it; we never mint it), the flow's status line, and pairAttempt++ as the knock
+    // trigger. The 256-bit device secret lives in memory for the duration of one knock only.
     var pairHandle by remember { mutableStateOf("") }
-    var pairPin by remember { mutableStateOf(PairingCode.mint()) }
-    var pairMintedAt by remember { mutableStateOf(System.currentTimeMillis()) }
+    var pairCode by remember { mutableStateOf("") }
     var pairStatus by remember { mutableStateOf("type your tailnet handle, then knock") }
     var pairBusy by remember { mutableStateOf(false) }
     var pairAttempt by remember { mutableStateOf(0) }
+    var pairUnpairArmed by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("…") }
     var testing by remember { mutableStateOf(false) }
     var wkResult by remember { mutableStateOf("") }
@@ -189,38 +190,42 @@ fun SettingsScreen(
     // just wrapped in `if (page == …)` — same state, same prefs, same behavior.
     var page by remember { mutableStateOf(SettingsPage.Root) }
     androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = page.up() }
-    // PAIR GATE (S5): first launch (empty registry) and engine edges into NEEDS_AUTH request
-    // the Pair screen — this edge lands the page. Cleared on packet arrival (Graph.pairApplyPacket).
+    // PAIR GATE (SPEC §4): first launch (empty registry) and engine edges into NEEDS_AUTH request
+    // the Pair screen — this edge lands the page. Cleared on pickup (Graph.pairApplyPickup).
     val pairNow by WearApp.Graph.pairRequested.collectAsState()
     LaunchedEffect(pairNow) { if (pairNow) page = SettingsPage.Pair }
-    // KNOCK + POLL the funnel (client.claim owns the backoff; a 429 never burns the PIN).
+    // KNOCK the funnel ONCE: begin → show the gateway's code → poll with backoff → ack (client
+    // pair() owns the whole loop; a 429 backs off, never burns the code). The device secret is
+    // generated fresh per knock and never leaves this process except inside the POST/poll body.
     LaunchedEffect(pairAttempt) {
         if (pairAttempt == 0) return@LaunchedEffect
         val h = PairingCode.normalizeHandle(pairHandle)
         if (h.isEmpty()) { pairStatus = "⚠️ set your tailnet handle first"; return@LaunchedEffect }
         settings.setTailnetHandle(h)
         pairBusy = true
+        pairCode = ""
         pairStatus = "knocking on $h.ts.net…"
-        val out = withContext(Dispatchers.IO) { PairingClient().claim(h, pairPin, android.os.Build.MODEL) }
+        val client = PairingClient()
+        val secret = client.newSecret()
+        val out = withContext(Dispatchers.IO) {
+            client.pair(h, secret, android.os.Build.MODEL,
+                onCode = { code -> pairCode = code; pairStatus = "type $code on the PC — it approves there" })
+        }
         pairBusy = false
         pairStatus = when (out) {
-            is PairingClient.Outcome.Claimed -> {
-                WearApp.Graph.pairApplyPacket(out.packet)
-                "claimed ✓ — enrolling over the tunnel"
+            is PairingClient.Outcome.Completed -> {
+                WearApp.Graph.pairApplyPickup(out.packet, secret, out.deviceToken)
+                "paired ✓ — keys land over the tunnel"
             }
-            PairingClient.Outcome.Gone -> "that PIN is spent — tap New PIN"
-            PairingClient.Outcome.Malformed -> "⚠️ packet arrived unreadable — tap New PIN and retry"
-            PairingClient.Outcome.RateLimited -> "too many tries (429) — the PIN holds, knock again"
+            is PairingClient.Outcome.Refused -> "⚠️ ${out.why}"
+            PairingClient.Outcome.ServerTooOld -> "⚠️ gateway plugin predates pairing v2 — update the plugin"
+            PairingClient.Outcome.Gone -> "code gone — knock again"
+            PairingClient.Outcome.Malformed -> "⚠️ the door answered unreadably — knock again"
+            PairingClient.Outcome.RateLimited -> "too many tries (429) — knock again soon"
             PairingClient.Outcome.Pending -> "still waiting on the PC — knock again any time"
-            PairingClient.Outcome.Queued -> "knocked — waiting for hermes watch pair"
             is PairingClient.Outcome.Failed -> "⚠️ ${out.why}"
+            else -> pairStatus
         }
-    }
-    // The 5-min TTL (SPEC §4): when it dies, the screen says so instead of polling a dead PIN.
-    LaunchedEffect(pairPin) {
-        val left = PairingCode.TTL_MS - (System.currentTimeMillis() - pairMintedAt)
-        if (left > 0) delay(left + 50)
-        if (!pairBusy && pairAttempt > 0) pairStatus = "PIN expired — tap New PIN"
     }
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
     val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
@@ -697,12 +702,13 @@ fun SettingsScreen(
         )
         }
         if (page == SettingsPage.Pair) {
-        // ─── PAIR (SPEC §4 onboarding, S5): the bootstrap door ───────────────────────────
-        // The watch mints a one-shot 6-digit PIN (5-min TTL, re-mintable) and knocks the plugin's
-        // funnel over plain HTTPS (the ONLY no-tunnel client, net/PairingClient). The PC's
-        // `hermes watch pair` answers the claim; the packet carries authkey + endpoints + keys and
-        // lands through Graph.pairApplyPacket — the Tailnet Done-handler's sequence, extended.
-        // IME rule holds: the handle EditLine saves on Done AND on the Save button.
+        // ─── PAIR (SPEC §4 onboarding, PAIRING v2): the bootstrap door ───────────────────
+        // The GATEWAY issues the one-shot code (the watch never chooses it); the watch knocks
+        // the plugin's funnel over plain HTTPS (the ONLY no-tunnel client, net/PairingClient)
+        // and polls by its 256-bit device secret — the code rides no URL. Approval happens on
+        // a login surface (CLI/TUI/Desktop), never in a chat the model can write into. The
+        // pickup carries the authkey + endpoints; the KEYS arrive later over the private lane
+        // (Graph.pairFinishSession). IME rule holds: the handle saves on Done AND on Save.
         FieldLabel("Tailnet handle")
         EditLine(
             value = pairHandle,
@@ -714,20 +720,20 @@ fun SettingsScreen(
             onClick = { scope.launch { settings.setTailnetHandle(pairHandle) } },
             modifier = Modifier.size(width = 72.dp, height = 32.dp),
         ) { Text("Save", style = MaterialTheme.typography.button) }
-        FieldLabel("Your PIN (5 min)")
+        FieldLabel("Your code (gateway-issued, 5 min)")
         Text(
-            pairPin,
+            if (pairCode.isNotEmpty()) pairCode else "——————",
             style = MaterialTheme.typography.title2.copy(letterSpacing = 8.sp),
             color = MaterialTheme.colors.primary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            if (pairBusy) "…" else pairStatus,
+            if (pairBusy && pairCode.isEmpty()) "…" else pairStatus,
             style = MaterialTheme.typography.caption2,
             color = when {
-                pairStatus.startsWith("⚠️") || pairStatus.startsWith("that PIN") || pairStatus.startsWith("PIN expired") -> Color(0xFFE57373)
-                pairStatus.startsWith("claimed") -> Color(0xFF81C784)
+                pairStatus.startsWith("⚠️") || pairStatus.startsWith("code gone") -> Color(0xFFE57373)
+                pairStatus.startsWith("paired") -> Color(0xFF81C784)
                 else -> MaterialTheme.colors.onBackground.copy(alpha = 0.7f)
             },
             fontSize = 11.sp,
@@ -738,19 +744,24 @@ fun SettingsScreen(
                 onClick = { if (!pairBusy) pairAttempt++ },
                 modifier = Modifier.size(width = 84.dp, height = 32.dp),
                 colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.85f)),
-            ) { Text(if (pairBusy) "…" else "Knock", style = MaterialTheme.typography.button) }
-            Button(
-                onClick = {
-                    pairPin = PairingCode.mint(); pairMintedAt = System.currentTimeMillis()
-                    pairStatus = "new PIN — knock when ready"
-                },
-                modifier = Modifier.size(width = 84.dp, height = 32.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
-            ) { Text("New PIN", style = MaterialTheme.typography.button) }
+            ) { Text(if (pairBusy) "…" else if (pairCode.isEmpty()) "Knock" else "Retry", style = MaterialTheme.typography.button) }
+            if (dev.hermes.wearos.net.PrivateLane.configured) {
+                Button(
+                    onClick = {
+                        if (pairUnpairArmed) { WearApp.Graph.unpair(); pairUnpairArmed = false
+                            pairStatus = "unpaired — the gateway revoked this watch" }
+                        else { pairUnpairArmed = true; pairStatus = "tap Unpair again to revoke" }
+                    },
+                    modifier = Modifier.size(width = 84.dp, height = 32.dp),
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF5C2B2B)),
+                ) { Text(if (pairUnpairArmed) "Sure?" else "Unpair", style = MaterialTheme.typography.button) }
+            }
         }
         Text(
-            "On the PC: hermes watch pair — it types this PIN once. The claim is served exactly " +
-                "once, the funnel is reached BEFORE any tunnel exists, and the authkey never appears in a log.",
+            "On the PC: hermes watch pair (or the Wear Kit pane) — the pairing window opens there, " +
+                "one code per open. The code is typed on the PC, never spoken to an agent; the " +
+                "authkey and keys never appear in a log, and the gateway key arrives only over " +
+                "this watch's private tailnet lane.",
             style = MaterialTheme.typography.caption2,
             color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
         )
