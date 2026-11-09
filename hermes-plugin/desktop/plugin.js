@@ -22,6 +22,8 @@ const REPO_URL = 'https://github.com/borealBytes/hermes-wearos'
 
 const $status = atom(null)
 const $stt = atom(null)
+const $sttAsk = atom(false)   // sudo-style approval card open (commands shown first)
+const $sttErr = atom('')       // start-time refusal shown ON the card, not swallowed
 const $busy = atom(false)
 const $error = atom('')
 const $code = atom('')
@@ -118,15 +120,65 @@ async function setAlerts (profile, pref) {
   await act(() => rest('/alerts', { method: 'POST', body: { profile, pref } }))
 }
 
-async function sttInstall () {
+// STT install consent (sudo law, D16 rework): the button opens an APPROVAL CARD that
+// shows the exact commands before anything runs. Two exits for the human: run it here
+// (POST /stt — the POST is the permission, nothing fires on view) or copy the one-liner
+// and drive it from a terminal yourself.
+async function sttRun () {
+  $sttErr.set('')
+  await act(async () => {
+    const out = await rest('/stt', { method: 'POST', body: { action: 'install' } })
+    if (out && out.started) $sttAsk.set(false)   // progress line takes over from the card
+    else $sttErr.set((out && out.error) || 'not started')
+  })
+}
+
+function sttCopy () {
   const p = ($stt.get() || {}).preview
   if (!p) return
-  const yes = window.confirm('Install streaming speech-to-text (Parakeet)?\n' +
-    p.steps.map(s => `• ${s}`).join('\n') +
-    `\n• needs: ${p.needs.join(', ')} · disk ~${p.disk_mb} MB` +
-    `\n• hosts: ${p.hosts.join(', ')}`)
-  if (!yes) return
-  await act(() => rest('/stt', { method: 'POST', body: { action: 'install' } }))
+  navigator.clipboard.writeText(p.cli).then(
+    () => $sttErr.set('copied — paste into any terminal; nothing runs until you press Enter'),
+    () => $sttErr.set(`clipboard blocked — run manually: ${p.cli}`))
+}
+
+// The approval card: exact commands FIRST (from preview.commands — the same argv
+// lists stt_install._run executes), disclosure line, then Run-here / Copy / Cancel.
+function SttApproval ({ p, busy }) {
+  return jsxs('div', {
+    className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
+    children: [
+      jsx('div', { className: 'font-medium', children: 'This will run, in order — nothing starts until you choose:' }),
+      jsx('pre', {
+        className: 'overflow-x-auto rounded bg-(--ui-bg-secondary) p-1.5 text-[10px] leading-relaxed text-(--ui-text-secondary)',
+        children: (p.commands || p.steps.map(s => `· ${s}`)).join('\n')
+      }),
+      jsx('div', {
+        className: 'text-[10px] text-(--ui-text-tertiary)',
+        children: `hosts: ${p.hosts.join(', ')} · needs: ${p.needs.join(', ')} · disk ~${p.disk_mb} MB` +
+          ' · no sudo, no system Python — everything lands in the plugin data dir'
+      }),
+      jsxs('div', {
+        className: 'flex items-center gap-2',
+        children: [
+          jsx('button', {
+            className: 'rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
+            type: 'button', disabled: busy, onClick: sttRun,
+            children: '▶ Run it here'
+          }),
+          p.cli ? jsx('button', {
+            className: 'rounded border border-(--ui-border) px-2 py-1 text-[10px]',
+            type: 'button', onClick: sttCopy,
+            children: 'Copy command'
+          }) : null,
+          jsx('button', {
+            className: 'px-1 py-1 text-[10px] text-(--ui-text-tertiary)',
+            type: 'button', onClick: () => $sttAsk.set(false),
+            children: 'Cancel'
+          })
+        ]
+      })
+    ]
+  }, 'stt-approval')
 }
 
 function Step ({ done, n, title, children }) {
@@ -151,6 +203,8 @@ function Step ({ done, n, title, children }) {
 function WearKitPane () {
   const status = useValue($status)
   const stt = useValue($stt)
+  const ask = useValue($sttAsk)
+  const sttNote = useValue($sttErr)
   const busy = useValue($busy)
   const error = useValue($error)
   const code = useValue($code)
@@ -379,12 +433,15 @@ function WearKitPane () {
                       })
                     ]
                   })
-                : jsx('button', {
-                    className: 'self-start rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
-                    type: 'button', disabled: busy || !stt.toolchain,
-                    onClick: sttInstall,
-                    children: 'Review & install'
-                  }),
+                : (ask && stt.preview)
+                  ? jsx(SttApproval, { p: stt.preview, busy })
+                  : jsx('button', {
+                      className: 'self-start rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
+                      type: 'button', disabled: busy || !stt.toolchain,
+                      onClick: () => { $sttErr.set(''); $sttAsk.set(true) },
+                      children: 'Review & install'
+                    }),
+              sttNote ? jsx('div', { className: 'text-[10px]', children: sttNote }) : null,
               stt.error ? jsx('div', { className: 'text-[10px] text-(--ui-text-danger)', children: stt.error }) : null
             ]
           }, 'stt-card')

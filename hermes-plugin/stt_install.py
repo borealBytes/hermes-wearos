@@ -78,6 +78,30 @@ def status() -> dict:
     return st
 
 
+def commands() -> list[str]:
+    """The EXACT argv lines _run() executes, in order — the pane shows these verbatim
+    (sudo law: the human approves the command they can read, not a paraphrase). The
+    model download is a fixed https GET shown as curl-equivalent; no shell is involved.
+    Paths are relative to the plugin data dir (first line) so the block stays readable.
+    """
+    root = _root()
+    src = "$D/transcribe-src"
+    venv = "$D/venv"
+    return [
+        f"D = {root}",
+        f"git init -q {src} && git -C {src} remote add origin {REPO}",
+        f"git -C {src} fetch -q --depth 1 origin {COMMIT}",
+        f"git -C {src} checkout -q FETCH_HEAD     # verified: HEAD == {COMMIT}",
+        f"cmake -S {src} -B {src}/build-shared -DCMAKE_BUILD_TYPE=Release "
+        "-DTRANSCRIBE_BUILD_SHARED=ON -DTRANSCRIBE_BUILD_TESTS=OFF",
+        f"cmake --build {src}/build-shared -j {os.cpu_count() or 4}",
+        f"{sys.executable} -m venv {venv}",
+        f"{venv}/bin/python -m pip install -q {src}/bindings/python",
+        f"curl -L {MODEL_URL} -o $D/models/{MODEL_FILE}   # then SHA-256-verified: "
+        f"{MODEL_SHA256[:16]}…",
+    ]
+
+
 def preview() -> dict:
     root = _root()
     return {
@@ -93,6 +117,8 @@ def preview() -> dict:
         "needs": ["git", "cmake", "g++"],
         "disk_mb": 1600,
         "toolchain_ok": _probe()["toolchain"],
+        "commands": commands(),
+        "cli": "hermes watch setup --fix stt",
     }
 
 

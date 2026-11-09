@@ -137,6 +137,12 @@ def test_stt_status_reports_the_pinned_plan(wearos, api):
     payload = api.stt()
     assert payload["preview"]["toolchain_ok"] in (True, False)
     assert payload["preview"]["steps"]
+    # sudo law: the approval card shows the EXACT argv lines before anything runs.
+    cmds = payload["preview"]["commands"]
+    assert any(c.startswith("git init") for c in cmds)
+    assert any("cmake --build" in c for c in cmds)
+    assert all(isinstance(c, str) for c in cmds)
+    assert payload["preview"]["cli"] == "hermes watch setup --fix stt"
     assert payload["installed"] is False
     assert payload["model_verified"] is False
     assert payload["lib"] is False
