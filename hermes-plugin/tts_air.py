@@ -539,7 +539,9 @@ def main():
     codes_path = a.ref_wav + ".codes.pt"
     import torch
     from neutts import NeuTTS
-    tts = NeuTTS(backbone_repo=a.model, backbone_device="cpu",
+    # language is REQUIRED when the backbone is a local GGUF (neutts infers it
+    # only from Neuphonic repo ids; measured 2026-11-09). en-us = the kit's pin.
+    tts = NeuTTS(backbone_repo=a.model, language="en-us", backbone_device="cpu",
                  codec_repo=a.codec, codec_device="cpu", seed=a.seed)
     if os.path.isfile(codes_path):
         ref_codes = torch.load(codes_path, weights_only=True)

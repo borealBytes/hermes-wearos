@@ -12,13 +12,15 @@ apt-get install -y -qq espeak-ng cmake g++ >/dev/null 2>&1 || command -v espeakn
 command -v espeak-ng && command -v cmake && command -v g++
 
 echo "== backbone (mirror, ungated) =="
-[ -s "$W/model.gguf" ] || curl -sSL -o "$W/model.gguf" \
+sz() { stat -c%s "$1" 2>/dev/null || echo 0; }
+[ "$(sz "$W/model.gguf")" = "802659296" ] || curl -sSL -C - -o "$W/model.gguf" \
   "https://huggingface.co/mradermacher/neutts-air-GGUF/resolve/main/neutts-air.Q8_0.gguf"   # the shipping DEFAULT row
 ls -la "$W/model.gguf"
 
 echo "== codec (HF-port mirror, ungated) =="
 for F in config.json model.safetensors preprocessor_config.json; do
-  [ -s "$W/codec/$F" ] || curl -sSL -o "$W/codec/$F" "https://huggingface.co/bezzam/neucodec-hf/resolve/main/$F"
+  want=292; case "$F" in model.safetensors) want=2519855456 ;; config.json) want=2964 ;; esac
+  [ "$(sz "$W/codec/$F")" = "$want" ] || curl -sSL -C - -o "$W/codec/$F" "https://huggingface.co/bezzam/neucodec-hf/resolve/main/$F"
 done
 ls -la "$W/codec"
 
@@ -41,7 +43,7 @@ import sys, wave, numpy as np
 W = sys.argv[1]
 import torch
 from neutts import NeuTTS
-tts = NeuTTS(backbone_repo=W + "/model.gguf", backbone_device="cpu",
+tts = NeuTTS(backbone_repo=W + "/model.gguf", language="en-us", backbone_device="cpu",
              codec_repo=W + "/codec", codec_device="cpu", seed=42)
 ref_codes = tts.encode_reference("/opt/wearos-in/clay.wav")
 torch.save(ref_codes, "/opt/wearos-in/clay.wav.codes.pt")
