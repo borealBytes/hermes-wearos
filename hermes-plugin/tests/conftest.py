@@ -1,4 +1,4 @@
-"""Test harness for the Hermes Wear Kit plugin.
+"""Test harness for the Hermes Wear Kit plugin (protocol v2).
 
 The plugin dir has a dotted/dashed name (`hermes-plugin`), so it is not importable by
 path convention — we load it through importlib EXACTLY the way the Hermes plugin loader
@@ -6,9 +6,13 @@ does (spec_from_file_location + submodule_search_locations), which keeps the pac
 `from . import tailscale` relative import working under pytest too. Exposed as
 `wearos_plugin`.
 
-The host modules the plugin borrows (hermes_constants, agent.secret_scope,
-hermes_cli.plugins_state — all stdlib-only at import) come from the Hermes install:
-already importable, else $HERMES_AGENT_ROOT, else ~/.hermes/hermes-agent.
+The host modules the plugin borrows (hermes_constants, agent.secret_scope — all
+stdlib-only at import) come from the Hermes install: already importable, else
+$HERMES_AGENT_ROOT, else ~/.hermes/hermes-agent.
+
+Every test gets a sandbox HERMES_HOME (the fcntl pairing store lands in tmp_path), a
+FAKE Tailscale client (no network, ever) and a NEUTRAL tailscale-CLI view (no host
+tailscaled leaks into assertions).
 """
 
 from __future__ import annotations
@@ -66,11 +70,10 @@ def load_plugin():
 
 
 class FakeCtx:
-    """The slice of PluginContext the plugin touches: settings + durable state."""
+    """The slice of PluginContext the plugin touches: settings only (v2 keeps its
+    durable state in the fcntl pairing store, not ctx.state)."""
 
     def __init__(self, settings: dict):
-        from hermes_cli.plugins_state import PluginState
-        self.state = PluginState("wearos", "")
         self._settings = dict(settings)
 
     def get_config(self, key: str, default=None):
@@ -80,36 +83,41 @@ class FakeCtx:
     def set_config(self, key: str, value) -> None:
         self._settings[key] = value
 
-    @property
-    def state_path(self) -> Path:
-        return self.state.path
-
 
 DEFAULT_SETTINGS = {
     "tailnet": "example.ts.example",
-    "gateway_profile": "wear",
     "watch_tag": "tag:hermes-watch",
     "key_expiry": "24h",
     "claim_port": 42653,
 }
 
 FAKE_AUTHKEY = "tskey-FAKELABEL-0123456789abcdef"
+SECRET_A = "a" * 64
+SECRET_B = "b" * 64
 
 
 @pytest.fixture
 def wearos(tmp_path, monkeypatch):
-    """The plugin bound to a sandbox HERMES_HOME (PluginState writes land in tmp_path),
-    a credential that satisfies _cred() via the documented env fallback (no multiplex
-    scope in tests), and a FAKE Tailscale client — no network, ever."""
+    """The plugin bound to a sandbox HERMES_HOME (the pairing store lands in
+    tmp_path), a credential that satisfies _cred() via the config settings, a FAKE
+    Tailscale client, and a host-neutral tailscale CLI view."""
     module = load_plugin()
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setenv("tailscale_api_token", "tskey-api-test")
-    monkeypatch.delenv("API_SERVER_KEY", raising=False)          # hermetic api_key tiers
-    monkeypatch.delenv("gateway_api_key", raising=False)
+    monkeypatch.setenv("tailscale_api_token", "tskey-api-test")   # _cred() fallback path
+    monkeypatch.delenv("API_SERVER_KEY", raising=False)
     monkeypatch.delenv("watchkit_token", raising=False)
-    monkeypatch.setattr(module.tailscale.TailnetClient, "mint_enrollment_key",
-                        lambda self, tag, expiry="24h": FAKE_AUTHKEY)
-    monkeypatch.setattr(module, "gateway_fqdn", lambda: "gw.example.ts.net")
+    def _fake_mint(self, tag, expiry="24h"):
+        self.last_key_id = "key-test-id"
+        return FAKE_AUTHKEY
+    monkeypatch.setattr(module.tailscale.TailnetClient, "mint_enrollment_key", _fake_mint)
+    monkeypatch.setattr(module.tailscale.TailnetClient, "expire_key",
+                        lambda self, key_id: {"expired": key_id})
+    monkeypatch.setattr(module.tailscale.TailnetClient, "delete_device",
+                        lambda self, node_id: {"deleted": node_id})
+    monkeypatch.setattr(module, "_gateway_fqdn", lambda: "gw.example.ts.net")
+    monkeypatch.setattr(module, "_tailscale_self",
+                        lambda: {"DNSName": "gw.example.ts.net",
+                                 "TailscaleIPs": ["100.64.0.9"], "ID": "n-test"})
     module._CTX = FakeCtx(DEFAULT_SETTINGS)
     try:
         yield module
@@ -118,7 +126,8 @@ def wearos(tmp_path, monkeypatch):
 
 
 class FakeClock:
-    """time.time()/sleep() replacement injected as the plugin module's `time` attr."""
+    """time.time()/sleep() replacement injected as the plugin module's `time` attr.
+    The engine resolves `now` through the module global, so it flows everywhere."""
 
     def __init__(self, start: float = 1_700_000_000.0):
         self.now = float(start)
@@ -138,3 +147,12 @@ def clock(wearos, monkeypatch):
     fake = FakeClock()
     monkeypatch.setattr(wearos, "time", fake)
     return fake
+
+
+@pytest.fixture
+def window(wearos, clock):
+    """A watch mid-flight: window open, begin done, code returned."""
+    wearos.open_pairing()
+    begun = wearos.door_begin(SECRET_A, "Galaxy Watch Ultra")
+    return {"module": wearos, "clock": clock, "code": begun["code"],
+            "secret": SECRET_A}

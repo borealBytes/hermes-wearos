@@ -137,3 +137,36 @@ def test_legacy_map_nodeattrs_refused_on_write():
         assert "console" in str(exc)
     else:
         raise AssertionError("legacy-map nodeAttrs must be refused")
+
+
+# ── review fix v0.2: the funnel grant belongs on the GATEWAY node, not the tag ──
+ACL_GATEWAY_FUNNEL = json.dumps({"grants": [], "nodeAttrs": [
+    {"src": ["autogroup:member"], "hosts": ["100.64.0.9"], "prop": ["funnel"]},
+    {"src": ["autogroup:member"], "hosts": ["tag:hermes-watch"], "prop": ["tagread"]}]})
+
+
+def test_want_target_only_passes_when_the_GATEWAY_has_the_attr():
+    ok, detail = client_returning(ACL_GATEWAY_FUNNEL.encode()
+                                  ).funnel_attr_present("100.64.0.9")
+    assert ok is True and "this gateway" in detail
+    ok, detail = client_returning(ACL_GATEWAY_FUNNEL.encode()
+                                  ).funnel_attr_present("100.64.9.9")
+    assert ok is False and "100.64.9.9" in detail
+
+
+def test_tag_only_funnel_does_not_satisfy_a_gateway_target_check():
+    """v0.1 shipped funnel-on-the-watch-tag: detection must now FAIL that shape when
+    asked "does this gateway node have funnel" — the exact review point."""
+    ok, detail = client_returning(ACL_BARE_FUNNEL).funnel_attr_present("100.64.0.9")
+    assert ok is False and "100.64.0.9" in detail
+
+
+def test_add_funnel_attr_targets_the_gateway_ip_also_defining_the_tag():
+    """The wizard grants the gateway IP but MUST also keep the watch tag defined, or
+    enrollment mints start 400ing (measured lesson stays)."""
+    posted: list = []
+    client_returning(ACL_ARRAY_WRITE_TARGET, posted=posted).add_funnel_attr(
+        "100.64.0.9", also_tag="tag:hermes-watch")
+    acl = json.loads(posted[0][0])
+    assert {"target": ["100.64.0.9"], "attr": ["funnel"]} in acl["nodeAttrs"]
+    assert acl["tagOwners"]["tag:hermes-watch"] == ["autogroup:member"]

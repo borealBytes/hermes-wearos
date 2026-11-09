@@ -76,10 +76,9 @@ def test_gateway_fqdn_reads_capital_dnsname(monkeypatch):
     """Measured 1.102.3: the field is Self.DNSName (jq '.Self.DnsName' reads null —
     the case bug that shipped an empty gateway_fqdn in the first live packet)."""
     class SP:
-        TimeoutExpired = Exception
         @staticmethod
         def run(cmd, **kw):
             class R: stdout = '{"Self": {"DNSName": "box.tailnet.ts.net."}}'
             return R()
     monkeypatch.setattr(module, "subprocess", SP)
-    assert module.gateway_fqdn() == "box.tailnet.ts.net"  # unpatched original
+    assert module._gateway_fqdn() == "box.tailnet.ts.net"  # unpatched original
