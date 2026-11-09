@@ -463,17 +463,21 @@ class WearApp : Application() {
                         // yank the wearer out of Settings every status poll.
                         if (phase == TailnetPhase.NEEDS_AUTH && last != null && last != TailnetPhase.NEEDS_AUTH)
                             _pairRequested.value = true
-                        if (phase != last && (phase == TailnetPhase.ACTIVE || last == TailnetPhase.ACTIVE)) {
+                        if (phase != last && (phase == TailnetPhase.ACTIVE || phase == TailnetPhase.DEGRADED ||
+                                last == TailnetPhase.ACTIVE || last == TailnetPhase.DEGRADED)) {
                             last = phase
-                            if (hasEndpoints()) {
+                            val tunnelUp = phase == TailnetPhase.ACTIVE || phase == TailnetPhase.DEGRADED
+                            if (tunnelUp && hasEndpoints()) {
                                 val api = endpoints.ensure(force = true)
                                 Log.i(TAG, "tailnet ${phase.name.lowercase()} — endpoints re-picked: ${api.ifEmpty { "none" }}")
                             }
-                            // PAIRING v2 (D8/D13): the tunnel just came UP — this is where a fresh
-                            // pickup's keys finally arrive: the first session carries the pairing
-                            // secret and the gateway binds our node by whois. Held idempotently:
-                            // afterwards the call just refreshes (rotate/revoke heal themselves).
-                            if (phase == TailnetPhase.ACTIVE) pairFinishSession()
+                            // PAIRING v2 (D8/D13): the tunnel is REACHABLE — DEGRADED counts too
+                            // (it means the NODE is up; only the probe host lags right after a
+                            // pair). This is where a fresh pickup's keys land: the first session
+                            // carries the pairing secret and the gateway binds our node by
+                            // whois. Held idempotently: afterwards the call just refreshes
+                            // (rotate/revoke heal themselves).
+                            if (tunnelUp) pairFinishSession()
                         } else {
                             last = phase
                         }
@@ -738,7 +742,10 @@ class WearApp : Application() {
             settings.setTailnetKey(p.authKey)
             settings.setPairingSecret(secretHex)      // lives exactly until the first lane session
             settings.setDeviceToken(deviceToken)
-            if (p.profile.isNotBlank()) settings.setTailnetHostname("${p.profile.trim()}-watch")
+            if (p.profile.isNotBlank()) {
+                settings.setTailnetHostname("${p.profile.trim()}-watch")
+                settings.notePairedAgent(p.profile) // boot lane restore dials THIS agent's route
+            }
             val api = "http://${p.gatewayFqdn.trim()}:${if (p.gatewayPort > 0) p.gatewayPort else 8642}"
             val wk = if (p.watchkitPort > 0) "http://${p.gatewayFqdn.trim()}:${p.watchkitPort}" else ""
             val lane = if (p.privatePort > 0) "http://${p.gatewayFqdn.trim()}:${p.privatePort}" else ""
@@ -751,6 +758,12 @@ class WearApp : Application() {
                 token = settings.token(), // the OLD token until the lane delivers the new one
             )
             settings.saveGateway(gw, select = true)
+            // THE MIRROR MOVES NOW, not "whenever a winner gets picked": the tailnet phase
+            // probe reads the legacy base_url host, and leaving the placeholder there means
+            // a freshly enrolled node forever probes `hermes.tailnet.ts.net` → DEGRADED →
+            // the ACTIVE edge (where the lane keys land) never fires (live, wear-demo
+            // 2026-11-09). foldRegistry=false: the registry already carries this endpoint.
+            settings.setBaseUrl(api, foldRegistry = false)
             settings.setLaneBase(lane)
             if (wk.isNotEmpty()) {
                 settings.setMermaidBaseUrl(wk)
@@ -818,6 +831,10 @@ class WearApp : Application() {
         /** Outbox sweep (D14): cron alerts + agent messages, newest delivery buzzes once. */
         suspend fun outboxSweep() {
             if (!PrivateLane.configured) return
+            // Belt path for the lane keys (D13): if a pickup's secret is still unspent, the
+            // ACTIVE/DEGRADED edge hasn't landed them (missed edge, tunnel was briefly down)
+            // — the 20 s beat retries until the first session binds our node. Idempotent.
+            if (settings.pairingSecret().isNotEmpty()) pairFinishSession()
             val since = settings.outboxCursor()
             when (val out = PrivateLane.events(since)) {
                 is PrivateLane.Outcome.Events -> {

@@ -256,6 +256,20 @@ def pairing_state() -> dict:
 
 
 # ── full revoke (D12) ──────────────────────────────────────────────────────────
+def _self_node_id() -> str:
+    """Numeric id of THIS machine's tailnet node — ``tailscale whois`` answers the
+    gateway's own IPs, so the check costs two local CLI calls and never touches the
+    API. "" when tailscaled is unreachable (the guard then simply doesn't fire)."""
+    for ip in _self_tailnet_ips():
+        try:
+            n = private_api._whois_local(ip)
+        except Exception:
+            return ""
+        if n and n.get("node_id"):
+            return str(n["node_id"])
+    return ""
+
+
 def revoke_device(name: str, *, started_from: str = "cli") -> dict:
     """Cut one watch off completely: token+queue (store), tailnet node (admin API),
     agent API key (rotated through Hermes). Steps report honestly; a failed later
@@ -268,7 +282,11 @@ def revoke_device(name: str, *, started_from: str = "cli") -> dict:
     report["steps"].append({"step": "token", "ok": True,
                             "detail": "device token and outbox removed"})
     node_id = str(gone.get("node_id") or dev.get("node_id") or "")
-    if node_id:
+    if node_id and node_id == _self_node_id():
+        report["steps"].append({"step": "tailnet", "ok": True,
+                                "detail": "captured node was the gateway's own (a NAT'd "
+                                          "dial, never a watch tunnel) — nothing to delete"})
+    elif node_id:
         try:
             _client().delete_device(node_id)
             report["steps"].append({"step": "tailnet", "ok": True,
@@ -355,6 +373,16 @@ def _read_profile_key(profile: str) -> str:
 
 def _lane_session(profile: str, device: str, secret: str, node: dict) -> dict:
     eng = _engine()
+    # A dial whose whois resolves to THIS machine's own node never came through a
+    # watch tunnel — it arrived over the host's own tailnet IP (emulator NAT, or an
+    # app run on the gateway box itself). Binding such a session would fence the real
+    # node out for the device's whole life (measured live 2026-11-09: the first lane
+    # call bound the pairing to the GATEWAY node, every later session 403'd "different
+    # tailnet node"). Refuse honestly; the watch retries once its own node dials.
+    me = _self_node_id()
+    if me and str(node.get("node_id") or "") == me:
+        raise PermissionError("the dial arrived from the gateway's own tailnet IP — "
+                              "pairing must ride the WATCH's tunnel")
     dev = eng.first_session(device, secret, node)
     if str(dev.get("profile") or "") != str(profile):
         raise PermissionError(f"this watch is paired to agent {dev.get('profile')!r}")

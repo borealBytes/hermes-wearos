@@ -204,6 +204,17 @@ class AppSettings(private val context: Context) {
         context.dataStore.data.first()[KEY_CURRENT_AGENT]?.takeIf { ProfileLogic.isValidProfile(it) }
             ?: ProfileLogic.FALLBACK_AGENT
 
+    /**
+     * PAIRING v2: remember the AGENT a pickup paired this watch to. The paired base URL carries
+     * no `/p/` segment (the profile is the pairing's, not the wearer's pick), so without this
+     * the boot lane-restore would dial `/watch/default/…` for a watch paired to a named agent —
+     * and the lane honestly 403s that ("paired to agent 'wear-demo'", live 2026-11-09).
+     */
+    suspend fun notePairedAgent(agent: String) {
+        val a = agent.trim().lowercase()
+        if (ProfileLogic.isValidProfile(a)) context.dataStore.edit { it[KEY_CURRENT_AGENT] = a }
+    }
+
     /** Agent at cold start (or `wear` first open) with the base URL's `/p/` segment rebuilt to it. */
     suspend fun loadProfile(): String {
         val agent = savedAgent()
