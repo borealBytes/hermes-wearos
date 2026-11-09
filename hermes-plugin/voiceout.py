@@ -224,7 +224,12 @@ def _wav_duration(wav_bytes: bytes) -> float:
 
 
 def _voiced_seconds(wav_bytes: bytes, frame_ms: int = 20) -> float:
-    """Energy-gate VAD, stdlib: 20ms frames, gate at max(3*noise_floor, peak/8)."""
+    """Energy VAD, stdlib: 20ms frames, hysteresis gate at max(6*noise_floor,
+    peak/64) (-18 dB), plus hangover so natural syllable valleys and coarticulation
+    dips stay inside the speech. Runs separated by <=300ms merge (inter-word gaps
+    are pace, silence is pace too; a 300ms bridge stops breath micro-pauses from
+    fragmenting one sentence into confetti — the bug that read a human card at
+    567 wpm on first real-voice contact)."""
     rate, sm = _wav_parse(wav_bytes)
     flen = max(1, int(rate * frame_ms / 1000))
     frames = []
@@ -236,9 +241,26 @@ def _voiced_seconds(wav_bytes: bytes, frame_ms: int = 20) -> float:
     srt = sorted(frames)
     noise = srt[max(0, len(srt) // 10)]                  # 10th percentile = floor
     peak = srt[-1]
-    gate = max(noise * 3.0, peak / 8.0)
-    voiced = sum(1 for e in frames if e > gate)
-    return voiced * frame_ms / 1000.0
+    gate = max(noise * 6.0, peak / 64.0)
+    hang = gate / 3.0
+    on = [e > gate for e in frames]
+    for i, v in enumerate(on):                            # +/-1 frame hangover
+        if v:
+            if i:
+                on[i - 1] = on[i - 1] or frames[i - 1] > hang
+            if i + 1 < len(on):
+                on[i + 1] = on[i + 1] or frames[i + 1] > hang
+    voiced, gap, started = 0, 0, False
+    for v in on:
+        if v:
+            if started and gap <= 15:                    # bridge <=300ms gaps
+                voiced += gap
+            voiced += 1
+            started = True
+            gap = 0
+        else:
+            gap += 1
+    return max(0.0, voiced * frame_ms / 1000.0)
 
 
 def create_card(wav_bytes: bytes, label: str, source: str = "watch-record",

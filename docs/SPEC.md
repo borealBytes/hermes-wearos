@@ -1527,6 +1527,10 @@ gateway half is `hermes-plugin/voiceout.py` (prefs/cards/synthesis) and
   speech-span against the known 17-word scripted prompt). 1.0x replays the speaker
   at THEIR pace; a fast speaker's clone never 'fixes' their speed. 3 s floor, 60 s
   cap, enforced gateway-side — a watch bug can't smuggle a 1 s clip.
+- **Enrollment is anyone's voice** (owner ruling 2026-11-09): the shipped default
+  is the founder's recorded card (the seed pack), but enrollment copy says plainly
+  — *record whoever you want to hear on your wrist: yours, or anyone's.* The pane
+  (slice 3) must encourage a personal card, never treat the seed as the endpoint.
 - **One global speed dial**, riding the existing TTS-speed feature; per-agent voice
   + mode (gateway | watch | off), never a per-agent rate.
 - **Alignment is honest per tier** — gateway: synth → forced-align → `words[]`;
@@ -1610,6 +1614,17 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   replay prefs before it ever has a session token). `synthesize` with no engine is
   a 200 `{ok:false}` naming the fix; a registered-but-crashed engine is a 503
   (transient); neither is ever a silent empty string.
+- **2026-11-09 (weardev, first real human voice — CORRECTIVE)** — the owner's
+  recorded card (founder voice; the seed-pack default, per the enrollment ruling
+  above) measured 567 wpm through slice 1's VAD. My mistake: a −9 dB gate
+  (peak/8) shatters dynamic speech into syllable confetti, so `voiced_s`
+  collapsed and `ref_rate` ballooned — every synthetic fixture passed because
+  envelope speech has no natural valleys. `_voiced_seconds` now uses a −18 dB
+  hysteresis gate, ±1-frame hangover, and bridges dips ≤300 ms (coarticulation
+  is voice; a 600 ms dip — breath, cough — is silence). Regression test
+  `test_vad_bridges_conversation_not_coughs`; fixtures and all prior contracts
+  untouched; 112/112. Re-measured on the owner's true take: a human-plausible
+  213 wpm voiced span.
 
 ## Appendix A — Landed slices (build log, newest first)
 

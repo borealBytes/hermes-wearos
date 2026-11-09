@@ -28,6 +28,16 @@ class VoiceoutTests(unittest.TestCase):
         self.assertAlmostEqual(vo._wav_duration(VOICED), 4.4, places=1)
         self.assertAlmostEqual(vo._voiced_seconds(VOICED), 3.5, places=1)
 
+    def test_vad_bridges_conversation_not_coughs(self):
+        # Real speech drops below gate between syllables; a <=300ms dip is
+        # coarticulation (part of the voice span), a 600ms dip is a breath or
+        # a cough (silence). The first real-voice card read 567 wpm because
+        # the old gate counted neither dip as voice at all.
+        gappy = mkwav([(0.2, 0), (0.5, 1.0), (0.15, 0), (0.5, 1.0), (0.2, 0)])
+        self.assertGreaterEqual(vo._voiced_seconds(gappy), 1.05)   # gap bridged
+        breath = mkwav([(0.2, 0), (0.5, 1.0), (0.6, 0), (0.5, 1.0), (0.2, 0)])
+        self.assertLess(abs(vo._voiced_seconds(breath) - 1.0), 0.08)  # not bridged
+
     def test_card_measures_not_assumes(self):
         c = vo.create_card(VOICED, "Test Pipe")
         expect = len(vo.WORD_RE.findall(vo.SCRIPTED_PROMPT)) / 3.5 * 60
