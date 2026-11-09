@@ -22,6 +22,10 @@ const REPO_URL = 'https://github.com/borealBytes/hermes-wearos'
 
 const $status = atom(null)
 const $stt = atom(null)
+const $voice = atom(null)
+const $voToken = atom('')
+const $voText = atom('Your cron digest is ready: three farm alerts, no incidents, sprayer window opens Thursday at six ten.')
+const $voNote = atom('')
 const $busy = atom(false)
 const $error = atom('')
 const $code = atom('')
@@ -46,6 +50,65 @@ async function refresh () {
     $stt.set(await rest('/stt'))
   } catch { /* voice card hides itself without data */ }
 }
+
+async function refreshVoice () {
+  try { $voice.set(await rest('/voice')) } catch { /* card hides itself */ }
+}
+
+async function voiceAct (fn) {
+  haptic('tap')
+  $busy.set(true)
+  try { await fn(); await refreshVoice() } finally { $busy.set(false) }
+}
+
+// dropdown choice = POST /voice {action:select}; persists server-side, no reload needed
+function voPick (slot) {
+  return e => voiceAct(() => rest('/voice', {
+    method: 'POST', body: { action: 'select', source: e.target.value, for: slot }
+  }))
+}
+
+// Install = the consent dialog first (rule 12): steps, hosts, disk, per chosen row.
+function voInstall () {
+  const air = ($voice.get() || {}).air || {}
+  const p = air.preview
+  if (!p) return
+  const yes = window.confirm(`${p.title}\n` +
+    p.steps.map(s => `• ${s}`).join('\n') +
+    `\n• needs: ${p.needs.join(', ')} · disk ~${p.disk_mb} MB` +
+    `\n• hosts: ${p.hosts.join(', ')}`)
+  if (!yes) return
+  $voNote.set('')
+  voiceAct(() => rest('/voice', { method: 'POST', body: {
+    action: 'install', token: String($voToken.get() || '').trim() || undefined
+  } }))
+}
+
+// Sound test: the lane returns a real wav, the pane plays it. No engine → the
+// refusal text, never a silent button (issue #7 honesty rule).
+async function voSoundTest () {
+  await voiceAct(async () => {
+    const out = await rest('/voice', {
+      method: 'POST', body: { action: 'soundtest', text: $voText.get() || '' } })
+    if (out && out.audio_wav_b64) {
+      const bin = window.atob(out.audio_wav_b64)
+      const u8 = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
+      const url = URL.createObjectURL(new window.Blob([u8], { type: 'audio/wav' }))
+      new window.Audio(url).play()
+      $voNote.set(`played · engine ${out.engine || 'air'}`)
+    } else {
+      $voNote.set((out && (out.error || out.refused)) || 'no audio')
+    }
+  })
+}
+
+const voSpeed = e => voiceAct(() => rest('/voice', {
+  method: 'POST', body: { action: 'speed', speed: Number(e.target.value) } }))
+const voKaraoke = e => voiceAct(() => rest('/voice', {
+  method: 'POST', body: { action: 'karaoke', karaoke: e.target.checked } }))
+const voDelete = cid => voiceAct(() => rest('/voice', {
+  method: 'POST', body: { action: 'card_delete', card: cid } }))
 
 async function act (fn) {
   haptic('tap')
@@ -151,15 +214,28 @@ function Step ({ done, n, title, children }) {
 function WearKitPane () {
   const status = useValue($status)
   const stt = useValue($stt)
+  const voice = useValue($voice)
+  const voToken = useValue($voToken)
+  const voText = useValue($voText)
+  const voNote = useValue($voNote)
   const busy = useValue($busy)
   const error = useValue($error)
   const code = useValue($code)
   const note = useValue($pairNote)
+  const air = (voice && voice.air) || null
+  const voicing = (voice && voice.voice) || null
+  const installing = air && air.phase &&
+    !['idle', 'done', 'failed', 'cancelled'].includes(air.phase)
   useEffect(() => {
     refresh()
-    const timer = setInterval(refresh, 8_000) // pairing completes while you watch this pane
+    const timer = setInterval(() => { refresh(); refreshVoice() }, 8_000) // pairing completes while you watch this pane
     return () => clearInterval(timer)
   }, [])
+  useEffect(() => {
+    if (!installing) return undefined
+    const fast = setInterval(refreshVoice, 2_000) // install progress deserves a live bar
+    return () => clearInterval(fast)
+  }, [installing])
 
   const checks = (status && status.checks) || {}
   const devices = Object.entries((status && status.devices) || {})
@@ -397,6 +473,174 @@ function WearKitPane () {
                 ]
               }, 'stt-card')
             : null,
+
+      // ── voice-out (SPEC §19, slice 3) ───────────────────────────────────────
+      air ? jsxs('div', {
+        className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
+        children: [
+          jsxs('div', {
+            className: 'flex items-center justify-between',
+            children: [
+              jsx('span', { className: 'font-medium', children: '🔊 Voice-out' }),
+              air.installed && (air.model_verified || air.verified_pending)
+                ? jsx('span', { className: 'text-xs text-(--ui-text-secondary)', children: '✓ installed' })
+                : null
+            ]
+          }),
+          jsx('div', {
+            className: 'text-[10px] text-(--ui-text-tertiary)',
+            children: 'your agents speak on the watch — cloned voices, no cloud, audio only on your tailnet'
+          }),
+
+          // source dropdowns: the gateway speaks its best, the wrist pulls the small quant
+          ...['gateway', 'watch'].map(slot => jsxs('label', {
+            className: 'flex flex-col gap-0.5 text-xs',
+            children: [
+              jsx('span', {
+                className: 'text-[10px] text-(--ui-text-tertiary)',
+                children: slot === 'gateway'
+                  ? 'gateway model (the box runs this — best it can hold)'
+                  : 'watch model (the wrist pulls this — Q4 fits)'
+              }),
+              jsx('select', {
+                className: 'rounded border border-(--ui-border) bg-transparent px-1 py-1 text-xs',
+                value: (air.slots || {})[slot], disabled: busy,
+                onChange: voPick(slot),
+                children: (air.sources || []).map(sRow => jsx('option', {
+                  value: sRow.id,
+                  children: `${sRow.id} · ${sRow.gated ? 'consent+token' : 'no account'}` +
+                    (sRow.bytes ? ` · ${Math.round(sRow.bytes / 1e6)} MB` : '')
+                }, sRow.id))
+              })
+            ]
+          }, `vo-src-${slot}`)),
+
+          // gated row chosen and no token yet: name the consent click, capture the key
+          ((air.sources || []).find(sRow => (air.slots || {}).gateway === sRow.id) || {}).gated && !air.hf_token
+            ? jsxs('div', {
+                className: 'flex flex-col gap-1',
+                children: [
+                  jsx('a', {
+                    className: 'text-[10px] underline text-(--ui-text-secondary)',
+                    href: ((air.sources || []).find(sRow => (air.slots || {}).gateway === sRow.id) || {}).url || 'https://huggingface.co/neuphonic',
+                    rel: 'noreferrer', target: '_blank',
+                    children: '1. open the model page, click “Agree and access repository”'
+                  }),
+                  jsxs('div', {
+                    className: 'flex items-center gap-1',
+                    children: [
+                      jsx('input', {
+                        className: 'min-w-0 flex-1 rounded border border-(--ui-border) bg-transparent px-1 py-1 text-xs',
+                        placeholder: '2. paste HF read token (stored 0600)', type: 'password',
+                        value: voToken, disabled: busy,
+                        onChange: e => $voToken.set(e.target.value)
+                      }),
+                      jsx('a', {
+                        className: 'text-[10px] underline text-(--ui-text-tertiary)',
+                        href: 'https://huggingface.co/settings/tokens', rel: 'noreferrer', target: '_blank',
+                        children: 'keys'
+                      })
+                    ]
+                  })
+                ]
+              }, 'vo-consent')
+            : null,
+
+          installing
+            ? jsxs('div', {
+                className: 'flex items-center gap-2 text-xs',
+                children: [
+                  jsx('span', { children: `${air.phase} ${air.percent || 0}% — ${air.detail || ''}` }),
+                  jsx('button', {
+                    className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px]',
+                    type: 'button',
+                    onClick: () => voiceAct(() => rest('/voice', { method: 'POST', body: { action: 'cancel' } })),
+                    children: 'Cancel'
+                  })
+                ]
+              })
+            : (!air.installed ? jsxs('div', {
+                className: 'flex flex-col gap-1',
+                children: [
+                  jsx('button', {
+                    className: 'self-start rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
+                    type: 'button', disabled: busy || !air.toolchain,
+                    onClick: voInstall,
+                    children: 'Review & install engine'
+                  }),
+                  !air.toolchain
+                    ? jsx('div', { className: 'text-[10px] text-(--ui-text-danger)', children: 'needs git, cmake, g++ on this machine' })
+                    : null
+                ]
+              }) : null),
+          air.error ? jsx('div', { className: 'text-[10px] text-(--ui-text-danger)', children: air.error }) : null,
+
+          // sound test: press play, hear the actual voice (the whole point of this card)
+          jsxs('div', {
+            className: 'flex items-center gap-1',
+            children: [
+              jsx('input', {
+                className: 'min-w-0 flex-1 rounded border border-(--ui-border) bg-transparent px-1 py-1 text-xs',
+                value: voText, disabled: busy,
+                onChange: e => $voText.set(e.target.value)
+              }),
+              jsx('button', {
+                className: 'rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
+                type: 'button', disabled: busy, onClick: voSoundTest, children: '▶ play'
+              })
+            ]
+          }),
+          voNote ? jsx('div', { className: 'text-[10px] text-(--ui-text-tertiary)', children: voNote }) : null,
+
+          // one global speed dial + karaoke toggle (canonical prefs, rev-bumped)
+          voicing ? jsxs('div', {
+            className: 'flex items-center gap-2 text-xs',
+            children: [
+              jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'speed' }),
+              jsx('input', {
+                type: 'range', min: 0.5, max: 2, step: 0.05, value: voicing.speed, disabled: busy,
+                className: 'min-w-0 flex-1', onChange: voSpeed
+              }),
+              jsx('span', { children: `${voicing.speed}×` }),
+              jsxs('label', {
+                className: 'flex cursor-pointer items-center gap-1',
+                children: [
+                  jsx('input', { type: 'checkbox', checked: !!voicing.karaoke, disabled: busy, onChange: voKaraoke }),
+                  jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'karaoke' })
+                ]
+              })
+            ]
+          }) : null,
+
+          // voice cards (the founder's ships as the default; record whoever you want to hear)
+          voicing && Object.keys(voicing.cards || {}).length
+            ? jsxs('div', {
+                className: 'flex flex-col gap-0.5',
+                children: [
+                  ...Object.entries(voicing.cards).map(([cid, m]) => jsxs('div', {
+                    className: 'flex items-center justify-between gap-1 text-xs',
+                    children: [
+                      jsxs('span', {
+                        className: 'text-(--ui-text-secondary)',
+                        children: [m.label || cid.slice(0, 8),
+                                   m.ref_rate ? ` · ${Math.round(m.ref_rate)} wpm` : '']
+                      }),
+                      jsx('button', {
+                        className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
+                        type: 'button', disabled: busy, onClick: () => voDelete(cid),
+                        children: '✕'
+                      })
+                    ]
+                  }, cid))
+                ]
+              })
+            : null,
+          jsx('div', {
+            className: 'text-[10px] text-(--ui-text-tertiary)',
+            children: 'record more voices from the watch — yours, or anyone’s (recorder ships with the player)'
+          })
+        ]
+      }, 'voiceout-card') : null,
 
       jsx('div', { className: 'flex flex-col gap-1', children: lights })
     ]

@@ -237,7 +237,8 @@ def sources_menu() -> list:
     for k, s in SOURCES.items():
         have = _size_ok(root / "model" / s["file"], s["bytes"])
         menu.append({"id": k, "label": s["label"], "bytes": s["bytes"],
-                     "gated": s["gated"], "present": have,
+                     "gated": s["gated"], "present": have, "repo": s["repo"],
+                     "url": f"https://huggingface.co/{s['repo']}",
                      "selected_for": [t for t in SLOTS if slots[t] == k]})
     return menu
 
@@ -280,21 +281,34 @@ def status() -> dict:
 
 def preview() -> dict:
     root = _root()
+    sid, s = _source()                        # the preview speaks of the CHOSEN row
+    gated = bool(s.get("gated"))
+    codec = s.get("codec") or {}
+    codec_port = codec.get("kind") == "port"
+    mb = (s.get("bytes") or 0) // 1_000_000
+    steps = [
+        f"pip-install {REPO} at commit {COMMIT[:12]} into a private venv "
+        "(pulls the CPU torch wheel; pypi.org)",
+        f"Download {s['file']} (~{mb} MB) from huggingface.co/{s['repo']}"
+        + (" — gated: auto, needs your one-time consent + read token" if gated
+           else " — ungated: no account, no consent click"),
+        ("NeuCodec via the ungated HF port (bezzam/neucodec-hf, ~2.5 GB)"
+         if codec_port else
+         "NeuCodec from neuphonic/neucodec (same consent + token)"),
+        f"Size-check against {s.get('bytes') or 'the first-fetch record'} bytes" + (
+            f"; SHA-256 check against {s.get('sha256', MODEL_SHA256)[:16]}…"
+            if s.get("sha256", MODEL_SHA256) != "PENDING" else
+            " (checksum pin lands with the first verified fetch)"),
+        f"Everything lands in {root} (private venv + cache, nothing system-wide)",
+    ]
+    needs = ["git", "cmake", "g++"] + (["HF read token (HF_TOKEN or the token box)"]
+                                        if gated else [])
     return {
-        "title": "Voice-out engine (NeuTTS Air, Apache-2.0)",
-        "steps": [
-            f"pip-install {REPO} at commit {COMMIT[:12]} into a private venv "
-            "(pulls the CPU torch wheel; pypi.org)",
-            f"Download {MODEL_FILE} (~{MODEL_BYTES // 1_000_000} MB) from "
-            "huggingface.co — gated: auto, needs your one-time consent + read token",
-            f"Size-check against {MODEL_BYTES} bytes" + (
-                f"; SHA-256 check against {MODEL_SHA256[:16]}…" if pinned_hint() else
-                " (checksum pin lands with the first verified fetch)"),
-            f"Everything lands in {root} (private venv + cache, nothing system-wide)",
-        ],
+        "title": f"Voice-out engine — {sid} (NeuTTS Air, Apache-2.0)",
+        "steps": steps,
         "hosts": ["github.com", "pypi.org", "huggingface.co"],
-        "needs": ["git", "cmake", "g++", "HF read token (HF_TOKEN or the token box)"],
-        "disk_mb": 4600,
+        "needs": needs,
+        "disk_mb": 4600 if codec_port else 3800,
         "toolchain_ok": _probe()["toolchain"],
     }
 

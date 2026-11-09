@@ -140,3 +140,47 @@ def test_stt_status_reports_the_pinned_plan(wearos, api):
     assert payload["installed"] is False
     assert payload["model_verified"] is False
     assert payload["lib"] is False
+
+
+# ── voice-out pane door (slice 3) ───────────────────────────────────────────────
+
+def _tair(wearos):
+    import importlib
+    return importlib.import_module(wearos.__name__ + ".tts_air")
+
+
+def test_voice_feed_shapes_the_pane(wearos, api):
+    feed = api.voice()
+    assert set(feed) == {"voice", "air", "aligner"}
+    assert feed["air"]["slots"] == {"gateway": "community-q8",   # community default
+                                    "watch": "community-q4"}      # watch-size quant
+    assert {r["id"] for r in feed["air"]["sources"]} == set(_tair(wearos).SOURCES)
+    assert feed["voice"]["cards"] == {}
+    hosts = feed["air"]["preview"]["hosts"]                      # rule 13: hosts up front
+    assert "huggingface.co" in hosts and "pypi.org" in hosts
+
+
+def test_voice_post_select_install_soundtest(wearos, api, monkeypatch):
+    ta = _tair(wearos)
+    out = api.voice_post({"action": "select", "source": "official-q4", "for": "watch"})
+    assert out["ok"] and out["slots"]["watch"] == "official-q4"
+    assert out["slots"]["gateway"] == "community-q8"             # other slot untouched
+    assert not api.voice_post({"action": "select", "source": "nope"})["ok"]
+
+    # install: gated row + token → stored 0600; worker thread faked, no pip in tests
+    monkeypatch.setattr(ta.shutil, "which", lambda n: "/usr/bin/" + n)
+    monkeypatch.setattr(ta.threading, "Thread",
+                        lambda **kw: type("T", (), {"start": lambda s: None,
+                                                    "is_alive": lambda s: False})())
+    r = api.voice_post({"action": "install", "source": "official-q8",
+                        "token": "hf_pane_test"})
+    assert r.get("started"), r
+    tf = ta._root() / "hf_token"
+    assert tf.read_text() == "hf_pane_test"
+    import stat
+    assert stat.S_IMODE(tf.stat().st_mode) == 0o600
+
+    # sound test without an engine: the refusal TEXT, never a silent button
+    r = api.voice_post({"action": "soundtest", "text": "hello"})
+    assert "audio_wav_b64" not in r and r.get("error")
+    assert "unknown voice action" in api.voice_post({"action": "launch-missiles"})["error"]

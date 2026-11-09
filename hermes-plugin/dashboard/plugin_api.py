@@ -166,3 +166,68 @@ def stt_post(body: dict):
         return stt_install.cancel()
     # The pane IS the interactive surface + the consent dialog (preview shown first).
     return stt_install.start(interactive=True)
+
+
+# ── voice-out (SPEC §19, slice 3) ───────────────────────────────────────────────
+# The pane's door to the same engine the watch lane drives. One surface, two
+# doors: the lane speaks for devices (node-law auth), these routes speak for the
+# logged-in human. Rule 13: consent links and token capture live HERE, in a
+# surface the owner can audit; rule 12: nothing installs without the button.
+
+def _voice_mods():
+    import importlib
+    w = _p()
+    return (importlib.import_module(w.__name__ + ".voiceout"),
+            importlib.import_module(w.__name__ + ".tts_air"),
+            importlib.import_module(w.__name__ + ".align_parakeet"))
+
+
+@router.get("/voice")
+def voice():
+    vo, ta, al = _voice_mods()
+    return {"voice": vo.status(),
+            "air": ta.status() | {"sources": ta.sources_menu(), "slots": ta._slots(),
+                                  "preview": ta.preview()},
+            "aligner": al.status()}
+
+
+@router.post("/voice")
+def voice_post(body: dict):
+    import os
+    vo, ta, _al = _voice_mods()
+    action = str(body.get("action", "")).lower()
+    if action == "select":
+        return ta.select_source(str(body.get("source") or ""),
+                                str(body.get("for") or "both"))
+    if action == "install":
+        tok = str(body.get("token") or "").strip()
+        if tok:                                   # paste box: store 0600, never echo
+            tf = ta._root() / "hf_token"
+            tf.parent.mkdir(parents=True, exist_ok=True)
+            tf.write_text(tok)
+            os.chmod(tf, 0o600)
+        return ta.start(interactive=True, source=str(body.get("source") or "") or None,
+                        for_slot=str(body.get("for") or "gateway"))
+    if action == "cancel":
+        return ta.cancel()
+    if action == "soundtest":
+        import base64
+        r = vo.synthesize(str(body.get("text") or "")[:4000],
+                          str(body.get("agent") or "default"), want_words=False)
+        if isinstance(r.get("audio"), (bytes, bytearray)):
+            r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
+        return r
+    if action == "speed":
+        return vo.set_speed(float(body.get("speed", 1.0)))
+    if action == "karaoke":
+        return vo.set_karaoke(bool(body.get("karaoke", True)))
+    if action == "voice":                       # per-agent default card
+        return vo.set_voice(str(body.get("agent") or "default"),
+                            str(body.get("card") or ""))
+    if action == "mode":
+        return vo.set_mode(str(body.get("agent") or "default"),
+                           str(body.get("mode") or "gateway"))
+    if action == "card_delete":
+        return vo.delete_card(str(body.get("card") or ""))
+    return {"error": f"unknown voice action {action!r} — select|install|cancel|"
+                     "soundtest|speed|karaoke|voice|mode|card_delete"}
