@@ -739,6 +739,7 @@ class WearApp : Application() {
          * the ACTIVE edge + the away loop). Authkeys are never logged — only lengths.
          */
         fun pairApplyPickup(p: dev.hermes.wearos.net.PickupPacket, secretHex: String, deviceToken: String) = scope.launch {
+            val priorKey = settings.tailnetKey()
             settings.setTailnetKey(p.authKey)
             settings.setPairingSecret(secretHex)      // lives exactly until the first lane session
             settings.setDeviceToken(deviceToken)
@@ -780,9 +781,15 @@ class WearApp : Application() {
             // running), so the plain start below would be a NO-OP and the watch would sit
             // at NEEDS_AUTH holding a perfectly good key — measured on the first real-watch
             // drill 2026-11-06. An engine idling at NEEDS_AUTH must be force-REENROLLED.
+            // AND a RE-PAIR over a live engine must too: the claim always carries a NEW
+            // authkey, tsnet ignores keys once enrolled, and the old identity is usually
+            // the revoked one — a plain start no-ops at "already running" and the fresh
+            // key dies unused until process death (measured live 2026-11-09, three claims).
+            // A wipe + forceLogin is right either way: the ceremony expects a NEW node row.
             val idle = TailnetLogic.phase(
                 TailnetEngine.status.value, enabled = true, gatewayHost = "") == TailnetPhase.NEEDS_AUTH
-            if (idle) tailnetReenroll() else tailnetStart()
+            val repaid = priorKey.isNotBlank() && priorKey != p.authKey
+            if (idle || repaid) tailnetReenroll() else tailnetStart()
             _pairRequested.value = false
             Log.i(
                 TAG, "pair applied (v2): gw=$api wk=${wk.ifEmpty { "(none)" }} lane=$lane " +
