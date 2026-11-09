@@ -3,8 +3,10 @@
 ⌚ A voice-first Wear OS client for a self-hosted Hermes gateway — paired over the
 **watch's own embedded Tailscale node**. Install once, pair with a 6-digit PIN, done:
 no phone app, no relay server, no reusable keys lying around. Every call after pairing —
-streamed chat, approvals, images, cron alerts — rides your tailnet. First smartwatch
-client in the Hermes catalog.
+streamed chat, approvals, images, cron alerts — rides your tailnet. Watch apps for Hermes
+have existed; this is the first **full-featured** one in the catalog — the whole gateway on
+the wrist, every agent, not a single scoped chatbot bolted to a mic. **In active development**:
+features land roughly weekly.
 
 > ## ⛓️ Where this code lives
 >
@@ -14,12 +16,13 @@ client in the Hermes catalog.
 > 📸 **The full showcase lives in the [monorepo README](https://github.com/borealBytes/hermes-wearos#readme)** —
 > every feature photographed on real glass: the orb dial, streaming answers, in-session approvals
 > with ✅/❌ orb flanks, media that animates on your wrist, the round-trip diagrams, the VM
-> walkthrough. The six stills in [`docs/screenshots/`](./docs/screenshots) are an appetizer; the
-> GIFs don't fit in a subtree split's suitcase.
+> walkthrough. The gallery below is the plugin-facing slice of it — including a GIF recorded off
+> a real watch.
 >
 > 📦 **The APK:** [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases) —
 > CI-built with `SHA256SUMS.txt` and GitHub build attestation, never bundled in a repo.
-> **Open source forever** — making it yours is the point.
+> A **Google Play Store listing is pending** (Google's approval queue); until it clears, the
+> APK sideload is the install path. **Open source forever** — making it yours is the point.
 >
 > **How it got here:** this repo is a *build artifact of that directory* — a `git subtree split`
 > published by the monorepo's own GitHub Actions on every merge
@@ -40,8 +43,11 @@ hermes watch enable --agents all   # flip the plugin on for every profile in one
 hermes watch pair                  # answers "say this PIN: 105789"
 ```
 
-1. Install the APK from [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases)
-   onto the watch (min SDK 30 — Galaxy Watch 4 and later).
+1. Install the app onto the watch (min SDK 30 — Galaxy Watch 4 and later). Today that's the APK
+   from [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases) — CI-built,
+   attested, a one-minute sideload with developer mode on the watch. A **Google Play Store
+   listing is pending** (in Google's approval queue as of this writing); when it clears, install
+   becomes a Store tap, and pairing still runs through Hermes Desktop right after.
 2. Open it: the glass shows a **6-digit PIN**. That PIN is the entire pairing UX.
 3. Say or type the PIN to Hermes — `/pair <PIN>` in any chat surface, `hermes watch pair <PIN>`
    in a terminal, or the `watch_pair` tool. The plugin mints a **single-use** Tailscale
@@ -73,7 +79,39 @@ per-profile copy. Note core's model: an agent installed with its **own copy** fr
 SHA it was copied at, until the card's *Update to pin* moves it — the Wear Kit pane surfaces
 those stale pins in red so one plugin never wears three versions silently.
 
-## The gallery (six — the full wall is in the monorepo)
+## The gallery — plugin surfaces first, then the wrist
+
+![The Wear Kit page inside Hermes Desktop: checklist, per-agent enablement, paired devices, readiness lights](./docs/screenshots/66-wearkit-pane.png)
+
+**What the plugin adds to your Hermes.** The Wear Kit page (pure Desktop plugin SDK): the
+install checklist, a checkbox per agent — this watch answers to many agents, one toggle each —
+paired devices with live tailnet state, and every readiness light. (Agent names blurred by the
+maintainer for privacy; they are yours to populate.)
+
+![The pairing PIN on first launch — 6 digits, 5-minute TTL, single claim](./docs/screenshots/06-pin-screen.png)
+
+**The pairing UX is one number.** A cold watch mints a 6-digit PIN (5-min TTL, single-claim);
+`/pair 123456` on any surface — or the watch's own keyboard — trades it for a single-use
+enrollment key. The screenshot is a fresh install: the tailnet-handle field is the only thing
+a new wearer types.
+
+![Generated video playing fullscreen on a real Galaxy Watch — chrome auto-hidden, bezel volume at 50 %](./docs/screenshots/05-aurora-player.gif)
+
+**Media that animates on glass.** This GIF was screen-recorded off a real watch: an agent-sent
+clip (rendered upstream with ComfyUI, served through the media lane) plays fullscreen; the
+player chrome auto-hides; the rotary drives volume mid-play.
+
+![The orb mid-run: red ring, STOP pill, working dots](./docs/screenshots/07-stop-running.png)
+
+**The orb is the app.** One button with honest states — and mid-run it turns into a red ring
+with a STOP pill, so barging in on an agent is one tap, not a settings hunt.
+
+![The watch keyboard typing into the prompt field](./docs/screenshots/12-keyboard.png)
+
+**Voice is the default, not the requirement.** Everything the mic does, thumbs do too —
+including typing `/pair <PIN>` on the watch itself.
+
+### On the wrist
 
 ![A tool's chart rendered as an image card on the wrist](./docs/screenshots/03-image-card.png)
 
@@ -93,8 +131,9 @@ the door returns 410 forever after.
 
 ![Media cards: photo, GIF, audio and video on one session screen](./docs/screenshots/48-media-cards.png)
 
-**Media that animates.** GIFs stream verbatim through watchkit (or the ported in-process
-lane), video pre-shrinks to wrist-friendly H.264. Pinch-zoom included.
+**Whole answers, mixed media.** One reply, several kinds of payload: an agent-sent render that
+*animates inline* (GIF chip on the card corner) and the audio sting below it — tap either for
+fullscreen, and video arrives pre-shrunk to wrist-friendly H.264.
 
 ![The Gateways screen: multiple endpoints, winner dot, failover state](./docs/screenshots/42-gateways-multi.png)
 
@@ -191,6 +230,9 @@ and **prints** the command — the wizard never executes system changes itself.
 - Funnel enabled on the gateway node, exposing only `/pair/*` (the wizard fixes the ACL).
 - `requires_hermes >= 0.23.0` — the pane data plane (`ctx.rest` + hot-mounted
   `plugin_api.py`) is measured on v0.23.0.
+- A **Wear OS 4+ watch** (Galaxy Watch 4 / Pixel Watch and later, min SDK 30). The app installs
+  today from the GitHub-Release APK; the **Play Store listing is in Google's approval queue** —
+  once it lands, install needs no developer mode, and pairing then goes through Hermes Desktop.
 
 ## Disclosure (catalog rule 13)
 
@@ -212,9 +254,15 @@ and **prints** the command — the wizard never executes system changes itself.
   (upstream source, pinned checksum, disclosed before running).
 - **No self-updater (rule 3):** the plugin fetches no code for itself. Updates arrive only
   through a catalog SHA-bump PR plus `hermes plugins update wearos`.
-- **Optional Node sidecar:** the media lane (mermaid/images/audio pre-shrink) still falls
-  back to the documented watchkit daemon (`scripts/watchkit.sh` in the monorepo) until the
-  in-process port lands; this plugin does not install or update it.
+- **Optional Node sidecar — and where it's headed:** the media lane (mermaid/images/audio
+  pre-shrink) still falls back to the documented watchkit daemon (`scripts/watchkit.sh` in the
+  monorepo); this plugin does not install or update it yet. The trajectory is concrete:
+  **voice-in on the watch is already app-side** (Vosk runs on the glass; its model cache moves
+  plugin-side so installs are gateway-cached and resume-safe), **streaming STT on the gateway
+  becomes a plugin install verb** (`hermes watch setup --fix stt` — a port of the existing
+  `scripts/parakeet.sh` behind preview→approve: transcribe.cpp + GGUF, folder-local, no GPU),
+  and sidecar lifecycle lands as one more verb. Watchkit then shrinks to what only a separate
+  process is good at, instead of being a prerequisite.
 
 ## Tests
 
@@ -235,7 +283,7 @@ or `$HERMES_AGENT_ROOT`. From the monorepo the same command is
 | [media.py](./media.py) | in-process media lane (porting; the sidecar is the documented fallback) |
 | [dashboard/](./dashboard/) | the pane's data plane: FastAPI router hot-mounted at `/api/plugins/wearos/*` |
 | [desktop/plugin.js](./desktop/plugin.js) | Wear Kit page: 4-step checklist, agent checkboxes, devices, readiness lights (inline SVG wordmark — the loader serves no sibling assets) |
-| [docs/screenshots/](./docs/screenshots/) | the six stills above — catalog gallery |
+| [docs/screenshots/](./docs/screenshots/) | the gallery above (PNGs + one GIF) — catalog gallery |
 | [tests/](./tests/) | pytest suite (state machine, claim API over real HTTP, ACL detect, registry, pane routes) |
 
 Architecture prose: [SPEC §11 (endpoints) and §11.4 (embedded tailnet — the transport)](https://github.com/borealBytes/hermes-wearos/blob/main/docs/SPEC.md)

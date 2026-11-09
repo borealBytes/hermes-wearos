@@ -5,6 +5,13 @@ no Telegram in the middle. Tap the orb, say a thing, and a real agent on your ow
 tools, memory, cron jobs, and your files — answers on your wrist, out loud, before your hand
 leaves the glass.
 
+Watch front-ends for Hermes gateways have existed; this is the first **full-featured** one — the
+whole gateway on the wrist (every agent, approvals, media that animates, session management), not a
+single scoped chatbot bolted to a mic. **In active development: features land roughly weekly.**
+**Install today** is the CI-built APK; the **Google Play Store listing is pending** in Google's
+approval queue — it's coming, because an install that takes a Store tap instead of developer mode
+is the point of making this easy.
+
 <p align="center">
   <img src="docs/demo/demo-walkthrough-v0.8.0.gif" width="280" alt="The v0.8.0 walkthrough: the shipped splash film opens inside the watch circle, then sixteen captioned beats walk the features — orb dial, streaming markdown, a four-column table, image card, mermaid diagram, push-to-talk, model picker, the in-session approval card, the approval-mode sheet, a settled-answer notification, the desktop-watch mirror card, the comfy-generated aurora card, an animated GIF, About, tailnet status, sessions — closing on the wordmark"/>
 </p>
@@ -36,13 +43,15 @@ out of the way forever.
 
 | | |
 |---|---|
-| <img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb at the center ringed by its lane icons — the orb is the only control; each drag direction fires keyboard, mute, settings, model, commands, chats, sessions, or agents"/> | **Round-first — that's why every image here is a circle.** These screenshots are masked to a circle because that is exactly what the owner's Galaxy Watch shows. Under the mask the app renders a normal 480×480 Wear OS framebuffer; the round glass simply never shows those corners. On a square Wear OS screen those corner pixels are real pixels you'll actually get — you see *more* than these screenshots, never less — and the layout was designed for the circle from the first pass, so nothing important ever lived in a corner anyway. Built and tuned on Galaxy Watch (Wear OS 5, min SDK 30); everything travels to other Wear OS watches except the optional body-sensor tools, which ride Health Services — a capability Samsung watches provide and others don't (the app says "health services: unavailable" on its own About page and carries on). Expect small per-OEM tweaks for non-Samsung watches; a OnePlus Watch is next on the test bench. |
+| <img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb at the center ringed by its lane icons — the orb is the only control; each drag direction fires keyboard, mute, settings, model, commands, chats, sessions, or agents"/> | **Round-first — that's why every watch image here is a circle.** These screenshots are masked to a circle because that is exactly what the owner's Galaxy Watch shows. Under the mask the app renders a normal 480×480 Wear OS framebuffer; the round glass simply never shows those corners. On a square Wear OS screen those corner pixels are real pixels you'll actually get — you see *more* than these screenshots, never less — and the layout was designed for the circle from the first pass, so nothing important ever lived in a corner anyway. Built and tuned on Galaxy Watch (Wear OS 5, min SDK 30); everything travels to other Wear OS watches except the optional body-sensor tools, which ride Health Services — a capability Samsung watches provide and others don't (the app says "health services: unavailable" on its own About page and carries on). Expect small per-OEM tweaks for non-Samsung watches; a OnePlus Watch is next on the test bench. (The square ones are the desktop pane — that half lives on a rectangle.) |
 
 ## Install in five
 
-1. **Install the APK on the watch** — from
+1. **Install the app on the watch** — today that's the APK from
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest)
-   (CI-built, `SHA256SUMS.txt` + Actions build provenance). Repo:
+   (CI-built, `SHA256SUMS.txt` + Actions build provenance; developer mode on the watch, about a
+   minute). The **Google Play Store listing is pending** in Google's approval queue — when it
+   clears, this step becomes a Store tap. Repo:
    [borealBytes/hermes-wearos](https://github.com/borealBytes/hermes-wearos).
 2. **Install the plugin on the gateway** — `hermes plugins install wearos` (catalog entry, pinned
    reviewed SHA; source lives in [`hermes-plugin/`](hermes-plugin/README.md)). If the Wear Kit
@@ -107,9 +116,9 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/30-settings-lane.png" width="180"/> |
 | **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together; ● marks the live agent. | **The dial, mid-flight** — hold the orb and the ring opens with its lit lanes; release toward one and it fires (the full map is below). The ⚙ lane is why Settings is never more than a flick. |
 | <img src="docs/screens/48-media-cards.png" width="180"/> | <img src="docs/screens/50-gif-card.gif" width="180" alt="A chat image card playing an animated GIF: test-pattern bars cycling under a GIF chip, recorded off the watch and circle-masked — real motion, real pixels"/> |
-| **Generated media rides the answer** — when the desktop can render, so can the wrist: this comfy aurora clip arrived as a `MEDIA:` line and landed as an inline card *that animates in the thread* (GIF chip on the corner), the mixed sting right below it — tap any card for fullscreen. | **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This is a screen recording, circle-masked: the bars are moving. |
-| <img src="docs/screens/49-video-player.gif" width="180" alt="The full-screen video player recorded off the watch while playing: the aurora clip mid-flight across frames, skip chips and the fading bezel-volume readout — circle-masked, real motion"/> | <img src="docs/screens/52-audio-player.png" width="180"/> |
-| **Full-screen player, bezel-steered** — media3 transport with skip chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — that meter came off the exact code path, driven over adb). Close the sheet, and the bezel is system volume again. Recording, not a still — the clip is playing across the frames. | **Audio gets the same front door** — an Opus clip from the gateway's media pipeline opens a full-screen sheet with the media3 transport; the bezel steers its volume exactly like video's. |
+| **Generated media rides the answer** — when the desktop can render, so can the wrist: a matplotlib chart, an animated GIF and an audio sting, all in one answer thread (GIF chip on the corner of the animated card) — tap any card for fullscreen. | **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This is a screen recording, circle-masked: the bars are moving. |
+| <img src="docs/screens/49-video-player.gif" width="180" alt="The full-screen video player recorded off the watch while playing: a comfy-generated aurora clip mid-flight across frames, the transport fading out and the bezel-volume readout at 50 % — circle-masked, real motion"/> | <img src="docs/screens/52-audio-player.png" width="180"/> |
+| **Full-screen player, bezel-steered** — media3 transport with skip chips, and on a rotating-bezel watch the **bezel spins the PLAYER volume** while it's on screen (5 % detents, one haptic tick each, fading 🔊 readout — that meter came off the exact code path, driven over adb). Close the sheet, and the bezel is system volume again. Recording, not a still: the clip is a local ComfyUI render (MiniMax H3) served through the media lane, playing across the frames. | **Audio gets the same front door** — an Opus clip from the gateway's media pipeline opens a full-screen sheet with the media3 transport; the bezel steers its volume exactly like video's. |
 | <img src="docs/screens/51-video-pinched.png" width="180"/> | <img src="docs/screens/53-handoff-adopted.png" width="180"/> |
 | **Pinch-to-zoom video** — the same zoom lane the image viewer has, living inside the player itself: pinch to 3×, drag to pan, double-tap toggles fit↔2.5×, and taps still raise the transport. | **One conversation, either device** — a chat started at the desktop opens on the wrist with its whole history (gateway-first backfill — the orange "from" pill counts the rows that arrived from the gateway), you keep talking in the *same* session, and it keeps answering for the desktop too. No fork, no second copy: the cross-lane door is a one-column promote the watch does for you (SPEC §12.13), always reversible, and the desktop's own view never drifts. Manual fork stays exactly where it was — in your hand, on the session sheet. |
 | <img src="docs/screens/44-notify-desktop-approval.png" width="180"/> | <img src="docs/screens/45-notify-desktop-settled.png" width="180"/> |
@@ -310,6 +319,8 @@ sessions; asking them needs the key:
 Installed into the Hermes desktop app, the plugin adds a **Wear Kit** page — a right-side pane
 whose whole job is a four-step checklist:
 
+![The Wear Kit pane inside Hermes Desktop: four-step checklist, per-agent enablement, paired devices, readiness lights (agent names blurred by the maintainer)](docs/screens/67-wearkit-pane.png)
+
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
    [repo](https://github.com/borealBytes/hermes-wearos).
@@ -373,7 +384,7 @@ paths (and one keyboard back door):
 | **Local Vosk · offline** | never leaves the watch | Best-effort on-device. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. Needs the model — one tap on Voice in installs it from your gateway (41 MB, resumable). | ✅ default |
 | **OFF-DEVICE · vendor (Google or Samsung)** | the vendor's cloud — whatever recognizer your watch ships | Usually the best raw accuracy on the watch, at the cost of the vendor hearing it. The picker says **OFF-DEVICE** even when the vendor caches locally — that's deliberate. | your choice |
 | **Gateway · whisper** (`watchkit /stt/whisper`) | your own box, through your own tunnel (the mic clip rides as **Opus**, AAC fallback — watchkit sniffs the container) | Noticeably better than Vosk — but buffered: the final text lands when you stop talking. Model choice is a row on the Voice page. | opt-in |
-| **Gateway · parakeet** (streaming) | your own box, through your own tunnel (same Opus wire) | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. | opt-in |
+| **Gateway · parakeet** (streaming) | your own box, through your own tunnel (same Opus wire) | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. Being moved behind the Wear Kit wizard as an install verb (`--fix stt`, preview→approve) so the gateway voice path sets up from the pane. | opt-in |
 | GBoard typing → its mic | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
 
 TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
@@ -526,9 +537,16 @@ scripts/doctor.sh                          # toolchain + link health report
 - [x] **Hermes Wear Kit plugin** — shipped: catalog install, PIN pairing (`/pair`), single-use
       enrollment keys, the Desktop pane's checklist + readiness lights. The six-digit first-run
       pairing flow this slot used to hold *is* that.
+- [ ] **Play Store listing** — the app is submitted and sitting in Google's approval queue (the
+      wait is theirs, not ours). Until it clears: sideload the CI-built APK from GitHub Releases
+      (developer mode on the watch, ~1 minute); once it lands, install is a Store tap and pairing
+      still goes through Hermes Desktop.
+- [ ] **Watchkit shrinks into the plugin** — media lane + whisper in-process, and the two heavy
+      installs become wizard verbs: parakeet streaming STT gateway-side (`--fix stt`) and the Vosk
+      model cache served plugin-side. The sidecar stops being a prerequisite.
 - [ ] **Whisper auto-fallback** wired into the voice loop (endpoint exists today; app-side confidence gate is next).
 - [ ] **Blood oxygen + sleep data**: toggles are wired and waiting; Samsung exposes neither to Wear — the path is reverse-engineering the vendor channels (and every other signal the watch can emit that we're not yet pulling).
-- [ ] Play-store signing + R8 hardening pass; today it's a debug-build project.
+- [ ] Release signing + R8 hardening pass; today's build is debug-hardened and carries its own debug keys.
 - [ ] Complications + tile. On-wrist launch currently = app icon (or voice link).
 - [ ] Wear-side mermaid fallback when the gateway render helper is offline.
 
