@@ -103,6 +103,19 @@ def wearos(tmp_path, monkeypatch):
     Tailscale client, and a host-neutral tailscale CLI view."""
     module = load_plugin()
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    # Host-proof sandbox (learned 2026-11-10 on the owner's gateway box): the home
+    # resolver prefers a CONTEXT-LOCAL override, and a gateway-supervised session
+    # can pin it via HERMES_GATEWAY_PROFILE_PIN/HERMES_SESSION_PROFILE — which
+    # outranks the HERMES_HOME env var above. Neutralize any override so get_
+    # hermes_home() lands on tmp_path no matter what the hosting shell exported.
+    try:
+        import hermes_constants as _hc
+        _ovr_token = _hc.set_hermes_home_override(str(tmp_path)) if hasattr(
+            _hc, "set_hermes_home_override") else None
+    except Exception:
+        _hc, _ovr_token = None, None               # env path stands
+    monkeypatch.delenv("HERMES_GATEWAY_PROFILE_PIN", raising=False)
+    monkeypatch.delenv("HERMES_SESSION_PROFILE", raising=False)
     monkeypatch.setenv("tailscale_api_token", "tskey-api-test")   # _cred() fallback path
     monkeypatch.delenv("API_SERVER_KEY", raising=False)
     monkeypatch.delenv("watchkit_token", raising=False)
@@ -123,6 +136,8 @@ def wearos(tmp_path, monkeypatch):
         yield module
     finally:
         module._CTX = None
+        if _hc is not None and _ovr_token is not None:
+            _hc.reset_hermes_home_override(_ovr_token)   # never leak the sandbox home
 
 
 class FakeClock:

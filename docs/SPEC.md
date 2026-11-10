@@ -1656,6 +1656,27 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   with slice 5's model-pull (the same gateway-cached, resume-safe pattern as the
   Vosk model). Popularity is a dated fact in the label, the menu order is
   static.
+- **2026-11-10 (weardev, owner ruling)** — the pane carries ONE agent list:
+  “Enable Wear Kit for your agents” and “Agents the watch may use” were the same
+  decision rendered twice; they merge into a single row-per-agent with an enable
+  box and a watch-may-use box (D17 grants law unchanged server-side — own agent
+  always flows, siblings need the box). Future pane surfaces: one list per
+  concern, no parallel enumerations of profiles.
+- **2026-11-10 (weardev, owner report “click play, nothing plays”)** — the Air
+  engine reloads weights per subprocess call (271 s cold / 41 s warm, owner box),
+  so the pane’s soundtest timed out invisibly. Three fixes: (a) disk synthesis
+  cache in `voiceout.py` keyed (text, card, speed, want_words), bounded 60,
+  eviction by mtime, failure-tolerant; (b) background prewarm thread at engine
+  registration (engine+cards present → one seed sentence cached before any
+  human click); (c) the Play button states `synthesizing…` the instant it is
+  clicked and names any failure — the honesty rule again. The lane `/voice` 404s
+  first blamed for this were a probe artifact: the lane binds tailnet-only and
+  WHOIS-gates to paired device nodes, so a host loopback curl 404s BY DESIGN.
+  MediaPlayer.kt now downloads gateway audio through the app’s own tailnet-routed
+  OkHttp stack and plays from cache (the slice-4 media-over-tailnet gap, closed
+  early); `PromptEditor.kt`’s IME ladder retries showSoftInput at 400/800 ms —
+  One UI Watch 6 drops the single 120 ms attempt, which is why GBoard never
+  rose from the keyboard chip.
 
 ## Appendix A — Landed slices (build log, newest first)
 

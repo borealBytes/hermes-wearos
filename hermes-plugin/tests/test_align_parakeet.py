@@ -92,10 +92,17 @@ class AlignTests(unittest.TestCase):
         self.assertEqual(r["align"], "forced")
         self.assertEqual(len(r["words"]), 6)
 
+        # Identical repeat → served from the synthesis cache, aligner never re-run
+        # (synth-cache added 2026-11-10 after the owner's Play-click report).
+        r = vo.synthesize(text, "wear")
+        self.assertTrue(r.get("cached"))
+        self.assertEqual(r["align"], "forced")
+
         def boom(a, r_, t):
             raise RuntimeError("aligner failed: segfault")
         vo._ALIGN["parakeet"] = boom
-        r = vo.synthesize(text, "wear")
+        text2 = "Fresh sentence so the cache cannot answer it"
+        r = vo.synthesize(text2, "wear")
         self.assertEqual(r["align"], "none")                   # honest degradation
         self.assertTrue(r["ok"])                               # audio still ships
 

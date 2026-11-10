@@ -96,18 +96,27 @@ function voInstall () {
 // Sound test: the lane returns a real wav, the pane plays it. No engine → the
 // refusal text, never a silent button (issue #7 honesty rule).
 async function voSoundTest () {
+  // The note answers the click FIRST: a cold engine call reloads model weights and
+  // can take minutes (owner report 2026-11-10: "I click play, nothing plays" — the
+  // wait was invisible). Cached/hot calls overwrite it within a second.
+  $voNote.set('synthesizing… (first call after boot loads the model — can take a minute or two)')
   await voiceAct(async () => {
-    const out = await rest('/voice', {
-      method: 'POST', body: { action: 'soundtest', text: $voText.get() || '' } })
-    if (out && out.audio_wav_b64) {
-      const bin = window.atob(out.audio_wav_b64)
-      const u8 = new Uint8Array(bin.length)
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
-      const url = URL.createObjectURL(new window.Blob([u8], { type: 'audio/wav' }))
-      new window.Audio(url).play()
-      $voNote.set(`played · engine ${out.engine || 'air'}`)
-    } else {
-      $voNote.set((out && (out.error || out.refused)) || 'no audio')
+    try {
+      const out = await rest('/voice', {
+        method: 'POST', body: { action: 'soundtest', text: $voText.get() || '' } })
+      if (out && out.audio_wav_b64) {
+        const bin = window.atob(out.audio_wav_b64)
+        const u8 = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
+        const url = URL.createObjectURL(new window.Blob([u8], { type: 'audio/wav' }))
+        new window.Audio(url).play()
+        $voNote.set(`played · engine ${out.engine || 'air'}${out.cached ? ' · cached' : ''}`)
+      } else {
+        $voNote.set((out && (out.error || out.refused)) || 'no audio')
+      }
+    } catch (e) {
+      $voNote.set('synth request failed: ' + String((e && e.message) || e))
+      throw e
     }
   })
 }
@@ -415,7 +424,9 @@ function WearKitPane () {
         ]
       }, 'pair-card'),
 
-      // ── enable checklist ──────────────────────────────────────────────────────
+      // ── enable checklist (ONE agent list — owner ruling 2026-11-10: enabling
+      //    Wear Kit and granting the watch to use an agent are the same decision;
+      //    one row per agent, both boxes, no duplicated list below) ─────────────
       jsx(Step, {
         done: enabledCount > 0, n: 1, title: 'Enable Wear Kit for your agents',
         children: jsxs('div', {
@@ -424,25 +435,42 @@ function WearKitPane () {
             jsx('div', {
               className: 'text-(--ui-text-tertiary)',
               children: profiles.length
-                ? 'each box runs `hermes -p <agent> plugins enable wearos` — the same verb you would type'
+                ? 'each box runs `hermes -p <agent> plugins enable wearos` — the same verb you would type; the second box lets paired watches use that agent (its API key rides the private lane, read in its own scope)'
                 : error ? 'waiting on the backend — see the line above.' : 'no profiles on this gateway yet.'
             }),
-            ...profiles.map(p => jsxs('label', {
-              className: 'flex cursor-pointer items-center gap-2',
+            ...profiles.map(p => jsxs('div', {
+              className: 'flex items-center gap-3',
               children: [
-                jsx('input', {
-                  type: 'checkbox', checked: !!p.enabled, disabled: busy,
-                  onChange: e => toggle(p.name, e.target.checked)
-                }),
-                jsx('span', { children: p.name }),
-                p.visible && !p.enabled
+                jsxs('label', {
+                  className: 'flex flex-1 cursor-pointer items-center gap-2',
+                  children: [
+                    jsx('input', {
+                      type: 'checkbox', checked: !!p.enabled, disabled: busy,
+                      onChange: e => toggle(p.name, e.target.checked)
+                    }),
+                    jsx('span', { children: p.name })
+                  ]
+                }, p.name),
+                p.name === 'default'
                   ? null
-                  : null
+                  : jsx('label', {
+                      className: 'flex cursor-pointer items-center gap-1 text-[10px] text-(--ui-text-secondary)',
+                      children: jsxs('span', {
+                        className: 'flex items-center gap-1',
+                        children: [
+                          jsx('input', {
+                            type: 'checkbox', checked: !!grants[p.name], disabled: busy,
+                            onChange: e => setGrant(p.name, e.target.checked)
+                          }),
+                          'watch may use'
+                        ]
+                      })
+                    }, `grant-${p.name}`)
               ]
-            }, p.name))
+            }, `row-${p.name}`))
           ]
         })
-      }),
+      }, 'enable-card'),
 
       // ── devices ───────────────────────────────────────────────────────────────
       devices.length
@@ -479,27 +507,8 @@ function WearKitPane () {
             })
           }, 'devices-empty'),
 
-      // ── agent key grants (D17) ────────────────────────────────────────────────
-      jsxs('div', {
-        className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
-        children: [
-          jsx('div', { className: 'font-medium', children: 'Agents the watch may use' }),
-          jsx('div', {
-            className: 'text-[10px] text-(--ui-text-tertiary)',
-            children: 'a granted agent\u2019s API key is delivered to enrolled watches over the private tailnet lane, read in that agent\u2019s own scope'
-          }),
-          ...profiles.filter(p => p.name !== 'default').map(p => jsxs('label', {
-            className: 'flex cursor-pointer items-center gap-2 text-xs',
-            children: [
-              jsx('input', {
-                type: 'checkbox', checked: !!grants[p.name], disabled: busy,
-                onChange: e => setGrant(p.name, e.target.checked)
-              }),
-              jsx('span', { children: p.name })
-            ]
-          }, `grant-${p.name}`))
-        ]
-      }, 'grants-card'),
+      // ── agent key grants (D17) — merged INTO the enable list above (owner
+      //    ruling 2026-11-10): one row per agent, enable + watch-may-use together.
 
       // ── voice add-ons (D16) ───────────────────────────────────────────────────
       stt && !stt.installed

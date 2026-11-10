@@ -378,6 +378,16 @@ def synthesize(text: str, agent: str, *, want_words: bool = True) -> dict:
         return {"ok": False, "error": "no TTS engine registered (install NeuTTS Air)"}
     # engines address the card's wav by id — hand the id to the adapter with the meta
     card = dict(card, card_id=card_id) if card else None
+    # Synthesis cache: NeuTTS Air reloads its weights per subprocess call (tens of
+    # seconds on cold hardware — measured 271 s cold / 41 s warm on the owner's box,
+    # 2026-11-10), which turns a pane Play click into an invisible multi-minute wait
+    # (issue #7 honesty rule: a button must answer *now*). Identical (text, card,
+    # rate) requests replay from disk instantly; any input change is a fresh key.
+    key = _synth_key(text, card_id, speed, bool(want_words))
+    hit = _cache_get(key, want_words)
+    if hit is not None:
+        hit["cached"] = True
+        return hit
     audio, rate = _SYNTH["air"](text, card, speed)
     words: list[dict] = []
     if want_words and _ALIGN:
@@ -386,8 +396,60 @@ def synthesize(text: str, agent: str, *, want_words: bool = True) -> dict:
         except Exception as exc:
             words = []                            # karaoke degrades to sentence mode, honestly
     align = "forced" if words else "none"
-    return {"ok": True, "tier": "gateway", "audio": audio, "rate": rate,
-            "words": words, "align": align, "speed": speed, "engine": "air"}
+    out = {"ok": True, "tier": "gateway", "audio": audio, "rate": rate,
+           "words": words, "align": align, "speed": speed, "engine": "air"}
+    _cache_put(key, out)
+    return out
+
+
+# ---------------------------------------------------------------- synthesis cache
+# plugin-data/voiceout/synth-cache/<key>.wav + .json sidecar; bounded by count with
+# mtime eviction (entries are ~100-500 KB). Stdlib only (rule 10).
+
+_CACHE_MAX = 60
+
+
+def _synth_key(text: str, card_id: str, speed: float, want_words: bool) -> str:
+    import hashlib
+    doc = f"v1\n{text}\n{card_id}\n{float(speed):.4f}\n{int(want_words)}"
+    return hashlib.sha256(doc.encode("utf-8")).hexdigest()[:32]
+
+
+def _cache_dir() -> Path:
+    d = _root() / "synth-cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cache_get(key: str, want_words: bool) -> Optional[dict]:
+    try:
+        d = _cache_dir()
+        wav, side = d / f"{key}.wav", d / f"{key}.json"
+        if not wav.exists() or not side.exists():
+            return None
+        meta = json.loads(side.read_text("utf-8"))
+        audio = wav.read_bytes()
+        words = meta.get("words", []) if want_words else []
+        return {"ok": True, "tier": "gateway", "audio": audio, "rate": meta["rate"],
+                "words": words, "align": meta.get("align", "none"),
+                "speed": meta["speed"], "engine": meta.get("engine", "air")}
+    except Exception:
+        return None
+
+
+def _cache_put(key: str, out: dict) -> None:
+    try:
+        d = _cache_dir()
+        (d / f"{key}.wav").write_bytes(out["audio"])
+        (d / f"{key}.json").write_text(json.dumps(
+            {"rate": out["rate"], "speed": out["speed"], "align": out["align"],
+             "engine": out["engine"], "words": out["words"]}))
+        wavs = sorted(d.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+        for old in wavs[:-_CACHE_MAX]:
+            old.unlink(missing_ok=True)
+            old.with_suffix(".json").unlink(missing_ok=True)
+    except Exception:
+        pass                                     # cache failure must never break a synth
 
 
 def status() -> dict:

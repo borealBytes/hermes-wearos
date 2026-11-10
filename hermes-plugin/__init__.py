@@ -482,6 +482,38 @@ def _voiceout_register_engines() -> None:
         except Exception:            # engine problems never block the lane
             logger.debug("voice engine %s not registered", mod.__name__,
                          exc_info=True)
+    _voiceout_prewarm()
+
+
+_PREWARM_TEXT = "Hermes voice engine ready."
+_prewarm_done = threading.Event()
+
+
+def _voiceout_prewarm() -> None:
+    """Warm the synthesis cache in the background right after engine registration.
+
+    The Air engine reloads weights per call (cold first call: minutes on the
+    owner's box, 2026-11-10) — a human clicking Play in the pane must never pay
+    that. One daemon thread synthesizes a fixed seed sentence once per process
+    (voiceout's cache dedupes across restarts by key, so this costs nothing when
+    the entry is fresh and self-heals when it is not). Silent on failure: the
+    refusal path in voiceout.synthesize already tells the truth to the caller.
+    """
+    if _prewarm_done.is_set():
+        return
+    _prewarm_done.set()
+
+    def run() -> None:
+        try:
+            from . import voiceout
+            st = voiceout.status()
+            if not st.get("engine") or not st.get("cards"):
+                return                 # nothing to speak with yet; honest no-op
+            voiceout.synthesize(_PREWARM_TEXT, "default", want_words=False)
+        except Exception:
+            logger.debug("voice prewarm skipped", exc_info=True)
+
+    threading.Thread(target=run, name="wearos-voice-prewarm", daemon=True).start()
 
 
 def _lane_voice(action: str, method: str, body: dict, node: dict,
