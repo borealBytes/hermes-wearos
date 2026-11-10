@@ -1766,6 +1766,14 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   The reference wav still plays FLAT (1.0x = the speaker's own pace). Retries widened
   to 3 with seed rotation (attempt tuple had silently capped at 2).
 
+- **2026-11-10 (j): RESIDENT ENGINE (owner: "keep the model loaded").** The 900 s
+  idle reaper made every first-speak-after-pause pay a full reload — now the worker
+  is resident: reaper off by default (`WEARKIT_TTS_IDLE_S=900` restores it for small
+  boxes), boot warm loads the model at gateway start (daemon thread, first configured
+  card, silent-fail), and voice switching is FREE because the card is a per-request
+  zero-shot reference — only a MODEL-weights swap reloads. engine_state drops the
+  960 s warm-slack heuristic (resident = warm). README discloses the ~3.4 GB RSS.
+
 - **2026-11-10 (i): WEARKIT GATEWAY — the provider entry in Settings ▸ Voice.** The
   owner ruling: the TTS provider dropdown should carry ONE Wear Kit row that routes all
   Hermes speech through our engine ("one TTS engine loaded on gateway… FIFO queue").

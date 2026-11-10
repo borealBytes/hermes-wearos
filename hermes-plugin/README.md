@@ -161,6 +161,14 @@ dialog lists every step, host, byte estimate and pin before anything runs.
 - **Rule 17 note:** the official vendor rows are the checksum-pinned canonical fetch;
   community mirror rows are opt-in *within* the menu and every one states its repo and
   byte size in the review dialog before download.
+- **The engine is a RESIDENT worker** (owner ruling 2026-11-10): one warm subprocess
+  (private venv, never a shell, SIGKILL-safe) loads the GGUF once at gateway boot and
+  keeps it loaded — speech answers instantly instead of paying a 30–90 s reload per
+  call. Budget ~3.4 GB RSS while the gateway runs; a FIFO ticket gate serialises
+  synthesis to ONE at a time, capped at 8 CPU threads at nice(10). Voice switching
+  never reloads: the cloned card is a per-request zero-shot reference. Set
+  `WEARKIT_TTS_IDLE_S=900` in the gateway env to restore sleep-between-calls on
+  small boxes.
 
 ## Config options ([plugin.yaml](./plugin.yaml) → `config_schema`)
 

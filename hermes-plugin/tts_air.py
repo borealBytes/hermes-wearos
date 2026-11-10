@@ -573,7 +573,10 @@ ourselves — immune to the renderer.
 import argparse, json, os, re, select, sys, wave
 
 SPEECH = re.compile(r"^<\\|speech_(\\d+)\\|>$")
-IDLE_EXIT_S = 900   # a parked 3.4 GB worker should not squat forever
+# RESIDENT by owner ruling 2026-11-10: the model stays loaded — reply latency
+# beats RAM. 0/None = never exit on idle; set WEARKIT_TTS_IDLE_S=900 to restore
+# the old reaper on small boxes.
+IDLE_EXIT_S = int(os.environ.get("WEARKIT_TTS_IDLE_S", "0") or 0)
 _TTS = None
 _NAMES = None
 _CODES = {}
@@ -695,9 +698,9 @@ def main():
         os.dup2(_null, 1)
         tts = _tts(a.model, a.codec, a.seed)
         while True:
-            r, _, _ = select.select([sys.stdin], [], [], IDLE_EXIT_S)
+            r, _, _ = select.select([sys.stdin], [], [], IDLE_EXIT_S or None)
             if not r:
-                return 0                  # idle reaper: parent respawns on demand
+                return 0                  # reaper only (IDLE_EXIT_S>0): parent respawns
             line = sys.stdin.readline()
             if not line:
                 return 0
@@ -754,7 +757,7 @@ def engine_state() -> dict:
     say WHICH wait it is — model loading, queued, or speaking)."""
     w = _WORKER
     alive = bool(w and w.poll() is None)
-    if alive and _LAST_OK and (time.time() - _LAST_OK) < 960:   # reaper is 900 s + slack
+    if alive and _LAST_OK:                 # resident model, at least one render done
         phase = "warm"
     elif alive:
         phase = "loading"          # worker exists, first render not back yet
@@ -1014,7 +1017,27 @@ def register_if_ready() -> bool:
         return False
     _voiceout().register_synth("air", synth)
     write_runner()
+    _boot_warm()
     return True
+
+
+def _boot_warm() -> None:
+    """RESIDENT doctrine (owner 2026-11-10): load the model at gateway boot, not
+    at first speak — and never unload it (the reaper is off by default). Voice
+    switching is FREE: the card is a per-request reference (zero-shot), so the
+    loaded model serves every voice without a reload; only a MODEL swap re-loads.
+    Fire-and-forget on the first configured card; no cards = nothing to clone,
+    the worker arrives with the first real synth."""
+    def _warm():
+        try:
+            cards = (_voiceout().read_prefs().get("cards") or {})
+            if not cards:
+                return
+            cid, meta = next(iter(cards.items()))
+            synth("Ready.", dict(meta, card_id=cid), 1.0)
+        except Exception:
+            pass   # silent: the first real speak retries the warm
+    threading.Thread(target=_warm, daemon=True, name="wearos-tts-bootwarm").start()
 
 
 if __name__ == "__main__":

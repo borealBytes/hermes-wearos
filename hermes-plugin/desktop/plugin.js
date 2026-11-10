@@ -631,8 +631,8 @@ function WearKitPane () {
                 ? (air.engine || {}).phase === 'warm'
                   ? jsx('span', { className: 'text-xs text-(--ui-text-success, --ui-text-secondary)', children: '✓ model loaded — ready' })
                   : (air.engine || {}).phase === 'loading'
-                    ? jsx('span', { className: 'text-xs text-(--ui-text-warning, --ui-text-secondary)', children: '⏳ loading model… (first ▶ ≈2 min, once)' })
-                    : jsx('span', { className: 'text-xs text-(--ui-text-secondary)', children: '✓ installed · sleeps between calls' })
+                    ? jsx('span', { className: 'text-xs text-(--ui-text-warning, --ui-text-secondary)', children: '⏳ loading model… (boot warm, ≈2 min once per gateway start)' })
+                    : jsx('span', { className: 'text-xs text-(--ui-text-secondary)', children: '✓ installed · resident — model stays loaded (voice switching is free: zero-shot refs)' })
                 : null
             ]
           }),
