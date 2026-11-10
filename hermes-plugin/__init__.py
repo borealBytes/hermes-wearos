@@ -76,6 +76,7 @@ APPROVAL_SURFACES = {"", "cli", "tui", "local", "desktop", "desktop-app", "webui
 _CTX: Any = None                 # module singleton for handlers wired at register()
 _secrets: Callable[[str], Optional[str]] | None = None
 _lane_state: dict = {"bound": None, "error": ""}   # private-lane status for the checklist
+_lane_retrying = False                              # one bind-retry thread at a time
 
 
 def _get_secret(name: str) -> Optional[str]:
@@ -631,8 +632,44 @@ def ensure_private_lane() -> bool:
                 _lane_state = {"bound": f"{host}:{_private_port()} (owned by another "
                                         "wearos process)", "error": ""}
                 return True
+            # Port busy with something that is NOT a lane (or a half-wired squatter
+            # answering 404 to everything — the 2026-11-10 webui incident). Never
+            # silent: the pane must show it, and the bind must retry, because a
+            # restart RACE for the port is normal on a busy box and losing it must
+            # not strand every voice call forever.
+            logger.warning("wearos: private lane could not bind %s:%s — port held by a "
+                           "non-lane listener; retrying every 5 s for 15 min",
+                           host, _private_port())
+            _lane_state = {"bound": None,
+                           "error": f"port {_private_port()} held by a non-lane listener "
+                                    "(restart race?) — retrying"}
+            _lane_retry_thread()
+            return False
     _lane_state = {"bound": None, "error": "could not bind the private lane"}
     return False
+
+
+def _lane_retry_thread() -> None:
+    """Retry the lane bind after a port race. Daemon thread; stops on success,
+    on tailscaled disappearing (no IPs), or after the budget. One thread at a
+    time (the bound check above makes re-entry cheap and correct)."""
+    global _lane_retrying
+    if _lane_retrying:
+        return
+    _lane_retrying = True
+
+    def _run():
+        global _lane_retrying
+        try:
+            import time as _t
+            for _ in range(180):                       # 15 min of 5 s tries
+                _t.sleep(5.0)
+                if ensure_private_lane():
+                    logger.info("wearos: private lane bound on retry")
+                    return
+        finally:
+            _lane_retrying = False
+    threading.Thread(target=_run, name="wearos-lane-retry", daemon=True).start()
 
 
 def _private_port() -> int:

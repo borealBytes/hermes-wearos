@@ -349,8 +349,14 @@ def stop_server() -> None:
 
 
 def lane_alive(host: str, port: int, timeout: float = 1.0) -> bool:
-    """Any HTTP answer from the lane proves a listener (401 to an anonymous GET is the
-    expected answer — the route exists and auth is on)."""
+    """A LANE-shaped answer from the lane port proves a real lane listens: the
+    route table itself is the identity (401/403 to an anonymous GET /watch/x/events
+    is the expected answer — the route exists and auth is on). Any HTTP answer is
+    NOT enough: a squatter (an unrelated HTTP server that grabbed the port during
+    a restart race — observed 2026-11-10: a watcher process importing a half-wired
+    wearos snapshot served 404 'not found' on both lane doors) answers every
+    request and would masquerade as healthy while every voice call 404s. A 404
+    only passes if the voice surface is wired behind it."""
     import urllib.error
     import urllib.request
     req = urllib.request.Request(f"http://{host}:{port}/watch/x/events")
@@ -358,7 +364,17 @@ def lane_alive(host: str, port: int, timeout: float = 1.0) -> bool:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
             return True
-    except urllib.error.HTTPError:
-        return True
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return True                      # 401/403/410 — the lane's own auth law
+    except OSError:
+        return False
+    try:                                     # 404 on /watch — is at least voice wired?
+        with urllib.request.urlopen(
+                f"http://{host}:{port}/voice/prefs", timeout=timeout) as resp:
+            resp.read()
+            return True
+    except urllib.error.HTTPError as exc:
+        return exc.code != 404               # 403 (WHOIS gate off-lane) still means lane
     except OSError:
         return False
