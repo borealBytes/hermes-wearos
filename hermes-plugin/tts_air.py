@@ -739,6 +739,24 @@ def write_runner() -> Path:
 
 
 _WORKER = None
+_QUEUED = 0        # in-flight/queued requests — the pane's live "what is happening" number
+_LAST_OK = 0.0     # epoch of the last successful render (warm-truth for the chip)
+
+
+def engine_state() -> dict:
+    """Live worker/queue state for the pane (issue #7 honesty: a spinner must
+    say WHICH wait it is — model loading, queued, or speaking)."""
+    w = _WORKER
+    alive = bool(w and w.poll() is None)
+    if alive and _LAST_OK and (time.time() - _LAST_OK) < 960:   # reaper is 900 s + slack
+        phase = "warm"
+    elif alive:
+        phase = "loading"          # worker exists, first render not back yet
+    else:
+        phase = "idle"
+    return {"phase": phase, "queued": _QUEUED, "last_ok": _LAST_OK}
+
+
 # ONE model, ONE synthesis at a time, IN ARRIVAL ORDER (owner ruling
 # 2026-11-10: "one TTS engine, FIFO queue in front of it — one agent speaks
 # at a time on the watch"). threading.Lock has no fairness promise, so the
@@ -772,14 +790,17 @@ def _serve_argv() -> list:
 def _worker_request(req: dict) -> None:
     """One line in, one line out against the warm model. Respawn-once keeps the
     crash-isolation law (an engine fault cannot wedge the lane or take the
-    gateway): death/timeout/refusal → SIGKILL → fresh worker → one retry."""
-    global _WORKER, _NEXT
+    gateway): death/timeout/refusal → SIGKILL → fresh worker → up to 3 attempts
+    total, rotating the sampler seed after each failure (degenerate generations
+    are per-draw, not per-worker)."""
+    global _WORKER, _NEXT, _QUEUED, _LAST_OK
     ticket = next(_TICK)
     with _READY:
+        _QUEUED += 1
         while ticket != _NEXT:
             _READY.wait()
         try:
-            for attempt in (1, 2):
+            for attempt in (1, 2, 3):
                 w = _WORKER
                 if w is None or w.poll() is not None:
                     write_runner()
@@ -798,6 +819,7 @@ def _worker_request(req: dict) -> None:
                     res = json.loads(line)
                     if not res.get("ok"):
                         raise RuntimeError(res.get("error") or "runner refused")
+                    _LAST_OK = time.time()
                     return
                 except Exception as exc:
                     try:
@@ -815,6 +837,7 @@ def _worker_request(req: dict) -> None:
                     # model state either way.
                     req["seed"] = int(req.get("seed", 42)) + 1
         finally:
+            _QUEUED = max(0, _QUEUED - 1)
             _NEXT += 1
             _READY.notify_all()
 

@@ -3,6 +3,15 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-10 (afternoon) boundary — PACING AT PLAYBACK; pane status honesty; fresh APK on the Ultra
+
+- **Owner ruling implemented:** gateway renders natural 1x, cache key speed-free (v2); the dial is pure player state (watch `PlaybackParameters(speed,1f)` pitch-preserved, pane `playbackRate`+`preservesPitch`). No re-warm on dial moves. SPEC §19.4(g).
+- **Pane:** speed slider drag-fixed (was busy-gated per change event → one-notch steps); optimistic echo + 250 ms debounced silent commit. ▶ shows LIVE progress ('loading voice model ≈2 min, once' / 'queued: N (FIFO)' / 'synthesizing') from `tts_air.engine_state()` via GET /voice `air.engine`, ends at 'done ✓'. Engine chip on the card header.
+- **Engine:** retry attempts fixed to 3 (the tuple had silently stayed (1,2)); `_QUEUED/_LAST_OK` feed engine_state; silence guard + self-healing cache from (f) intact. 121 pytest green, JS node-check clean.
+- **Hardware:** APK 12:07 build (chunked-push md5 7e7e8631…, pm install Success) — watch audition + replies now apply the dial at playback. synth-cache purged (v1 keys gone). Gateway bounced post-sync (both roots + desktop-plugins bundle).
+- **UNAPPLIED:** AGENTS.md §8 tts_air line still says 'stdlib time-scale' (protected-file approval timed out — say 'yes to the AGENTS.md edit' or edit by hand).
+- **Next:** owner taps ▶ (pane first, then watch row) → expect first call ≈2 min with live note, then instant 'cached'; then <90 s X video, catalog PR, Typeform (Nov 11 5 PM EST). Pair payload :8642-vs-lane-port bug still open.
+
 ## 2026-11-10 boundary — REAL WATCH ON THE LIVE GATEWAY; host engine proves itself
 
 - **Watch paired for real (production path, owner's Ultra SM-L705U):** DevAskReceiver broadcasts replace UI automation entirely — `-e pair_knock <handle>` (handle = `{node}.{tailnet}` FQDN stem; the app appends `.ts.net`), code lands in logcat, approve via `wearos.approve_pair(code)`. Pairing v2 minted the one-use tailnet key **itself** (needs the `tailscale_api_token` secret visible to the approving scope — now in `~/.hermes/.env`; lowercase name, rule 11). Node self-enrolled as `weardev-watch.tailb12aa5.ts.net`; two agent runs executed over the lane (error=false).

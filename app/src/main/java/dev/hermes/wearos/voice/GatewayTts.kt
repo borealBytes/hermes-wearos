@@ -226,8 +226,12 @@ object GatewayTts {
             val b64 = parsed.optString("audio_wav_b64")
                 .ifEmpty { parsed.optString("audio_opus_b64") }
             if (b64.isEmpty()) error("no audio in answer")
+            // PACING AT PLAYBACK: the clip is the natural 1x take; the dial (echoed in
+            // the answer by the gateway) rides the player — pitch-preserved.
             MediaPlayerHolder.playBytes(ctx, Base64.getDecoder().decode(b64),
-                parsed.optString("content_type").ifEmpty { "audio/wav" }, gain = gain)
+                parsed.optString("content_type").ifEmpty { "audio/wav" },
+                gain = gain, speed = parsed.optDouble("speed", laneSpeed.toDouble())
+                    .toFloat().takeIf { it > 0f } ?: 1f)
         } catch (e: Exception) {
             Log.i(TAG, "card audition via synth failed (${e.message}) — playing reference wav")
             MediaPlayerHolder.play(ctx, "$base/voice/card_wav?card_id=$cardId", gain = gain)
@@ -282,9 +286,12 @@ object GatewayTts {
         val done = java.util.concurrent.CountDownLatch(1)
         val gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
             .getOrDefault(1f)
+        // PACING AT PLAYBACK (same law as the audition): natural clip, dial on the player.
         MediaPlayerHolder.playBytes(ctx, Base64.getDecoder().decode(b64),
             parsed.optString("content_type").ifEmpty { "audio/wav" },
-            onEnded = { done.countDown() }, gain = gain)
+            onEnded = { done.countDown() }, gain = gain,
+            speed = parsed.optDouble("speed", laneSpeed.toDouble())
+                .toFloat().takeIf { it > 0f } ?: 1f)
         if (!done.await(120, java.util.concurrent.TimeUnit.SECONDS))
             Log.w(TAG, "gateway voice playback cap hit (clip replaced?)")
     }

@@ -50,7 +50,8 @@ object MediaPlayerHolder {
     }
 
     /** Download (tailnet-routed) then play. [onEnded] optional — see class doc. */
-    fun play(context: Context, url: String, onEnded: (() -> Unit)? = null, gain: Float = 1f) {
+    fun play(context: Context, url: String, onEnded: (() -> Unit)? = null, gain: Float = 1f,
+             speed: Float = 1f) {
         val app = context.applicationContext
         Thread {
             try {
@@ -67,7 +68,7 @@ object MediaPlayerHolder {
                         onEnded?.let { main.post(it) }; error("empty body from $abs")
                     }
                     playBytes(app, bytes, resp.header("Content-Type") ?: "audio/wav",
-                        onEnded, gain)
+                        onEnded, gain, speed)
                     Log.i(TAG, "media play $abs (${bytes.size} bytes via ${if (TailnetRoute.socksPort > 0) "tailnet" else "direct"})")
                 }
             } catch (e: Exception) {
@@ -82,7 +83,7 @@ object MediaPlayerHolder {
      * [onEnded] (optional) fires once when the clip finishes, is stopped, or could not start.
      */
     fun playBytes(context: Context, bytes: ByteArray, contentType: String,
-                  onEnded: (() -> Unit)? = null, gain: Float = 1f) {
+                  onEnded: (() -> Unit)? = null, gain: Float = 1f, speed: Float = 1f) {
         val app = context.applicationContext
         val ext = when {
             contentType.contains("ogg") || contentType.contains("opus") -> ".ogg"
@@ -108,6 +109,12 @@ object MediaPlayerHolder {
                     // REPLY VOLUME (owner 2026-11-10): gateway clips honor the same per-agent
                     // reply-volume the system path uses — one slider shapes every voice.
                     p.volume = gain.coerceIn(0f, 1f)
+                    // PACING AT PLAYBACK (owner ruling 2026-11-10): the gateway renders one
+                    // natural 1x take; the ONE global dial rides the player, pitch-preserved
+                    // (ExoPlayer's own time-stretcher), so moving the dial never re-renders.
+                    if (kotlin.math.abs(speed - 1f) > 0.001f)
+                        p.setPlaybackParameters(
+                            androidx.media3.common.PlaybackParameters(speed.coerceIn(0.5f, 2.5f), 1f))
                     p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
                     p.prepare()
                     p.play()   // ExoPlayer defaults playWhenReady=FALSE — prepare alone

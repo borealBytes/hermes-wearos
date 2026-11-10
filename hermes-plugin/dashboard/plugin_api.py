@@ -204,7 +204,7 @@ def voice():
     vo, ta, al = _voice_mods(ensure=True)
     return {"voice": vo.status(),
             "air": ta.status() | {"sources": ta.sources_menu(), "slots": ta._slots(),
-                                  "preview": ta.preview()},
+                                  "preview": ta.preview(), "engine": ta.engine_state()},
             "aligner": al.status()}
 
 

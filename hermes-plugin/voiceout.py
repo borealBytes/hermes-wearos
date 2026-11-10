@@ -126,7 +126,6 @@ def merge_prefs(remote: dict) -> dict:
             rrev = 0
         if rrev <= int(local.get("rev", 1)):
             return local                      # gateway is same-or-newer; watch adopts
-        speed_before = (local.get("global") or {}).get("speed")
         for section in ("global", "modes", "voices", "cards"):
             delta = remote.get(section) or {}
             if isinstance(delta, dict):
@@ -135,8 +134,6 @@ def merge_prefs(remote: dict) -> dict:
                 local[section] = merged
         local["rev"] = rrev
         out = _bump(_save_and_return(local))
-        if (out.get("global") or {}).get("speed") != speed_before:
-            _warm_audition()     # the dial moved (pane or wrist) — re-warm at the new rate
         return out
 
 
@@ -167,16 +164,14 @@ def set_voice(agent: str, card_id: str) -> dict:
 
 def set_speed(speed: float) -> dict:
     """ONE global dial (owner ruling 2026-11-09): it rides the existing TTS
-    playback-speed feature; per-agent is voice + mode, never rate."""
+    playback-speed feature; per-agent is voice + mode, never rate.
+    PACING AT PLAYBACK (2026-11-10): the dial is pure player state — moving it
+    never re-renders a clip (cache key is speed-free), so it commits silently."""
     s = max(SPEED_MIN, min(SPEED_MAX, float(speed)))
     with LOCK:
         p = read_prefs()
-        old = (p.get("global") or {}).get("speed")
         p.setdefault("global", {})[("speed")] = round(s, 2)
-        out = _save_and_return(p)
-    if old != round(s, 2):
-        _warm_audition()          # the new dial rate needs fresh cache clips
-    return out
+        return _save_and_return(p)
 
 
 def set_karaoke(on: bool) -> dict:
@@ -393,12 +388,14 @@ def register_aligner(name: str, fn: Callable) -> None:
 def synthesize(text: str, agent: str, *, want_words: bool = True,
                card_id: Optional[str] = None) -> dict:
     """The watch-facing contract: text in, {audio_opus_b64|pcm_b64, words[], engine,
-    tier_note} out. Rate = the ONE global dial, applied as-is: 1.0x replays a speaker
-    at THEIR OWN measured pace (ref_rate lives on the card for the day we add target-
-    WPM normalization; measured 2026-11-10: shipping the raw dial matches the owner's
-    ear ruling and no normalization is applied in the engine yet).
+    tier_note} out. PACING AT PLAYBACK (owner ruling 2026-11-10): audio always renders
+    at the engine's natural 1x pace; the current dial is returned as "speed" for the
+    PLAYER to apply (ExoPlayer playbackParameters on the watch, playbackRate in the
+    pane) — pitch-preserved time-stretch, no per-speed re-render. ref_rate still lives
+    on the card (1.0x replays a speaker at THEIR OWN pace; target-WPM normalization,
+    if we ever add it, is a playback-time concern too).
     [card_id] overrides the agent's bound voice (the picker's ▶ auditions ANY card at
-    the live dial speed, not just the bound one); an unknown id is a refusal (400)."""
+    the live dial, not just the bound one); an unknown id is a refusal (400)."""
     p = read_prefs()
     speed = float((p.get("global") or {}).get("speed", SPEED_DEFAULT))
     bound = (p.get("voices") or {}).get(agent or "__default__", "")
@@ -424,14 +421,18 @@ def synthesize(text: str, agent: str, *, want_words: bool = True,
     # Synthesis cache: NeuTTS Air reloads its weights per subprocess call (tens of
     # seconds on cold hardware — measured 271 s cold / 41 s warm on the owner's box,
     # 2026-11-10), which turns a pane Play click into an invisible multi-minute wait
-    # (issue #7 honesty rule: a button must answer *now*). Identical (text, card,
-    # rate) requests replay from disk instantly; any input change is a fresh key.
-    key = _synth_key(text, card_id, speed, bool(want_words))
+    # (issue #7 honesty rule: a button must answer *now*). PACING AT PLAYBACK (owner
+    # ruling 2026-11-10): audio renders at NATURAL 1x speed and the cache key is
+    # speed-free, so moving the dial never re-renders — the clip is one canonical
+    # take and the player applies the rate. Identical (text, card, words) requests
+    # replay from disk instantly.
+    key = _synth_key(text, card_id, bool(want_words))
     hit = _cache_get(key, want_words)
     if hit is not None:
         hit["cached"] = True
+        hit["speed"] = speed            # dial may have moved since render
         return hit
-    audio, rate = _SYNTH["air"](text, card, speed)
+    audio, rate = _SYNTH["air"](text, card, 1.0)   # natural pace, always
     words: list[dict] = []
     if want_words and _ALIGN:
         try:
@@ -452,9 +453,10 @@ def synthesize(text: str, agent: str, *, want_words: bool = True,
 _CACHE_MAX = 60
 
 
-def _synth_key(text: str, card_id: str, speed: float, want_words: bool) -> str:
+def _synth_key(text: str, card_id: str, want_words: bool) -> str:
+    # v2: speed dropped from the key (pacing rides playback, not the render).
     import hashlib
-    doc = f"v1\n{text}\n{card_id}\n{float(speed):.4f}\n{int(want_words)}"
+    doc = f"v2\n{text}\n{card_id}\n{int(want_words)}"
     return hashlib.sha256(doc.encode("utf-8")).hexdigest()[:32]
 
 

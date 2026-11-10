@@ -98,8 +98,21 @@ function voInstall () {
 async function voSoundTest () {
   // The note answers the click FIRST: a cold engine call reloads model weights and
   // can take minutes (owner report 2026-11-10: "I click play, nothing plays" — the
-  // wait was invisible). Cached/hot calls overwrite it within a second.
-  $voNote.set('synthesizing… (first call after boot loads the model — can take a minute or two)')
+  // wait was invisible). Cached/hot calls overwrite it within a second. While the
+  // POST is in flight we POLL the engine state every few seconds, so the spinner
+  // always names WHICH wait it is: model loading, queued behind a render, speaking.
+  $voNote.set('starting…')
+  const poll = setInterval(async () => {
+    try {
+      const v = await rest('/voice')
+      const e = ((v || {}).air || {}).engine || {}
+      $voNote.set(e.phase === 'loading'
+        ? 'loading voice model… (first call after boot — ≈2 minutes, once)'
+        : (e.queued || 0) > 1
+          ? `synthesizing… (queued: ${e.queued} in line, first in first out)`
+          : 'synthesizing…')
+    } catch { /* keep the last note */ }
+  }, 4000)
   await voiceAct(async () => {
     try {
       const out = await rest('/voice', {
@@ -109,8 +122,12 @@ async function voSoundTest () {
         const u8 = new Uint8Array(bin.length)
         for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
         const url = URL.createObjectURL(new window.Blob([u8], { type: 'audio/wav' }))
-        new window.Audio(url).play()
-        $voNote.set(`played · engine ${out.engine || 'air'}${out.cached ? ' · cached' : ''}`)
+        // PACING AT PLAYBACK: the clip is the natural 1x take; the dial rides here.
+        const a = new window.Audio(url)
+        a.playbackRate = Number(out.speed) || 1
+        a.preservesPitch = true
+        await a.play()
+        $voNote.set(`done ✓ played · engine ${out.engine || 'air'}${out.cached ? ' · cached' : ''}`)
       } else {
         $voNote.set((out && (out.error || out.refused)) || 'no audio')
       }
@@ -118,11 +135,29 @@ async function voSoundTest () {
       $voNote.set('synth request failed: ' + String((e && e.message) || e))
       throw e
     }
-  })
+  }).finally(() => clearInterval(poll))
 }
 
-const voSpeed = e => voiceAct(() => rest('/voice', {
-  method: 'POST', body: { action: 'speed', speed: Number(e.target.value) } }))
+// PACING AT PLAYBACK + drag law (owner 2026-11-10): the dial moved one notch at a
+// time because every change POST went through voiceAct — busy=true disabled the
+// slider mid-gesture and the re-render snapped the thumb back. Speed now commits
+// DEBOUNCED with a local optimistic echo: drag freely, one silent POST when you
+// let go, no spinner, no preview (▶ owns previews).
+let _speedT = null
+const voSpeed = e => {
+  const v = Number(e.target.value)
+  const cur = $voice.get()
+  if (cur && cur.voice) {
+    cur.voice.global = Object.assign({}, cur.voice.global, { speed: v })
+    $voice.set(Object.assign({}, cur))
+  }
+  clearTimeout(_speedT)
+  _speedT = setTimeout(() => {
+    rest('/voice', { method: 'POST', body: { action: 'speed', speed: v } })
+      .then(refreshVoice)
+      .catch(() => { $voNote.set('speed commit failed — check the gateway') })
+  }, 250)
+}
 const voKaraoke = e => voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'karaoke', karaoke: e.target.checked } }))
 const voDelete = cid => voiceAct(() => rest('/voice', {
@@ -587,7 +622,11 @@ function WearKitPane () {
             children: [
               jsx('span', { className: 'font-medium', children: '🔊 Voice-out' }),
               air.installed && (air.model_verified || air.verified_pending)
-                ? jsx('span', { className: 'text-xs text-(--ui-text-secondary)', children: '✓ installed' })
+                ? (air.engine || {}).phase === 'warm'
+                  ? jsx('span', { className: 'text-xs text-(--ui-text-success, --ui-text-secondary)', children: '✓ model loaded — ready' })
+                  : (air.engine || {}).phase === 'loading'
+                    ? jsx('span', { className: 'text-xs text-(--ui-text-warning, --ui-text-secondary)', children: '⏳ loading model… (first ▶ ≈2 min, once)' })
+                    : jsx('span', { className: 'text-xs text-(--ui-text-secondary)', children: '✓ installed · sleeps between calls' })
                 : null
             ]
           }),
@@ -700,9 +739,9 @@ function WearKitPane () {
           voicing ? jsxs('div', {
             className: 'flex items-center gap-2 text-xs',
             children: [
-              jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'speed' }),
+              jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'speed · at playback' }),
               jsx('input', {
-                type: 'range', min: 0.5, max: 2, step: 0.05, value: voicing.speed, disabled: busy,
+                type: 'range', min: 0.5, max: 2, step: 0.05, value: voicing.speed,
                 className: 'min-w-0 flex-1', onChange: voSpeed
               }),
               jsx('span', { children: `${voicing.speed}×` }),

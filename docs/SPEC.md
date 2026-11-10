@@ -1746,6 +1746,25 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   of a unified package carries .hermes-package.json => runtime-loader defaultEnabled:false
   (GHSA-mcfc-hp25-cjv7); enabling is the owner's toggle at Capabilities > Plugins (decision
   key hermes.desktop.pluginDecisions.v2, Electron localStorage — not file-flippable from here).
+
+- **2026-11-10 (g): PACING AT PLAYBACK (owner ruling) — supersedes the linear time-scale
+  above.** Clips render ONCE at the engine's natural 1x pace; the cache key is speed-free
+  (v2), and the ONE global dial rides the PLAYER: ExoPlayer `PlaybackParameters(speed,
+  pitch=1f)` on the watch (pitch-preserved stretch — strictly better than the linear
+  resample, which shifted pitch at the extremes) and `Audio.playbackRate` with
+  `preservesPitch` in the pane. Consequences: moving the dial never re-renders (the
+  re-warm hooks on speed change are gone), and the pane's stuck-"synthesizing" complaint
+  is dead twice over — no dial-keyed cold cache, and the slider itself was the second
+  bug: every `change` POST ran through the busy-gate, disabling the range input mid-drag
+  (owner: 'only move one notch at a time'). Speed now commits with an optimistic local
+  echo + 250 ms debounce, silently (▶ owns previews). The pane answers every ▶ with a
+  LIVE note that names WHICH wait it is — 'loading voice model (first call ≈2 min,
+  once)' vs 'queued: N in line (FIFO)' vs 'synthesizing' — flips to 'done ✓', and the
+  card header carries an engine chip (warm='model loaded' / loading / 'sleeps between
+  calls'), fed by `tts_air.engine_state()` (phase + queue depth, merged into GET /voice).
+  Word timestamps are media-time, so karaoke alignment is untouched by playback rate.
+  The reference wav still plays FLAT (1.0x = the speaker's own pace). Retries widened
+  to 3 with seed rotation (attempt tuple had silently capped at 2).
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
