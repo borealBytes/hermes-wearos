@@ -672,6 +672,15 @@ def main():
     ap.add_argument("--top-k", type=int, default=50)
     a = ap.parse_args()
     if a.serve:
+        # The ONLY thing allowed on the original stdout is one JSON line per
+        # request — torch/neutts/GGUF load chatter is real-world noise on fd 1
+        # (measured 2026-11-10: a banner line ate the first readline and the
+        # parent died on JSONDecodeError). Save the protocol fd, park fd 1 on
+        # /dev/null, speak only through the saved handle.
+        import io as _io
+        _proto = _io.open(os.dup(1), "w", buffering=1)
+        _null = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(_null, 1)
         tts = _tts(a.model, a.codec, a.seed)
         while True:
             r, _, _ = select.select([sys.stdin], [], [], IDLE_EXIT_S)
@@ -693,11 +702,11 @@ def main():
                           int(req.get("seed", a.seed)),
                           float(req.get("temperature", a.temperature)),
                           int(req.get("top_k", a.top_k)))
-                sys.stdout.write(json.dumps({"ok": True}) + "\\n")
+                _proto.write(json.dumps({"ok": True}) + "\\n")
             except Exception as exc:
-                sys.stdout.write(json.dumps({"ok": False,
-                                             "error": str(exc)[:300]}) + "\\n")
-            sys.stdout.flush()
+                _proto.write(json.dumps({"ok": False,
+                                         "error": str(exc)[:300]}) + "\\n")
+            _proto.flush()
     if not (a.text_file and a.ref_wav and a.ref_text and a.out):
         raise SystemExit("one-shot mode needs --text-file/--ref-wav/--ref-text/--out")
     text = open(a.text_file, encoding="utf-8").read()
