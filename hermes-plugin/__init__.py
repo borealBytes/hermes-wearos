@@ -61,6 +61,24 @@ except ImportError:  # flat loader outside a package context (see tests/conftest
 
 logger = logging.getLogger("hermes_wearkit")
 
+
+def _singleton_alias(mod) -> None:
+    """Pin the bare module name to THIS package module object.
+
+    The plugin submodules import each other both `from . import x` and
+    `import x` (standalone fallback). Under a host that has the plugin dir on
+    sys.path BOTH resolve — as two module objects with independent globals,
+    i.e. TWO resident engine workers per gateway (measured 2026-11-10: the
+    restarted gateway carried a cuda twin and a cpu twin, ~7 GB). Aliasing
+    sys.modules after the package import makes every later bare import hit
+    the same object: one module, one worker, one queue."""
+    try:
+        short = str(getattr(mod, "__name__", "")).rsplit(".", 1)[-1]
+        if short:
+            sys.modules[short] = mod
+    except Exception:
+        pass
+
 PRIVATE_PORT = 42654             # tailnet-bound private lane (SPEC §11.4)
 WATCHKIT_PORT = 42651            # fixed by SPEC §11.4
 GATEWAY_PORT = 8642              # Hermes API (per-profile /p/<profile>)
@@ -484,6 +502,7 @@ def _voiceout_register_engines() -> None:
         import align_parakeet        # type: ignore[no-redef]
         import tts_air               # type: ignore[no-redef]
     for mod in (tts_air, align_parakeet):
+        _singleton_alias(mod)
         try:
             mod.register_if_ready()
         except Exception:            # engine problems never block the lane
@@ -513,6 +532,7 @@ def _voiceout_prewarm() -> None:
     def run() -> None:
         try:
             from . import voiceout
+            _singleton_alias(voiceout)
             st = voiceout.status()
             if not st.get("engine") or not st.get("cards"):
                 return                 # nothing to speak with yet; honest no-op
@@ -534,6 +554,7 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
         from . import voiceout
     except ImportError:
         import voiceout  # type: ignore[no-redef]
+    _singleton_alias(voiceout)
     eng = _engine()
     nid = str(node.get("node_id") or "")
     bound = next((name for name, d in eng.devices().items()
@@ -586,6 +607,8 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
         except ImportError:
             import align_parakeet  # type: ignore[no-redef]
             import tts_air         # type: ignore[no-redef]
+        _singleton_alias(tts_air)
+        _singleton_alias(align_parakeet)
         if action == "engines":
             return 200, {"air": tts_air.status(), "aligner": align_parakeet.status()}
         if action == "tts_sources":
@@ -1444,6 +1467,7 @@ def register(ctx) -> None:
             from . import tts_provider     # loaded as a package (gateway/dashboard)
         except ImportError:
             import tts_provider            # type: ignore[no-redef]
+        _singleton_alias(tts_provider)
         tts_provider.register(ctx)
     except Exception:
         logger.warning("wearos: TTS provider registration skipped", exc_info=True)
@@ -1456,6 +1480,7 @@ def register(ctx) -> None:
     # Rule 11: the voice-out engine reads its declared secret (config_schema
     # hf_token → env HF_TOKEN) through the plugin's own route, profile-scoped.
     from . import tts_air as _ta
+    _singleton_alias(_ta)
     _ta._SECRETS = lambda key: _cfg(key) or _get_secret("HF_TOKEN")
     # Register installed voice engines AT LOAD, not only at watch-lane bind:
     # the dashboard soundtest and any host without tailscaled still get the
@@ -1479,6 +1504,7 @@ def ensure_engines() -> None:
     _voiceout_register_engines()
     try:
         from . import voiceout
+        _singleton_alias(voiceout)
         if voiceout.status().get("engine") and _prewarm_done.is_set():
             _prewarm_done = threading.Event()     # re-arm once: engine just appeared
             _voiceout_prewarm()
