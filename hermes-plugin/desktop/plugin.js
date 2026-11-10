@@ -589,7 +589,7 @@
               (stt.phase && stt.phase !== 'idle' && stt.phase !== 'done' && stt.phase !== 'failed')
                 ? jsx('span', {
                     className: 'text-xs text-(--ui-text-warning, --ui-text-secondary)',
-                    children: `⏳ ${stt.percent != null ? `${stt.percent}% — ` : ''}${stt.phase}… ready when the build finishes`
+                    children: '⏳ ' + (stt.percent != null ? stt.percent + '% — ' : '') + stt.phase + '… ready when the build finishes'
                   })
                 : stt.installed && stt.model_verified
                   ? jsx('span', { className: 'text-xs text-(--ui-text-success)', children: `✓ model ready — ${(stt.variant || 'q8_0').toUpperCase()}` })
