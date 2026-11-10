@@ -547,6 +547,15 @@ def _ensure_venv(venv: Path, setf) -> None:
 _CUDA_BUILD = threading.Lock()
 _CUDA_STATE = {"phase": "idle", "detail": ""}
 LLAMA_PIN = "llama-cpp-python==0.3.36"          # the version PKG_SPEC resolved to
+# Rule 17: the upstream CUDA release wheel for THAT EXACT pin, hash-pinned.
+# 1.8 GB 'full' build — every arch incl. sm_89 — so the first GPU enable is a
+# download, not a twenty-minute nvcc tour. Source build remains the fallback
+# (verification decides; a bad wheel can never strand speech). Measured
+# 2026-11-10: local glibc 2.43 >= wheel's manylinux_2_35, driver 580.
+LLAMA_CUDA_WHEEL_URL = (
+    "https://github.com/abetlen/llama-cpp-python/releases/download/"
+    "v0.3.36-cu124/llama_cpp_python-0.3.36-py3-none-manylinux_2_35_x86_64.whl")
+LLAMA_CUDA_WHEEL_SHA = "3d53f94464d8d69028d993033d6120439c994108c04375a46205bd1935bc30ad"
 
 def _cuda_state_write() -> None:
     try:
@@ -592,46 +601,77 @@ def build_cuda_gpu(idx: int) -> dict:
         _CUDA_STATE.update(phase="building",
                            detail="creating the CUDA venv (reuses the wheel cache)")
         _cuda_state_write()
+    def _verify_cuda(venv: Path) -> None:
+        v = subprocess.run(
+            [str(venv / "bin" / "python"), "-c",
+             "import torch, glob, os, llama_cpp; "
+             "assert torch.cuda.is_available(), 'torch sees no CUDA'; "
+             "assert any('cuda' in os.path.basename(x) for x in glob.glob("
+             "os.path.dirname(llama_cpp.__file__) + '/**/*.so*', recursive=True)), "
+             "'llama_cpp has no CUDA backend'; print('ok')"],
+            env=dict(_runner_env("cpu"), CUDA_VISIBLE_DEVICES=str(idx)),
+            capture_output=True, text=True, timeout=120)
+        if "ok" not in (v.stdout or ""):
+            raise RuntimeError("CUDA verification failed: "
+                               + ((v.stdout or "") + (v.stderr or ""))[-400:])
+
+    def _install_cuda_wheel(venv: Path) -> None:
+        """Hash-pinned release wheel first (rule 17: verified download, not a
+        floating binary); the cache dir may already hold it from a past run."""
+        import hashlib
+        _CUDA_STATE.update(phase="building",
+                           detail="fetching the CUDA llama-cpp release wheel")
+        _cuda_state_write()
+        dest = _root() / "wheel_cache" / LLAMA_CUDA_WHEEL_URL.rsplit("/", 1)[-1]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not (dest.is_file() and
+                hashlib.sha256(dest.read_bytes()).hexdigest() == LLAMA_CUDA_WHEEL_SHA):
+            _download(LLAMA_CUDA_WHEEL_URL, dest, expected_sha=LLAMA_CUDA_WHEEL_SHA)
+        _CUDA_STATE.update(phase="building",
+                           detail="installing the CUDA llama-cpp wheel")
+        _cuda_state_write()
+        subprocess.run([str(venv / "bin" / "python"), "-m", "pip", "install",
+                        "--no-input", "-q", "--no-deps", "--force-reinstall",
+                        str(dest)],
+                       check=True, capture_output=True, timeout=600,
+                       env=_runner_env("cpu"))
+        _verify_cuda(venv)
+
     def _run():
         try:
             venv = _root() / "venv_cu"
             _ensure_venv(venv, lambda ph, det, p=0: _CUDA_STATE.update(
                 phase=ph, detail=det) or _cuda_state_write())
             if not (venv / ".cuda-installed").is_file():
-                _CUDA_STATE.update(phase="building",
-                                   detail="building llama-cpp with the CUDA backend "
-                                          f"(arch {_gpu_compute_cap(idx)}, minutes, "
-                                          "CPU-heavy once)")
-                _cuda_state_write()
-                env = dict(_runner_env("cpu"),
-                           CMAKE_ARGS=f"-DGGML_CUDA=on "
-                                      f"-DCMAKE_CUDA_ARCHITECTURES={_gpu_compute_cap(idx)}",
-                           CMAKE_BUILD_PARALLEL_LEVEL="16")
-                for extra in ("cmake", "ninja"):
-                    subprocess.run([str(venv / "bin" / "python"), "-m", "pip",
-                                    "install", "--no-input", "-q", extra],
-                                   check=True, capture_output=True, timeout=600)
-                r = subprocess.run(
-                    [str(venv / "bin" / "python"), "-m", "pip", "install",
-                     "--no-input", "-q", "--no-deps", "--no-binary", ":all:",
-                     "--force-reinstall", LLAMA_PIN],
-                    env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, timeout=BUILD_TIMEOUT)
-                if r.returncode != 0:
-                    raise RuntimeError("CUDA llama-cpp build failed: "
-                                       + (r.stdout or "")[-400:])
-                v = subprocess.run(
-                    [str(venv / "bin" / "python"), "-c",
-                     "import torch, glob, os, llama_cpp; "
-                     "assert torch.cuda.is_available(), 'torch sees no CUDA'; "
-                     "assert any('cuda' in os.path.basename(x) for x in glob.glob("
-                     "os.path.dirname(llama_cpp.__file__) + '/**/*.so*', recursive=True)), "
-                     "'llama_cpp has no CUDA backend'; print('ok')"],
-                    env=dict(_runner_env("cpu"), CUDA_VISIBLE_DEVICES=str(idx)),
-                    capture_output=True, text=True, timeout=120)
-                if "ok" not in (v.stdout or ""):
-                    raise RuntimeError("CUDA verification failed: "
-                                       + ((v.stdout or "") + (v.stderr or ""))[-400:])
+                try:
+                    _install_cuda_wheel(venv)
+                except Exception as wheel_exc:
+                    # fallback: build the same pinned source with CUDA, for the
+                    # picked card's compute capability only
+                    _CUDA_STATE.update(
+                        phase="building",
+                        detail=f"wheel unusable ({str(wheel_exc)[:120]}) — building "
+                               f"llama-cpp with CUDA (arch {_gpu_compute_cap(idx)}, "
+                               "minutes, CPU-heavy once)")
+                    _cuda_state_write()
+                    env = dict(_runner_env("cpu"),
+                               CMAKE_ARGS=f"-DGGML_CUDA=on "
+                                          f"-DCMAKE_CUDA_ARCHITECTURES={_gpu_compute_cap(idx)}",
+                               CMAKE_BUILD_PARALLEL_LEVEL="16")
+                    for extra in ("cmake", "ninja"):
+                        subprocess.run([str(venv / "bin" / "python"), "-m", "pip",
+                                        "install", "--no-input", "-q", extra],
+                                       check=True, capture_output=True, timeout=600)
+                    r = subprocess.run(
+                        [str(venv / "bin" / "python"), "-m", "pip", "install",
+                         "--no-input", "-q", "--no-deps", "--no-binary", ":all:",
+                         "--force-reinstall", LLAMA_PIN],
+                        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, timeout=BUILD_TIMEOUT)
+                    if r.returncode != 0:
+                        raise RuntimeError("CUDA llama-cpp build failed: "
+                                           + (r.stdout or "")[-400:])
+                    _verify_cuda(venv)
                 (venv / ".cuda-installed").write_text(LLAMA_PIN)
             _CUDA_STATE.update(phase="done",
                                detail=f"GPU {idx} ready — the next speak respawns "

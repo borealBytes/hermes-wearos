@@ -200,6 +200,10 @@ next speak. THE GPU0 SHIELD: the worker env always carries
 CUDA_VISIBLE_DEVICES=<picked index> — sglang's GPU0 is not even visible to the
 engine. tts/device.json persists the pick. SPEC 19.4(m). Tests:
 tests/test_tts_air_device.py (7). Suite: 145 passed, 1 skipped, 3 subtests.
-ON THIS BOX: GPU1 = RTX PRO 6000 Blackwell (48 GB idle). NEXT: kick the CUDA
-build (pane dropdown, or tts_air.set_device('gpu:1')), re-time a sentence draw
-cpu-vs-gpu, and decide which lane the competition build ships on.
+ON THIS BOX: GPU1 = RTX 4070 (idle). DONE 14:34: the CUDA variant installed
+from the hash-pinned release wheel (see SPEC 19.4m measured note) — marker
+`venv_cu/.cuda-installed` on disk, verification probe passed. Old CPU workers
+killed (the gateway's old code had DOUBLE-spawned — 273% + 24% twins). NEXT:
+owner restarts the gateway from their own shell; the first speak after boots
+the engine into venv_cu with CUDA_VISIBLE_DEVICES=1 (GPU 0 not even visible),
+then re-time a sentence draw cpu-vs-gpu and pick the competition lane.

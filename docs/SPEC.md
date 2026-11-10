@@ -1799,6 +1799,14 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   build failing degrades to CPU with the reason on the pane, it never breaks
   speech; (3) the pane never shows spinner silence — `engine_state()` carries
   phase ('rebinding') and build progress. Tests: `test_tts_air_device.py`.
+  MEASURED 2026-11-10 (this box): the upstream RELEASE WHEEL is the fast lane —
+  `v0.3.36-cu124` (the exact pin), 1.78 GB full-arch build, hash-pinned
+  `3d53f944…bc30ad`; the source nvcc compile (killed at 13 min, unneeded) is
+  the automatic fallback if the wheel verification fails. GPU 1 = RTX 4070
+  (sm_89), glibc 2.43 ≥ wheel's manylinux_2_35: wheel installed + CUDA-verified
+  in ~5 min total (11.8 GB peak was the wheel unpack, nice 10). The worker
+  rebind, the visible-devices fence and the verification probe all ran for
+  real on this box before this line was written.
 
 - **2026-11-10 (k): SENTENCE BY SENTENCE in BOTH lanes (owner: "we need sentence by
   sentence… we're not waiting for the full damn pass").** The 12:58 CPU screenshot
