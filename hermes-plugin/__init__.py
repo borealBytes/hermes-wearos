@@ -922,11 +922,14 @@ _INVENTORY_LOCK = threading.Lock()
 _INVENTORY_REFRESHING = False
 
 
-def _inventory_serving(max_age: float = 10.0) -> list:
+def _inventory_serving(max_age: float = 300.0) -> list:
     """Status-path read: NEVER blocks on the CLI fan-out (measured 68–84 s on a
     27-profile gateway — the pane's /status timed out and showed no watches/agents,
     2026-11-10). Serve the newest scan whatever its age; if stale, refresh on one
-    background thread. First call per process seeds synchronously (unavoidable)."""
+    background thread. First call per process seeds synchronously (unavoidable).
+    TTL 300 s: inventory only changes through THIS pane (enable/disable), which
+    refreshes eagerly — a short TTL re-ran 26 cold CLIs every poll while the pane
+    sat open and pinned cores (owner 'CPU noise', 2026-11-10 16:52)."""
     global _INVENTORY_REFRESHING
     hit = _INVENTORY_CACHE.get("inv")
     if hit is None:
@@ -946,6 +949,18 @@ def _inventory_refresh() -> None:
     finally:
         with _INVENTORY_LOCK:
             _INVENTORY_REFRESHING = False
+
+
+def invalidate_inventory() -> None:
+    """Post-mutation hook (enable/disable): drop the cache and refresh NOW on the
+    background thread, so the TTL exists only as a safety net, not as the pane's
+    staleness budget."""
+    _INVENTORY_CACHE.pop("inv", None)
+    global _INVENTORY_REFRESHING
+    with _INVENTORY_LOCK:
+        if not _INVENTORY_REFRESHING:
+            _INVENTORY_REFRESHING = True
+            threading.Thread(target=_inventory_refresh, daemon=True).start()
 
 
 def _clean_env() -> dict:
