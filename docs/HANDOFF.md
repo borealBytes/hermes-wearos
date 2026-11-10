@@ -82,3 +82,8 @@ Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karao
   playWhenReady=false and the holder was prepare-only since 185764a — byte-count
   logs hid it until an ear tested it. Fixed ed66c86 (p.play() after prepare), APK
   on watch 10:40:25. Watch DND/volume ruled out first.
+- Voice curation per owner: clay-synth-eff920cd is the ONLY card (created via
+  voiceout.create_card re-bake; rev 12); clay-real + desk-demo deleted. Shipped
+  APK 10:48:27: DEFAULT checkbox on voice rows (writes voices.__default__ over
+  the lane, rev+1 read-modify-write), gateway-source ear-test (volume = ExoPlayer
+  gain on lane clips, speed slider writes global.speed), prepare-only fix ed66c86.

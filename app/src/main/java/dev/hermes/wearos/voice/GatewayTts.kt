@@ -56,15 +56,23 @@ object GatewayTts {
         private set
     @Volatile var note = "not probed yet"
         private set
+    /** The prefs doc's canonical voice (voices.__default__) — the page's ✓ checkbox. */
+    @Volatile var defaultCard = ""
+        private set
+    /** The ONE global speed dial as the gateway knows it (0 = not probed yet). */
+    @Volatile var laneSpeed = 0f
+        private set
+    @Volatile private var prefsDoc = JSONObject()   // last GET /voice/prefs, for read-modify-write
+    @Volatile private var prefsRev = 0
 
     /** True when the gateway path can currently take answers: probed, engine, ≥1 card. */
     fun available(): Boolean = engineReady && cards.isNotEmpty()
 
-    /** Re-pull GET /voice/cards. Returns false (and a truthful note) on any failure. */
+    /** Re-pull GET /voice/cards AND the prefs mirror. Returns false (truthful note) on failure. */
     fun refresh(): Boolean {
         val base = laneBase()
         if (base.isEmpty()) { note = "no gateway endpoint set"; return false }
-        return try {
+        val ok = try {
             val req = Request.Builder().url("$base/voice/cards").get().build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) { note = "lane said ${resp.code}"; return false }
@@ -75,6 +83,83 @@ object GatewayTts {
             note = "lane unreachable (${e.javaClass.simpleName})"
             false
         }
+        refreshPrefs()   // best-effort: the voice list shows ✓ default / dial value when present
+        return ok
+    }
+
+    /** GET /voice/prefs — the watch mirrors, never owns; edits go back via [setAsDefault]/[setSpeed]. */
+    fun refreshPrefs(): Boolean {
+        val base = laneBase()
+        if (base.isEmpty()) return false
+        return try {
+            val req = Request.Builder().url("$base/voice/prefs").get().build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return false
+                applyPrefsJson(resp.body?.string() ?: "{}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "voice prefs mirror failed: ${e.message}"); false
+        }
+    }
+
+    internal fun applyPrefsJson(raw: String): Boolean = try {
+        val o = JSONObject(raw)
+        prefsDoc = o; prefsRev = o.optInt("rev", 0)
+        defaultCard = o.optJSONObject("voices")?.optString("__default__").orEmpty()
+        laneSpeed = o.optJSONObject("global")?.optDouble("speed", 0.0)?.toFloat() ?: 0f
+        true
+    } catch (e: Exception) { false }
+
+    /**
+     * Make [cardId] the canonical voice: every existing binding follows it (the doc's own
+     * voices keys ride, so no agent is left on a stale card), rev+1 — higher-rev-wins merge
+     * does the rest. The gateway's merged doc comes back and reseeds the mirror.
+     */
+    fun setAsDefault(cardId: String): Boolean {
+        if (prefsRev == 0 && !refreshPrefs()) return false
+        val voices = JSONObject()
+        prefsDoc.optJSONObject("voices")?.keys()?.forEach { k -> voices.put(k, cardId) }
+        voices.put("__default__", cardId)
+        return putPrefs(voices = voices)
+    }
+
+    /** The ONE global dial, now editable from the wrist too (same doc, same law). */
+    fun setSpeed(mult: Float): Boolean {
+        if (prefsRev == 0 && !refreshPrefs()) return false
+        val global = JSONObject(prefsDoc.optJSONObject("global")?.toString() ?: "{}")
+        global.put("speed", String.format(java.util.Locale.US, "%.2f",
+            mult.coerceIn(0.5f, 2.0f)).toDouble())
+        return putPrefs(global = global)
+    }
+
+    private fun putPrefs(voices: JSONObject? = null, global: JSONObject? = null): Boolean {
+        val base = laneBase()
+        if (base.isEmpty()) return false
+        return try {
+            val body = JSONObject().put("rev", prefsRev + 1)
+                .put("voices", voices ?: JSONObject(prefsDoc.optJSONObject("voices")?.toString() ?: "{}"))
+                .put("global", global ?: JSONObject(prefsDoc.optJSONObject("global")?.toString() ?: "{}"))
+                .put("modes", JSONObject(prefsDoc.optJSONObject("modes")?.toString() ?: "{}"))
+            val req = Request.Builder().url("$base/voice/prefs")
+                .put(body.toString().toRequestBody(JSON)).build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: "{}"
+                if (!resp.isSuccessful) { note = "prefs write said ${resp.code}"; return false }
+                applyPrefsJson(text)   // the merged canonical doc (gateway bumped rev again)
+                prefsDoc = JSONObject(text); prefsRev = JSONObject(text).optInt("rev", prefsRev + 1)
+                true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "voice prefs write failed: ${e.message}")
+            note = "prefs write failed (${e.javaClass.simpleName})"
+            false
+        }
+    }
+
+    /** Ear-test on the gateway voice — the sliders' preview and the picker's ▶ use this. */
+    fun preview(agent: String) {
+        enqueue(dev.hermes.wearos.domain.TtsConfig.PREVIEW_TEXT, agent,
+            onDone = {}, onFail = { note = "gateway refused the preview" })
     }
 
     /** Parse a /voice/cards body — pure enough to unit-test the honesty rules. */
@@ -145,8 +230,11 @@ object GatewayTts {
         // where a notification clip replaces ours without an ENDED callback (a ~30 s answer
         // plus generous slack; longer than any TTS sentence can run).
         val done = java.util.concurrent.CountDownLatch(1)
+        val gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
+            .getOrDefault(1f)
         MediaPlayerHolder.playBytes(ctx, Base64.getDecoder().decode(b64),
-            parsed.optString("content_type").ifEmpty { "audio/wav" }) { done.countDown() }
+            parsed.optString("content_type").ifEmpty { "audio/wav" },
+            onEnded = { done.countDown() }, gain = gain)
         if (!done.await(120, java.util.concurrent.TimeUnit.SECONDS))
             Log.w(TAG, "gateway voice playback cap hit (clip replaced?)")
     }

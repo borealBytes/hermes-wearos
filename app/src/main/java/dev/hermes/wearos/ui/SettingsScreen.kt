@@ -57,6 +57,7 @@ import androidx.wear.compose.material.Button
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.wear.compose.material.ButtonDefaults
+import androidx.wear.compose.material.Checkbox
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Switch
 import androidx.wear.compose.material.Text
@@ -1061,21 +1062,30 @@ fun SettingsScreen(
             }
             if (gw.cards.isNotEmpty()) {
                 val ctx = androidx.compose.ui.platform.LocalContext.current
-                FieldLabel("voices (tap ▶ to hear)")
+                FieldLabel("voices · ✓ = default")
                 gw.cards.forEach { (cid, label) ->
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(label.take(20), style = MaterialTheme.typography.body2,
+                        Text(label.take(14), style = MaterialTheme.typography.body2,
                             modifier = Modifier.weight(1f))
                         Button(
                             onClick = { dev.hermes.wearos.voice.MediaPlayerHolder.play(
                                 ctx, gw.laneBase() + "/voice/card_wav?card_id=$cid") },
-                            modifier = Modifier.size(width = 56.dp, height = 34.dp),
+                            modifier = Modifier.size(width = 48.dp, height = 34.dp),
                             colors = ButtonDefaults.buttonColors(
                                 backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
                         ) { Text("▶", style = MaterialTheme.typography.button) }
+                        // DEFAULT checkbox (owner 2026-11-10): the state lives in the canonical
+                        // prefs doc (voices.__default__, gateway-canonical, higher-rev-wins) —
+                        // the wrist mirrors it and edits it THROUGH the lane, never owns it.
+                        Checkbox(
+                            checked = gw.defaultCard == cid,
+                            onCheckedChange = { on ->
+                                if (on) Thread { gw.setAsDefault(cid); gwProbe++ }.start()
+                            },
+                        )
                     }
                 }
             }
@@ -1086,16 +1096,32 @@ fun SettingsScreen(
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.
+        // EAR-TEST rides the SELECTED source (owner 2026-11-10): on the gateway the sliders
+        // preview with the shipped card voice, so what you tune is what you hear. Volume is
+        // the same per-agent gain the gateway clips now honor; on the gateway the speed
+        // slider IS the one global dial (writes global.speed, higher-rev-wins).
+        val gwSource = ttsSource == "gateway"
+        var gwSpeed by remember { mutableStateOf(if (gw.laneSpeed > 0f) gw.laneSpeed else ttsRate) }
+        fun earTest() {
+            if (!voiceOut) return
+            if (gwSource && gw.available()) gw.preview(agentNow) else speak.preview()
+        }
         VolumeSlider(
             volume = replyVolFor,
             agent = agentNow,
             commit = { speak.setReplyVolume(it) },
-            onDone = { if (voiceOut) speak.preview() },
+            onDone = { earTest() },
         )
         RateSlider(
-            rate = ttsRate,
-            onRate = { speak.setSpeechRate(it) },
-            onDone = { if (voiceOut) speak.preview() },
+            rate = if (gwSource) gwSpeed else ttsRate,
+            onRate = { v -> if (gwSource) gwSpeed = v else speak.setSpeechRate(v) },
+            onDone = {
+                if (gwSource) {
+                    val v = gwSpeed
+                    Thread { gw.setSpeed(v); gwSpeed = gw.laneSpeed.coerceAtLeast(v); gwProbe++ }.start()
+                }
+                earTest()
+            },
         )
         // ENGINE row (owner: "choose google/samsung/(other if exists)") — switching packages
         // rebuilds the live engine; its voices load right after.

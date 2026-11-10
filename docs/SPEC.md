@@ -1704,6 +1704,17 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   global speed dial (gateway side); the local rate/volume knobs shape only the
   fallback voice — the page says so.
 
+- **2026-11-10 (weardev, voice-card curation + wrist-side controls)** — the owner
+  chose the shipped voice: `clay-synth` (the watch-recorded card, ref_rate 270.7) is
+  the library's only entry; `Clay (real)` and `desk demo` were deleted through the
+  plugin's own API (rev 12). On the wrist the voices list gained a DEFAULT checkbox —
+  it reads and writes `voices.__default__` in the CANONICAL doc over the lane
+  (read-modify-write at rev+1; the watch mirrors, never owns) — and the ear-test
+  rides the selected source: on gateway, the reply-volume slider applies the same
+  per-agent gain to lane clips (ExoPlayer volume) and the speed slider IS the one
+  global dial (PUT `global.speed`), so what you tune is what you hear in the
+  shipped voice.
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist

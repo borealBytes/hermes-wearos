@@ -81,7 +81,7 @@ object MediaPlayerHolder {
      * [onEnded] (optional) fires once when the clip finishes, is stopped, or could not start.
      */
     fun playBytes(context: Context, bytes: ByteArray, contentType: String,
-                  onEnded: (() -> Unit)? = null) {
+                  onEnded: (() -> Unit)? = null, gain: Float = 1f) {
         val app = context.applicationContext
         val ext = when {
             contentType.contains("ogg") || contentType.contains("opus") -> ".ogg"
@@ -104,6 +104,9 @@ object MediaPlayerHolder {
                         it.addListener(playbackListener); player = it
                     }
                     this.onEnded = onEnded
+                    // REPLY VOLUME (owner 2026-11-10): gateway clips honor the same per-agent
+                    // reply-volume the system path uses — one slider shapes every voice.
+                    p.volume = gain.coerceIn(0f, 1f)
                     p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
                     p.prepare()
                     p.play()   // ExoPlayer defaults playWhenReady=FALSE — prepare alone
