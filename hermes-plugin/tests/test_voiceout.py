@@ -96,5 +96,70 @@ class VoiceoutTests(unittest.TestCase):
         self.assertEqual(p["voices"]["farmbot"], "")
         self.assertNotIn(c["card_id"], p["cards"])
 
+
+LONG3 = ("The wear kit renders every long reply sentence by sentence now. "
+         "Each sentence is its own short generation with its own cache entry, "
+         "so repeated sentences across any future reply replay instantly from disk. "
+         "And the engine never locks up on one giant paragraph again, which is "
+         "exactly what the owner ordered on this fine November afternoon.")
+
+
+class SentenceChunkingTests(unittest.TestCase):
+    """Owner ruling 2026-11-10: sentence-by-sentence in BOTH lanes."""
+
+    def setUp(self):
+        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="vo-test-")
+        self.calls = []
+        vo._SYNTH["air"] = self._air
+        self._align = dict(vo._ALIGN)
+
+    def tearDown(self):
+        vo._SYNTH.pop("air", None)
+        vo._ALIGN.clear(); vo._ALIGN.update(self._align)
+
+    def _air(self, text, card, speed):
+        self.calls.append(text)
+        return mkwav([(0.5, 1.0)], rate=24000), 24000
+
+    def test_short_text_stays_one_clip(self):
+        self.assertEqual(vo._sentences("Short and sweet."), ["Short and sweet."])
+
+    def test_long_reply_splits_per_sentence(self):
+        segs = vo._sentences(LONG3)
+        self.assertEqual(len(segs), 3)
+        r = vo.synthesize(LONG3, "farmbot", want_words=False)
+        self.assertTrue(r["ok"])
+        self.assertEqual(self.calls, segs)               # one short draw each
+        import io as _io, wave
+        with wave.open(_io.BytesIO(r["audio"])) as w:
+            dur = w.getnframes() / float(w.getframerate())
+        self.assertAlmostEqual(dur, 3 * 0.5 + 2 * 0.08, places=1)  # stitched + breaths
+
+    def test_stray_fragments_merge_forward(self):
+        t = "Yes. No. " + LONG3
+        self.assertEqual(len(vo._sentences(t)), 3)       # 'Yes. No.' joined onward
+
+    def test_repeated_sentence_renders_once_ever(self):
+        vo.synthesize(LONG3, "farmbot", want_words=False)
+        self.assertEqual(len(self.calls), 3)
+        r = vo.synthesize(LONG3, "farmbot", want_words=False)  # whole-text cache hit
+        self.assertTrue(r.get("cached"))
+        # a NEW reply containing two already-heard sentences reuses them
+        new = LONG3.split(" And ")[0] + " A brand new closing sentence appears here, and it is comfortably over the minimum fragment length to stand alone."
+        before = len(self.calls)
+        vo.synthesize(new, "farmbot", want_words=False)
+        self.assertEqual(len(self.calls) - before, 1)    # only the fresh sentence
+
+    def test_karaoke_timeline_survives_the_stitch(self):
+        def fake_align(audio, rate, text):
+            return [{"w": text.split()[0], "t0": 0.0, "t1": 0.4}]
+        vo._ALIGN["parakeet"] = fake_align
+        r = vo.synthesize(LONG3, "farmbot", want_words=True)
+        ws = r["words"]
+        self.assertEqual(len(ws), 3)
+        self.assertAlmostEqual(ws[0]["t0"], 0.0, places=3)
+        self.assertAlmostEqual(ws[1]["t0"], 0.58, places=3)   # clip1 + breath gap
+        self.assertAlmostEqual(ws[2]["t0"], 1.16, places=3)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -385,6 +385,92 @@ def register_aligner(name: str, fn: Callable) -> None:
     _ALIGN[name] = fn
 
 
+_SENT_RE = __import__("re").compile(r"(?<=[.!?])\s+")
+
+
+def _sentences(text: str, min_len: int = 24) -> list[str]:
+    """The server-side sentence cutter (owner ruling 2026-11-10, issue #7): long
+    replies synthesize SENTENCE BY SENTENCE in BOTH lanes — one mega-generation of a
+    'big old line of text' pins the engine for ages and caches as one giant blob;
+    segments are short draws, cache per sentence, and every repeated sentence across
+    all future replies replays from disk. Short texts stay one clip. Fragments under
+    *min_len* chars (a stray 'U.S.' abbreviation, a clipped '...') merge forward into
+    the following sentence so we never synthesize a 3-char gasp on its own."""
+    if len(text) <= 160:
+        return [text]
+    parts = [p.strip() for p in _SENT_RE.split(text) if p.strip()]
+    if len(parts) < 2:
+        return [text]
+    merged: list[str] = []
+    for p in parts:
+        if merged and len(merged[-1]) < min_len:
+            merged[-1] = merged[-1] + " " + p
+        else:
+            merged.append(p)
+    if len(merged) > 1 and len(merged[-1]) < min_len:  # tail fragment joins the previous
+        merged[-2] = merged[-2] + " " + merged.pop()
+    return merged if len(merged) > 1 else [text]
+
+
+def _now_speed(p: dict) -> float:
+    return float((p.get("global") or {}).get("speed", SPEED_DEFAULT))
+
+
+def _render_segment(seg: str, card, card_id, want_words: bool,
+                    speed: float) -> dict:
+    """One sentence (or short text): cache-keyed, silence-guarded, natural 1x pace."""
+    key = _synth_key(seg, card_id, bool(want_words))
+    hit = _cache_get(key, want_words)
+    if hit is not None:
+        hit["cached"] = True
+        hit["speed"] = speed
+        return hit
+    audio, rate = _SYNTH["air"](seg, card, 1.0)       # natural pace, always
+    words: list[dict] = []
+    if want_words and _ALIGN:
+        try:
+            words = _ALIGN["parakeet"](audio, rate, seg)
+        except Exception:
+            words = []          # karaoke degrades to sentence mode, honestly
+    out = {"ok": True, "tier": "gateway", "audio": audio, "rate": rate,
+           "words": words, "align": "forced" if words else "none",
+           "speed": speed, "engine": "air"}
+    _cache_put(key, out)
+    return out
+
+
+def _stitch(parts: list[dict], gap_s: float = 0.08) -> dict:
+    """Join segment clips into one WAV with *gap_s* breaths between; word timeline
+    shifts with the cumulative position (karaoke stays true)."""
+    import io as _io
+    import wave
+    frames = bytearray()
+    words: list[dict] = []
+    rate = parts[0]["rate"]
+    t = 0.0
+    for i, o in enumerate(parts):
+        w = wave.open(_io.BytesIO(o["audio"]))
+        d = w.readframes(w.getnframes())
+        if i:
+            frames += b"\x00\x00" * int(rate * gap_s)
+            t += gap_s
+        frames += d
+        for wd in o.get("words") or []:
+            wd2 = dict(wd)
+            wd2["t0"] = wd.get("t0", 0.0) + t
+            wd2["t1"] = wd.get("t1", 0.0) + t
+            words.append(wd2)
+        t += w.getnframes() / float(rate)
+    buf = _io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+        w.writeframes(bytes(frames))
+    align = "forced" if words else parts[0].get("align", "none")
+    return {"ok": True, "tier": "gateway", "audio": buf.getvalue(), "rate": rate,
+            "words": words, "align": align, "speed": parts[0]["speed"],
+            "engine": "air"}
+
+
 def synthesize(text: str, agent: str, *, want_words: bool = True,
                card_id: Optional[str] = None) -> dict:
     """The watch-facing contract: text in, {audio_opus_b64|pcm_b64, words[], engine,
@@ -432,17 +518,19 @@ def synthesize(text: str, agent: str, *, want_words: bool = True,
         hit["cached"] = True
         hit["speed"] = speed            # dial may have moved since render
         return hit
-    audio, rate = _SYNTH["air"](text, card, 1.0)   # natural pace, always
-    words: list[dict] = []
-    if want_words and _ALIGN:
-        try:
-            words = _ALIGN["parakeet"](audio, rate, text)
-        except Exception as exc:
-            words = []                            # karaoke degrades to sentence mode, honestly
-    align = "forced" if words else "none"
-    out = {"ok": True, "tier": "gateway", "audio": audio, "rate": rate,
-           "words": words, "align": align, "speed": speed, "engine": "air"}
-    _cache_put(key, out)
+    # SENTENCE BY SENTENCE (owner ruling 2026-11-10): a long reply is cut server-side
+    # and each sentence renders as its own short, cache-keyed draw — no more single
+    # mega-generation of a "big old line of text" ripping the CPU for minutes, and a
+    # sentence that ever repeats in ANY future reply replays from disk.
+    segs = _sentences(text)
+    parts = [_render_segment(s, card, card_id, want_words, speed) for s in segs]
+    if len(parts) == 1:
+        out = dict(parts[0])
+    else:
+        out = _stitch(parts)
+        _cache_put(key, out)            # whole text replays too; sentences cache-shared
+    out = dict(out)
+    out["speed"] = speed                # dial may have moved mid-render
     return out
 
 

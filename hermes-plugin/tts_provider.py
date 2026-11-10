@@ -40,6 +40,29 @@ except ModuleNotFoundError:  # standalone (plugin tests, no host on path)
         stream_sample_rate = None
 
 
+def _pcm_of(wav: bytes) -> tuple[bytes, int]:
+    """Raw int16 mono frames + rate from a WAV (the streaming wire format)."""
+    with wave.open(io.BytesIO(wav)) as w:
+        if w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise RuntimeError("wearkit-gateway: expected 16-bit mono engine wav")
+        return w.readframes(w.getnframes()), w.getframerate()
+
+
+def _pcm_stretch(frames: bytes, speed: float) -> bytes:
+    """Time-compress raw int16 mono by `speed` (linear interpolation; audioop is
+    gone in 3.13+ and stdlib has no WSOLA — see _stretch for the honest rationale)."""
+    samples = [int.from_bytes(frames[i:i + 2], "little", signed=True)
+               for i in range(0, len(frames) - len(frames) % 2, 2)]
+    out = bytearray()
+    pos, n = 0.0, len(samples)
+    while pos < n - 1:
+        i = int(pos); frac = pos - i
+        v = int(samples[i] * (1 - frac) + samples[i + 1] * frac)
+        out += v.to_bytes(2, "little", signed=True)
+        pos += speed
+    return bytes(out)
+
+
 def _stretch(wav: bytes, speed: float) -> bytes:
     """Time-compress by `speed` (linear-interpolated), header UNCHANGED — so the
     clip plays `speed`× shorter with pitch up `speed`× (turntable law; audioop is
@@ -52,25 +75,26 @@ def _stretch(wav: bytes, speed: float) -> bytes:
         frames = w.readframes(w.getnframes())
     if width != 2:
         return wav  # we only ever emit 16-bit; anything else ships untouched
-    samples = [int.from_bytes(frames[i:i + 2], "little", signed=True)
-               for i in range(0, len(frames) - len(frames) % 2, 2)]
-    step, out = speed, bytearray()
-    pos = 0.0
-    n = len(samples)
-    while pos < n - 1:
-        i = int(pos); frac = pos - i
-        v = int(samples[i] * (1 - frac) + samples[i + 1] * frac)
-        out += v.to_bytes(2, "little", signed=True)
-        pos += step
+    out = _pcm_stretch(frames, speed)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setparams((chans, width, rate, 0, "NONE", "not compressed"))
-        w.writeframes(bytes(out))
+        w.writeframes(out)
     return buf.getvalue()
 
 
 class WearKitGatewayProvider(TTSProvider):
-    """'WearKit Gateway': all Hermes TTS rides the Wear Kit's NeuTTS Air worker."""
+    """'WearKit Gateway': all Hermes TTS rides the Wear Kit's NeuTTS Air worker.
+
+    STREAMS (owner ruling 2026-11-10): the desktop speaker owns the sentence
+    splitter (SentenceChunker in tools/tts_streaming.py) — declaring streams_pcm
+    means a live reply starts playing at SENTENCE ONE while later sentences are
+    still rendering, instead of the whole paragraph synthesizing first. Each
+    stream() call still guards itself through voiceout's per-sentence cache."""
+
+    streams_pcm = True
+    stream_sample_rate = 24000        # the engine's true rate (measured header);
+                                      # a drift raises rather than plays garbled
 
     @property
     def name(self) -> str:
@@ -100,11 +124,26 @@ class WearKitGatewayProvider(TTSProvider):
         voices = self.list_voices()
         return voices[0]["id"] if voices else None
 
+    def _resolve_voice(self, voice: Optional[str]) -> Optional[str]:
+        """Voice law: explicit settings voice > this agent's pane binding > global
+        binding > the single configured card. The Voice-out card's dropdown IS
+        'the currently selected voice'; dictation must not refuse just because no
+        one ever wrote a 'desktop' binding."""
+        if voice:
+            return voice
+        voiceout = _voiceout()
+        prefs = voiceout.read_prefs()
+        vm = prefs.get("voices") or {}
+        cards = prefs.get("cards") or {}
+        return (vm.get("desktop") or vm.get("__default__")
+                or (next(iter(cards)) if len(cards) == 1 else "")) or None
+
     def synthesize(self, text: str, output_path: str, *,
                    voice: Optional[str] = None, model: Optional[str] = None,
                    speed: Optional[float] = None, format: str = "mp3",
                    **extra: Any) -> str:
         voiceout = _voiceout()
+        voice = self._resolve_voice(voice)
         r = voiceout.synthesize(text, "desktop", want_words=False, card_id=voice)
         if not r or not r.get("ok") or not r.get("audio"):
             raise RuntimeError("wearkit-gateway: " + str(
@@ -119,6 +158,28 @@ class WearKitGatewayProvider(TTSProvider):
         with open(out, "wb") as f:
             f.write(audio)
         return out
+
+    def stream(self, text: str, *, voice: Optional[str] = None,
+               model: Optional[str] = None, speed: Optional[float] = None,
+               format: str = "pcm", **extra: Any):
+        """Yield int16 mono PCM at stream_sample_rate, one chunk per sentence."""
+        voiceout = _voiceout()
+        voice = self._resolve_voice(voice)
+        eff = float(speed) if speed else \
+            float((voiceout.read_prefs().get("global") or {}).get("speed") or 1.0)
+        for sent in voiceout._sentences(text):
+            r = voiceout.synthesize(sent, "desktop", want_words=False,
+                                    card_id=voice)
+            if not r or not r.get("ok") or not r.get("audio"):
+                raise RuntimeError("wearkit-gateway: " + str(
+                    (r or {}).get("error") or "no audio"))
+            frames, rate = _pcm_of(r["audio"])
+            if rate != self.stream_sample_rate:
+                raise RuntimeError(
+                    "wearkit-gateway: engine rate drift %d != declared %d"
+                    % (rate, self.stream_sample_rate))
+            yield _pcm_stretch(frames, eff) if eff and abs(eff - 1.0) > 0.001 \
+                else frames
 
 
 def register(ctx) -> None:

@@ -750,6 +750,31 @@ class ProtocolRefusal(RuntimeError):
 _WORKER = None
 _QUEUED = 0        # in-flight/queued requests — the pane's live "what is happening" number
 _LAST_OK = 0.0     # epoch of the last successful render (warm-truth for the chip)
+_SHUTTING_DOWN = False
+
+
+def _shutdown_worker() -> None:
+    """Resident workers must die with the gateway, not linger as orphans holding
+    3.4 GB (and must never block a graceful stop: terminate-then-kill, 2 s grace).
+    Registered via atexit — SIGTERM under systemd lands here, and the boot-warm
+    thread checks the flag so a shutdown can't be re-ignited by a late warm."""
+    global _SHUTTING_DOWN, _WORKER
+    _SHUTTING_DOWN = True
+    w = _WORKER
+    _WORKER = None
+    if w and w.poll() is None:
+        try:
+            w.terminate()
+            try:
+                w.wait(2)                      # polite exit first...
+            except Exception:
+                w.kill()                       # ...then the axe (2 s grace max)
+        except OSError:
+            pass
+
+
+import atexit as _atexit            # noqa: E402  (next to the lifecycle state)
+_atexit.register(_shutdown_worker)
 
 
 def engine_state() -> dict:
@@ -812,6 +837,8 @@ def _worker_request(req: dict) -> None:
     total, rotating the sampler seed after each failure (degenerate generations
     are per-draw, not per-worker)."""
     global _WORKER, _NEXT, _QUEUED, _LAST_OK
+    if _SHUTTING_DOWN:
+        raise RuntimeError("engine shutting down")   # never re-ignite during stop
     ticket = next(_TICK)
     with _READY:
         _QUEUED += 1

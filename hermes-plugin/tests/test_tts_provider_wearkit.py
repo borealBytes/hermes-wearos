@@ -94,3 +94,82 @@ def test_synthesize_raises_honestly_when_engine_absent(tmp_path, monkeypatch):
             assert "wearkit-gateway" in str(exc)
     finally:
         voiceout._SYNTH.update(saved)
+
+
+LONG3 = ("The wear kit speaks every long reply sentence by sentence now. "
+         "Each sentence is its own short generation, streamed to the speaker "
+         "as raw PCM so playback starts while the rest is still rendering. "
+         "Nobody waits for a giant paragraph to finish before hearing a word.")
+
+
+def test_provider_declares_pcm_streaming():
+    p = tts_provider.WearKitGatewayProvider()
+    assert p.streams_pcm is True
+    assert p.stream_sample_rate == 24000
+
+
+def _fake_engine(monkeypatch, texts, wav=None):
+    import voiceout
+    _no_cache(monkeypatch)
+    seen = []
+
+    def air(text, card, speed):
+        seen.append(text)
+        return (wav or _sine_wav(0.5)), 24000
+    monkeypatch.setitem(voiceout._SYNTH, "air", air)
+    monkeypatch.setattr(voiceout, "read_prefs",
+                        lambda: {"rev": 1, "cards": {}, "global": {"speed": 1.0},
+                                 "modes": {}})
+    return seen
+
+
+def test_stream_yields_one_pcm_chunk_per_sentence(monkeypatch):
+    seen = _fake_engine(monkeypatch, None)
+    p = tts_provider.WearKitGatewayProvider()
+    chunks = list(p.stream(LONG3, speed=None))
+    assert len(seen) == 3 and seen == voiceout_sentences()
+    assert len(chunks) == 3
+    for c in chunks:
+        assert isinstance(c, bytes) and len(c) % 2 == 0 and len(c) > 0
+    with wave.open(io.BytesIO(_sine_wav(0.5))) as w:
+        expected = len(w.readframes(w.getnframes()))
+    assert all(len(c) == expected for c in chunks)      # dial 1.0 = pass-through
+
+
+def voiceout_sentences():
+    import voiceout
+    return voiceout._sentences(LONG3)
+
+
+def test_stream_applies_speed_to_raw_pcm(monkeypatch):
+    _fake_engine(monkeypatch, None)
+    p = tts_provider.WearKitGatewayProvider()
+    chunks = list(p.stream("One short sentence.", speed=1.5))
+    assert len(chunks) == 1
+    assert abs(len(chunks[0]) - int(0.5 * 24000 * 2 / 1.5)) < 2400 * 2  # 1.5x shorter
+
+
+def test_stream_rate_drift_raises_not_garble(monkeypatch):
+    import voiceout
+    _no_cache(monkeypatch)
+    monkeypatch.setitem(voiceout._SYNTH, "air",
+                        lambda text, card, speed: (_sine_wav(0.4, rate=16000), 16000))
+    monkeypatch.setattr(voiceout, "read_prefs",
+                        lambda: {"rev": 1, "cards": {}, "global": {"speed": 1.0},
+                                 "modes": {}})
+    p = tts_provider.WearKitGatewayProvider()
+    try:
+        list(p.stream("Drift check.", speed=None))
+        assert False, "a wrong rate must raise, never play chipmunk"
+    except RuntimeError as exc:
+        assert "drift" in str(exc)
+
+
+def test_resolve_voice_falls_back_to_the_single_card(monkeypatch):
+    import voiceout
+    monkeypatch.setattr(voiceout, "read_prefs", lambda: {
+        "rev": 3, "cards": {"clay-synth-eff920cd": {"label": "clay-synth"}},
+        "voices": {"__default__": "clay-synth-eff920cd"}, "global": {}, "modes": {}})
+    p = tts_provider.WearKitGatewayProvider()
+    assert p._resolve_voice(None) == "clay-synth-eff920cd"
+    assert p._resolve_voice("explicit-card") == "explicit-card"
