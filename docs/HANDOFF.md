@@ -10,6 +10,7 @@
 - **Pane settings honesty:** every secret description now names its admin URL + exact scopes; the APK line warns REUSABLE/non-ephemeral (the trap that ate the evening). Same links ride the Pair card as anchors.
 - **The (o) batch (owner: "swipe between chat/sessions/agents… should only show the enabled ones"):** watchkit `/agents` filters by the plugin grant map (mtime-hot, `pairing_store` pin, HERMES_HOME NOT trusted — a named-profile shell poisoned the first deploy); MainActivity `SwipeForward` restores the ring's forward leg for fingers (left-drag advances; right-drag yields to edge-back). JVM tests + install proven on the Ultra: picker shows exactly the pane's ticks.
 - **Still open tonight:** owner eyeball of swipe paging + checkbox toggle on the live watch; <90 s X video; catalog PR blurb; Typeform. Box hygiene owed: 27 orphaned desktop-ssh connectors, `linux-gpu-fallback.json` SwiftShader pin, `mcp-stderr.log` 415 MB truncate.
+- **No-flash enable (2d70053):** `/enable` now splices the mutated row into the cache synchronously (`refresh_inventory_row`) — the pane's next fetch answers the click; fan-out runs behind. Electron lesson: manual cp of `~/.hermes/desktop-plugins/wearos/plugin.js` does NOT hot-reload a running desktop app (only install events do) — after cp, the owner must quit & reopen the Hermes desktop, not just the pane tab. This explains the 'flashes' surviving two earlier deploys.
 
 
 ## 2026-11-10 (late) boundary — GPU slice + twin fix live; DESKTOP READ-ALOUD NOW STREAMS (contest ruling)

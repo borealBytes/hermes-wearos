@@ -2418,3 +2418,13 @@ Two provable halves of one ruling, both hardware-driven same evening:
    uses; a rightward drag cancels early so edge-back keeps its gesture; vertical
    scrolling bows out on child consumption. One mapping, two input paths — no new
    destination, the Agents overlay stays the dialog it became in batch 6.
+- **(o) addendum, same night — no-flash enable.** With the pane overlay deployed the
+  box still jumped back: the click HAD landed (grants proved it — the watch showed
+  the agent), but serve-stale + background fan-out converges the snapshot only in
+  seconds, and the pane refetches instantly. `refresh_inventory_row(profile)` now
+  re-reads the MUTATED profile's row synchronously (one CLI) and splices/appends it
+  into the cache before `/enable` returns; the fan-out invalidation still runs
+  behind. Locked by `test_enable_row_is_true_in_the_very_next_status`. (Electron
+  note: the published pane half refreshes on INSTALL events — after a manual cp of
+  the half, the desktop app must actually restart; a tab reopen reuses the loaded
+  module. This is why the owner's 'flashes' persisted through two deploys.)
