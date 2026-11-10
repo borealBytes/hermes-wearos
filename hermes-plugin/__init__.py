@@ -137,8 +137,24 @@ def _profile_home(profile: str) -> Optional[Path]:
     refusing (same regex hermes_cli.profiles enforces)."""
     profile = str(profile or "default").strip().lower()
     try:
-        from hermes_constants import PROFILE_ID_RE, get_default_hermes_root
-        root = Path(get_default_hermes_root())
+        from hermes_constants import PROFILE_ID_RE
+        # HERMES_HOME wins first: it is THE active-profile root contract (pairing
+        # store, cards, prefs all resolve under it). get_default_hermes_root()
+        # ignores it when config-root detection finds a real ~/.hermes on disk —
+        # inside a sandbox or a relocated home that quietly points at the wrong
+        # root (measured 2026-11-09, the grant-law test caught it).
+        env_home = os.environ.get("HERMES_HOME", "").strip()
+        root = None
+        if env_home:
+            h = Path(env_home)
+            # HERMES_HOME is either the root (default profile) or a named
+            # profile home <root>/profiles/<name> — same layout test as
+            # _running_profile above.
+            root = h.parent.parent if (h.parent.name == "profiles" and
+                                       h.name != "default") else h
+        if root is None:
+            from hermes_constants import get_default_hermes_root
+            root = Path(get_default_hermes_root())
         if profile == "default":
             return root
         if PROFILE_ID_RE.fullmatch(profile):
