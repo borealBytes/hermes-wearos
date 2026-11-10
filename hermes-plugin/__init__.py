@@ -517,6 +517,7 @@ def _voiceout_prewarm() -> None:
             if not st.get("engine") or not st.get("cards"):
                 return                 # nothing to speak with yet; honest no-op
             voiceout.synthesize(_PREWARM_TEXT, "default", want_words=False)
+            voiceout._warm_audition()  # also cache each card's OWN line — the picker's ▶
         except Exception:
             logger.debug("voice prewarm skipped", exc_info=True)
 

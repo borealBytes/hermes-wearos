@@ -30,7 +30,9 @@ the route layer — every caller gets it, including the watch lane.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
+import select
 import os
 import shutil
 import threading
@@ -549,77 +551,86 @@ def _download(url: str, dest: Path, nbytes: int = 0,
 # ------------------------------------------------------------------ synthesis
 
 RUNNER_SRC = '''\
-"""NeuTTS Air runner — the ONLY code that touches torch/llama-cpp (fixed argv).
+"""NeuTTS Air runner — the ONLY code that touches torch/llama-cpp.
 
-Spawns fresh per synth (voiceout.py: an engine crash must not take the gateway),
-writes a 24 kHz mono PCM16 wav to --out. Reference codes are cached beside the
-card wav (upstream's own pattern) so repeat synths skip encode_reference.
+Serves ONE warm model per gateway (owner ruling 2026-11-10: the spawn-per-
+sentence era piled ten 3.4 GB pythons onto boot and turned every dial move
+into a minutes-long wait). `--serve` reads one JSON request per stdin line
+{cmd?, text_file, ref_wav, ref_text, out, seed, temperature, top_k} and
+answers {"ok": true|false, error?} per line; a crash still cannot take the
+gateway down because the parent respawns and retries once. Without --serve
+the OLD fixed-argv one-shot contract stands (tests, dev). Reference codes
+are cached per ref wav (upstream's own pattern) — the second sentence on a
+card skips encode_reference entirely.
 
 Generation runs at the RAW-TOKEN level on purpose (measured 2026-11-09):
 llama_cpp_python 0.3.36 (what neutts' unpinned `llama` extra resolves to today)
 strips CONTROL tokens from the rendered completion text, so upstream's
 regex-on-text sees "no valid speech tokens" and dies even though the model is
 speaking. We iterate .generate() ids and resolve names from the GGUF vocab
-ourselves — immune to the renderer. Same reason we accept a local codec DIR:
-neutts 1.4.1 allowlists the gated repo ids; the ungated HF-layout port loads
-through the same torchtune path (its own _from_pretrained minus the download).
+ourselves — immune to the renderer.
 """
-import argparse, os, re, struct, sys, wave
+import argparse, json, os, re, select, sys, wave
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True)
-    ap.add_argument("--text-file", required=True)
-    ap.add_argument("--ref-wav", required=True)
-    ap.add_argument("--ref-text", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--codec", default="neuphonic/neucodec")
-    ap.add_argument("--temperature", type=float, default=0.7)
-    ap.add_argument("--top-k", type=int, default=50)
-    a = ap.parse_args()
-    text = open(a.text_file, encoding="utf-8").read()
-    codes_path = a.ref_wav + ".codes.pt"
+SPEECH = re.compile(r"^<\\|speech_(\\d+)\\|>$")
+IDLE_EXIT_S = 900   # a parked 3.4 GB worker should not squat forever
+_TTS = None
+_NAMES = None
+_CODES = {}
+
+
+def _tts(model, codec, seed):
+    global _TTS
+    if _TTS is None:
+        import torch
+        from neutts import NeuTTS
+        # language is REQUIRED when the backbone is a local GGUF (neutts infers it
+        # only from Neuphonic repo ids; measured 2026-11-09). en-us = the kit pin.
+        # The codec is the OFFICIAL gated repo id, never a dir: neutts AND neucodec
+        # both hard-assert the two repo-id strings (local dirs assert) — except the
+        # kit's pinned community port dir, which loads through the same path.
+        _TTS = NeuTTS(backbone_repo=model, language="en-us", backbone_device="cpu",
+                      codec_repo=codec, codec_device="cpu", seed=seed)
+    return _TTS
+
+
+def _names(tts):
+    global _NAMES
+    if _NAMES is None:
+        from gguf import GGUFReader
+        _NAMES = {i: (t.decode() if isinstance(t, bytes) else str(t))
+                  for i, t in enumerate(GGUFReader(tts.backbone.model_path)
+                                         .fields["tokenizer.ggml.tokens"].contents())}
+    return _NAMES
+
+
+def synth_one(tts, text, ref_wav, ref_text, out, seed, temperature, top_k):
     import torch
-    from neutts import NeuTTS
-    # language is REQUIRED when the backbone is a local GGUF (neutts infers it
-    # only from Neuphonic repo ids; measured 2026-11-09). en-us = the kit's pin.
-    # The codec is the OFFICIAL gated repo id, never a dir: neutts AND neucodec
-    # both hard-assert the two repo-id strings (local dirs assert), and the
-    # community HF 'port' is the paper's model, not this package's (measured:
-    # every audio frame -> ONE code). hf_hub_download picks up HF_TOKEN/HF_HOME
-    # from the env voiceout.synth sets. The ungated community mirrors cover the
-    # BACKBONE; the codec token is the one honest requirement (rule 13).
-    tts = NeuTTS(backbone_repo=a.model, language="en-us", backbone_device="cpu",
-                 codec_repo=a.codec, codec_device="cpu", seed=a.seed)
-    if os.path.isfile(codes_path):
+    codes_path = ref_wav + ".codes.pt"
+    if codes_path in _CODES:
+        ref_codes = _CODES[codes_path]
+    elif os.path.isfile(codes_path):
         ref_codes = torch.load(codes_path, weights_only=True)
+        _CODES[codes_path] = ref_codes
     else:
-        ref_codes = tts.encode_reference(a.ref_wav)
+        ref_codes = tts.encode_reference(ref_wav)
         torch.save(ref_codes, codes_path)
-
-    # raw-token generation (see module docstring)
+        _CODES[codes_path] = ref_codes
     bb = tts.backbone
-    ref_text = open(a.ref_text, encoding="utf-8").read()   # argv carries the PATH (file contract)
     prompt = tts._ggml_prompt(ref_codes, ref_text, text)
     ids = bb.tokenize(prompt.encode(), add_bos=True, special=True)
     end_id = bb.tokenize(b"<|SPEECH_GENERATION_END|>",
                          add_bos=False, special=True)[0]
     try:
-        bb.seed(a.seed)  # llama_cpp 0.3.x: per-call sampler reseed
+        bb.seed(seed)  # llama_cpp 0.3.x: per-call sampler reseed
     except Exception:
         pass
-    from gguf import GGUFReader
-    names = {}
-    for i, t in enumerate(GGUFReader(bb.model_path)
-                          .fields["tokenizer.ggml.tokens"].contents()):
-        names[i] = t.decode() if isinstance(t, bytes) else str(t)
-    SPEECH = re.compile(r"^<\\|speech_(\\d+)\\|>$")
+    names = _names(tts)
     pieces, ended = [], False
     # repeat_penalty 1.1 = the llama.cpp eval default the vendor's __call__ path
     # gets for free; our raw loop must pass it explicitly (speech token streams
     # loop without it — measured 2026-11-09: rp absent → single-token buzz).
-    for t in bb.generate(ids, temp=a.temperature, top_k=a.top_k,
+    for t in bb.generate(ids, temp=temperature, top_k=top_k,
                          repeat_penalty=1.1, reset=True):
         if t == -1:
             continue
@@ -635,19 +646,65 @@ def main():
         if len(pieces) >= tts.max_context:
             break  # same token budget the vendor's infer() passes to llama
     if not pieces:
-        raise SystemExit("runner: model produced no speech tokens (temp "
-                         f"{a.temperature}, seed {a.seed})")
-    if not ended:
-        # truncated at the context ceiling: decode what we have, say so
-        print("runner: generation hit the context ceiling without an END token",
-              file=sys.stderr)
+        raise RuntimeError("model produced no speech tokens (temp %s, seed %s)"
+                           % (temperature, seed))
     wav = tts._decode("".join(pieces))
     if getattr(tts, "watermarker", None) is not None:
         wav = tts.watermarker.apply_watermark(wav, sample_rate=tts.sample_rate)
     pcm = (wav * 32767).clip(-32768, 32767).astype("int16")
-    with wave.open(a.out, "wb") as w:
+    with wave.open(out, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(tts.sample_rate)
         w.writeframes(pcm.tobytes())
+    return ended
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--codec", default="neuphonic/neucodec")
+    ap.add_argument("--serve", action="store_true")
+    ap.add_argument("--text-file")
+    ap.add_argument("--ref-wav")
+    ap.add_argument("--ref-text")
+    ap.add_argument("--out")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--temperature", type=float, default=0.7)
+    ap.add_argument("--top-k", type=int, default=50)
+    a = ap.parse_args()
+    if a.serve:
+        tts = _tts(a.model, a.codec, a.seed)
+        while True:
+            r, _, _ = select.select([sys.stdin], [], [], IDLE_EXIT_S)
+            if not r:
+                return 0                  # idle reaper: parent respawns on demand
+            line = sys.stdin.readline()
+            if not line:
+                return 0
+            try:
+                req = json.loads(line)
+            except ValueError:
+                continue
+            if req.get("cmd") == "quit":
+                return 0
+            try:
+                text = open(req["text_file"], encoding="utf-8").read()
+                ref_text = open(req["ref_text"], encoding="utf-8").read()
+                synth_one(tts, text, req["ref_wav"], ref_text, req["out"],
+                          int(req.get("seed", a.seed)),
+                          float(req.get("temperature", a.temperature)),
+                          int(req.get("top_k", a.top_k)))
+                sys.stdout.write(json.dumps({"ok": True}) + "\\n")
+            except Exception as exc:
+                sys.stdout.write(json.dumps({"ok": False,
+                                             "error": str(exc)[:300]}) + "\\n")
+            sys.stdout.flush()
+    if not (a.text_file and a.ref_wav and a.ref_text and a.out):
+        raise SystemExit("one-shot mode needs --text-file/--ref-wav/--ref-text/--out")
+    text = open(a.text_file, encoding="utf-8").read()
+    ref_text = open(a.ref_text, encoding="utf-8").read()
+    synth_one(_tts(a.model, a.codec, a.seed), text, a.ref_wav, ref_text, a.out,
+              a.seed, a.temperature, a.top_k)
+
 
 main()
 '''
@@ -658,6 +715,80 @@ def write_runner() -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(RUNNER_SRC)
     return p
+
+
+_WORKER = None
+# ONE model, ONE synthesis at a time, IN ARRIVAL ORDER (owner ruling
+# 2026-11-10: "one TTS engine, FIFO queue in front of it — one agent speaks
+# at a time on the watch"). threading.Lock has no fairness promise, so the
+# gate is an explicit ticket line: whoever asked first talks first.
+_TICK = itertools.count()
+_READY = threading.Condition()
+_NEXT = 0
+
+
+def _runner_env() -> dict:
+    env = dict(os.environ, HF_HOME=str(_root() / "cache"),
+               HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()))
+    for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
+        env.pop(_k, None)   # host interpreter paths must not shadow the venv
+    tok = _hf_token()
+    if tok:
+        env["HF_TOKEN"] = tok
+    return env
+
+
+def _serve_argv() -> list:
+    _, s = _source()
+    return [str(_root() / "venv" / "bin" / "python"),
+            str(_root() / "air_runner.py"),
+            "--serve",
+            "--model", str(_root() / "model" / s["file"]),
+            "--codec", str(_root() / "codec") if s["codec"]["kind"] == "port"
+                       else s["codec"]["repo"]]
+
+
+def _worker_request(req: dict) -> None:
+    """One line in, one line out against the warm model. Respawn-once keeps the
+    crash-isolation law (an engine fault cannot wedge the lane or take the
+    gateway): death/timeout/refusal → SIGKILL → fresh worker → one retry."""
+    global _WORKER, _NEXT
+    ticket = next(_TICK)
+    with _READY:
+        while ticket != _NEXT:
+            _READY.wait()
+        try:
+            for attempt in (1, 2):
+                w = _WORKER
+                if w is None or w.poll() is not None:
+                    write_runner()
+                    _WORKER = w = subprocess.Popen(
+                        _serve_argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, env=_runner_env())
+                try:
+                    w.stdin.write(json.dumps(req) + "\n")
+                    w.stdin.flush()
+                    rd, _, _ = select.select([w.stdout], [], [], SYNTH_TIMEOUT)
+                    if not rd:
+                        raise TimeoutError("engine busy over %s s" % SYNTH_TIMEOUT)
+                    line = w.stdout.readline()
+                    if not line:
+                        raise OSError("worker died mid-request")
+                    res = json.loads(line)
+                    if not res.get("ok"):
+                        raise RuntimeError(res.get("error") or "runner refused")
+                    return
+                except Exception as exc:
+                    try:
+                        w.kill()
+                    except OSError:
+                        pass
+                    _WORKER = None
+                    if attempt == 2:
+                        raise RuntimeError("engine failed: " + str(exc)[:400]) from exc
+        finally:
+            _NEXT += 1
+            _READY.notify_all()
 
 
 def _synth_argv(text: str, ref_wav: Path, ref_text: str, out_wav: Path) -> list:
@@ -750,21 +881,16 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
     # UNIQUE per call: two synths on the fixed name raced (killed client's
     # server-side thread keeps writing after the POST dies — measured 500 via
     # take-6). Siblings (.txt/.ref.txt from _synth_argv) are removed with it.
-    env = dict(os.environ, HF_HOME=str(_root() / "cache"),
-               HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()))
-    for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
-        env.pop(_k, None)   # host interpreter paths must not shadow the venv
-    tok = _hf_token()
-    if tok:
-        env["HF_TOKEN"] = tok
     rate, pcm = 0, b""
     try:
         for i, chunk in enumerate(_sentences(text)):
             argv = _synth_argv(chunk, ref_wav, ref_text, out)
-            proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=SYNTH_TIMEOUT, env=env)
-            if proc.returncode != 0:
-                raise RuntimeError("engine failed: " + (proc.stderr or "")[-400:])
+            def arg(flag):
+                return argv[argv.index(flag) + 1]
+            _worker_request({"text_file": arg("--text-file"),
+                             "ref_wav": arg("--ref-wav"),
+                             "ref_text": arg("--ref-text"),
+                             "out": arg("--out")})
             r, p = _pcm_from_wav(out.read_bytes())
             if i:
                 pcm += b"\x00\x00" * (r * 30 // 1000)   # 30 ms seam gap (demo-proven)

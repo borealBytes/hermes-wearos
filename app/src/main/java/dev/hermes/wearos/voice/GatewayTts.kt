@@ -203,30 +203,33 @@ object GatewayTts {
 
     /**
      * ▶ on a voice row: audition THAT card through the real pipeline — global dial speed,
-     *  ref_rate-normalized, reply-volume gain — not the flat reference wav. Falls back to
-     *  the raw card wav when the engine can't speak (an honest lesser sound, never silence).
+     *  ref_rate-normalized, reply-volume gain. The gateway-side law (owner 2026-11-10):
+     *  ONE warm TTS worker, FIFO queue in front of it, so the tap answers in seconds, not
+     *  minutes — and the clip is exactly the speed/volume an answer would ride. The flat
+     *  reference wav is only the honest fallback when the engine genuinely can't speak
+     *  (it speaks at its own pace, so we don't volunteer it while the queue is merely busy).
      */
     fun previewCard(cardId: String, agent: String) {
         val base = laneBase()
         val ctx = appContext
         if (base.isEmpty() || ctx == null) return
+        val gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
+            .getOrDefault(1f)
         val text = transcripts[cardId].orEmpty().ifEmpty {
             dev.hermes.wearos.domain.TtsConfig.PREVIEW_TEXT }
         try {
-            val parsed = postChecked(JSONObject().put("text", text).put("agent", agent)
-                .put("card_id", cardId).put("words", false).put("accept_opus", true), base)
+            val client = http.newBuilder().readTimeout(600, TimeUnit.SECONDS).build()
+            val parsed = postChecked(client,
+                JSONObject().put("text", text).put("agent", agent)
+                    .put("card_id", cardId).put("words", false).put("accept_opus", true), base)
             val b64 = parsed.optString("audio_wav_b64")
                 .ifEmpty { parsed.optString("audio_opus_b64") }
             if (b64.isEmpty()) error("no audio in answer")
             MediaPlayerHolder.playBytes(ctx, Base64.getDecoder().decode(b64),
-                parsed.optString("content_type").ifEmpty { "audio/wav" },
-                gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
-                    .getOrDefault(1f))
+                parsed.optString("content_type").ifEmpty { "audio/wav" }, gain = gain)
         } catch (e: Exception) {
             Log.i(TAG, "card audition via synth failed (${e.message}) — playing reference wav")
-            MediaPlayerHolder.play(ctx, "$base/voice/card_wav?card_id=$cardId",
-                gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
-                    .getOrDefault(1f))
+            MediaPlayerHolder.play(ctx, "$base/voice/card_wav?card_id=$cardId", gain = gain)
         }
     }
 
@@ -286,16 +289,18 @@ object GatewayTts {
     }
 
     /** POST and unwrap the lane's error shape ({ok:false,error:…} on any status). */
-    private fun postChecked(body: JSONObject, base: String): JSONObject {
-        val p = post(body, base)
+    private fun postChecked(body: JSONObject, base: String,
+                            client: okhttp3.OkHttpClient = http): JSONObject {
+        val p = post(body, base, client)
         if (p.optString("error").isNotEmpty()) throw IOException(p.getString("error"))
         return p
     }
 
-    private fun post(body: JSONObject, base: String): JSONObject {
+    private fun post(body: JSONObject, base: String,
+                     client: okhttp3.OkHttpClient = http): JSONObject {
         val req = Request.Builder().url("$base/voice/synthesize")
             .post(body.toString().toRequestBody(JSON)).build()
-        http.newCall(req).execute().use { resp ->
+        client.newCall(req).execute().use { resp ->
             val text = resp.body?.string() ?: "{}"
             return JSONObject(text.ifEmpty { "{}" })   // error bodies ride {ok:false,error:…}
         }

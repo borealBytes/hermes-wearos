@@ -1574,6 +1574,7 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
 
 ### 19.4 Amendment log (append-only; dated; never rewrite history)
 
+
 - **2026-11-09 (weardev)** — docs commit `2b16c8e` announced "SPEC §14 voice-out
   milestone + amendment log" but its diff touched only AGENTS.md/CONTRIBUTING.md:
   the voice-out section never landed in docs/SPEC.md. Numbering collision too —
@@ -1714,6 +1715,25 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   per-agent gain to lane clips (ExoPlayer volume) and the speed slider IS the one
   global dial (PUT `global.speed`), so what you tune is what you hear in the
   shipped voice.
+
+- **2026-11-10 (audition + tab, owner ruling):** Preview lives in exactly one place:
+  the ▶ on a voice row. It POSTs /voice/synthesize with a `card_id` override so the
+  audition is the same pipeline an answer rides (ref_rate normalization × the ONE global
+  dial) and honors the reply-volume gain client-side. Sliders commit silently — dragging
+  must never spam the engine. Latency law: the reference wav plays at tap; the pipeline
+  clip replaces it when ready; the gateway pre-warms every card's own transcript at its
+  own line (boot / create / speed change) so repeat taps are cache hits. Desktop sidebar
+  tabs come from /api/panes (hermes-dashboard.service, discovered at boot) — plugin
+  reinstalls require `systemctl --user restart hermes-dashboard`, not a desktop relaunch.
+
+- **2026-11-10 (engine economy, owner ruling):** the gateway keeps EXACTLY ONE NeuTTS
+  Air worker (serve-loop runner: one model load, JSON-lines, 900 s idle reaper, respawn-
+  once on death) fronted by an explicit FIFO ticket gate — first ask first voice, because
+  one agent speaks at a time on the wrist. Reply speed law re-confirmed: the pipeline
+  clip is time-scaled by the live global dial; a card reference NEVER reflects the dial
+  (that's why the ref-first audition must swap to the scaled clip before the owner judges
+  pace). Dashboard pane discovery scans profile-scope roots FIRST — dev-sync must write
+  every plugin root and bounce hermes-dashboard.
 
 ## Appendix A — Landed slices (build log, newest first)
 

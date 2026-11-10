@@ -126,6 +126,7 @@ def merge_prefs(remote: dict) -> dict:
             rrev = 0
         if rrev <= int(local.get("rev", 1)):
             return local                      # gateway is same-or-newer; watch adopts
+        speed_before = (local.get("global") or {}).get("speed")
         for section in ("global", "modes", "voices", "cards"):
             delta = remote.get(section) or {}
             if isinstance(delta, dict):
@@ -133,7 +134,10 @@ def merge_prefs(remote: dict) -> dict:
                 merged.update(delta)
                 local[section] = merged
         local["rev"] = rrev
-        return _bump(_save_and_return(local))
+        out = _bump(_save_and_return(local))
+        if (out.get("global") or {}).get("speed") != speed_before:
+            _warm_audition()     # the dial moved (pane or wrist) — re-warm at the new rate
+        return out
 
 
 def _save_and_return(prefs: dict) -> dict:
@@ -167,8 +171,12 @@ def set_speed(speed: float) -> dict:
     s = max(SPEED_MIN, min(SPEED_MAX, float(speed)))
     with LOCK:
         p = read_prefs()
-        p.setdefault("global", {})["speed"] = round(s, 2)
-        return _save_and_return(p)
+        old = (p.get("global") or {}).get("speed")
+        p.setdefault("global", {})[("speed")] = round(s, 2)
+        out = _save_and_return(p)
+    if old != round(s, 2):
+        _warm_audition()          # the new dial rate needs fresh cache clips
+    return out
 
 
 def set_karaoke(on: bool) -> dict:
@@ -263,6 +271,30 @@ def _voiced_seconds(wav_bytes: bytes, frame_ms: int = 20) -> float:
     return max(0.0, voiced * frame_ms / 1000.0)
 
 
+def _warm_audition() -> None:
+    """Background: synthesize every card's OWN transcript at the live dial speed once.
+    That clip is exactly what the picker's ▶ requests (card_id override + same words),
+    so the first tap answers from the cache instead of paying the per-call model reload
+    (cold engine: minutes on the owner's box). Silent on failure; the cache is the
+    only consumer and the refusal path stays honest."""
+    def run() -> None:
+        try:
+            p = read_prefs()
+            if not _SYNTH:
+                return
+            for cid, m in (p.get("cards") or {}).items():
+                t = m.get("transcript") or ""
+                if not t:
+                    continue
+                try:
+                    synthesize(t, "", want_words=False, card_id=cid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    threading.Thread(target=run, name="voiceout-audition-warm", daemon=True).start()
+
+
 def create_card(wav_bytes: bytes, label: str, source: str = "watch-record",
                 license_: str = "owner-recorded", transcript: Optional[str] = None,
                 seeded: bool = False) -> dict:
@@ -291,6 +323,7 @@ def create_card(wav_bytes: bytes, label: str, source: str = "watch-record",
             **meta,
         }
         _save_and_return(p)
+    _warm_audition()   # a new card should be auditionable the moment it appears
     return {"card_id": card_id, **p["cards"][card_id]}
 
 
@@ -360,9 +393,10 @@ def register_aligner(name: str, fn: Callable) -> None:
 def synthesize(text: str, agent: str, *, want_words: bool = True,
                card_id: Optional[str] = None) -> dict:
     """The watch-facing contract: text in, {audio_opus_b64|pcm_b64, words[], engine,
-    tier_note} out. Rate = GLOBAL speed scaled against the card's measured ref_rate:
-    tokens run at (global_speed * WPM_TARGET/ref_rate_wpm), so 1.0x replays a speaker
-    at THEIR OWN measured pace — a fast speaker's clone never 'fixes' their speed.
+    tier_note} out. Rate = the ONE global dial, applied as-is: 1.0x replays a speaker
+    at THEIR OWN measured pace (ref_rate lives on the card for the day we add target-
+    WPM normalization; measured 2026-11-10: shipping the raw dial matches the owner's
+    ear ruling and no normalization is applied in the engine yet).
     [card_id] overrides the agent's bound voice (the picker's ▶ auditions ANY card at
     the live dial speed, not just the bound one); an unknown id is a refusal (400)."""
     p = read_prefs()

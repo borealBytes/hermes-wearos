@@ -1095,21 +1095,17 @@ fun SettingsScreen(
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.
-        // EAR-TEST rides the SELECTED source (owner 2026-11-10): on the gateway the sliders
-        // preview with the shipped card voice, so what you tune is what you hear. Volume is
-        // the same per-agent gain the gateway clips now honor; on the gateway the speed
-        // slider IS the one global dial (writes global.speed, higher-rev-wins).
+        // EAR-TEST (owner 2026-11-10, second ruling): the ▶ on a voice row is the ONLY
+        // preview — it plays through the real pipeline and respects both knobs (gain on
+        // the player, dial speed on the gateway). Sliders commit SILENTLY like they used
+        // to; dragging must not spam the engine.
         val gwSource = ttsSource == "gateway"
         var gwSpeed by remember { mutableStateOf(if (gw.laneSpeed > 0f) gw.laneSpeed else ttsRate) }
-        fun earTest() {
-            if (!voiceOut) return
-            if (gwSource && gw.available()) gw.preview(agentNow) else speak.preview()
-        }
         VolumeSlider(
             volume = replyVolFor,
             agent = agentNow,
             commit = { speak.setReplyVolume(it) },
-            onDone = { earTest() },
+            onDone = { },
         )
         RateSlider(
             rate = if (gwSource) gwSpeed else ttsRate,
@@ -1119,7 +1115,6 @@ fun SettingsScreen(
                     val v = gwSpeed
                     Thread { gw.setSpeed(v); gwSpeed = gw.laneSpeed.coerceAtLeast(v); gwProbe++ }.start()
                 }
-                earTest()
             },
         )
         // ENGINE row (owner: "choose google/samsung/(other if exists)") — switching packages

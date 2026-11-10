@@ -87,3 +87,46 @@ Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karao
   APK 10:48:27: DEFAULT checkbox on voice rows (writes voices.__default__ over
   the lane, rev+1 read-modify-write), gateway-source ear-test (volume = ExoPlayer
   gain on lane clips, speed slider writes global.speed), prepare-only fix ed66c86.
+
+## 2026-11-10d boundary (weardev)
+- OWNER RULING (audition semantics): the ▶ on a voice row is the ONLY preview — it rides
+  the real pipeline and respects reply volume + dial speed; the sliders commit SILENTLY
+  (no auto-ear-test on release, like before). SettingsScreen onDone hooks stripped to
+  commit-only; previewCard stays.
+- ▶ was SILENT for the owner because a cold engine takes ~5-6 min per fresh cache key
+  (per-gateway-restart model reload) and the watch POST gave up at 60 s. Three fixes:
+  (a) previewCard now plays the card reference INSTANTLY on tap and swaps in the pipeline
+  clip when it lands (tap always answers, cold engine never equals silence), read timeout
+  raised to 600 s on the audition call only; (b) voiceout._warm_audition(): daemon thread
+  caches every card's OWN transcript (exactly the ▶ request) at boot, on card create, and
+  whenever global.speed moves (set_speed + merge_prefs paths) — first tap hits cache;
+  (c) proof it works: the audition clip for clay-synth is already in synth-cache
+  (3b3b6c8e, 170 KB, 10:55) — post-restart taps answer instantly.
+- WEAR KIT TAB MISSING (desktop, next to Sessions/Bots): ROOT CAUSE is NOT Electron —
+  the dashboard systemd unit (hermes-dashboard.service, :9119) serves /api/panes and
+  discovers dashboard plugins ONCE at boot. It started 08:51, before wearos 0.3.0
+  existed. `systemctl --user restart hermes-dashboard` picks the pane up; no desktop
+  relaunch needed. Manifest now carries label "Wear Kit", icon Watch, tab
+  {/wearos, after:bots}. Earlier "needs desktop relaunch" note (2026-11-10b) was wrong.
+
+## 2026-11-10e boundary (weardev) — ONE engine, FIFO queue
+- OWNER RULING (htop screenshot): "one TTS engine loaded on the gateway, FIFO queue in
+  front of it — spawning per sentence is wasteful; one agent speaks at a time."
+  Implemented: air_runner gained --serve (loads torch+backbone+codec ONCE, one JSON
+  request per stdin line, {"ok":…} per stdout line, 900 s idle reaper — parent respawns
+  on demand). tts_air._worker_request is the gate: explicit ticket queue (_TICK/_NEXT +
+  Condition) because threading.Lock has no fairness promise; respawn-once preserves the
+  crash-isolation law (death/timeout/refusal → SIGKILL → fresh worker → one retry → error).
+  Boot/audition storm of ten concurrent 3.4 GB pythons is gone (measured 11:06 htop).
+- WHY ▶ STILL SOUNDED FLAT: at 1.63 dial every synth cache key is cold (keys include the
+  dial), the pipeline clip needed minutes, and the watch POST timed out at 60 s and played
+  the REFERENCE wav (by design) — which carries no dial speed. Fixes shipped together:
+  ref-first audition (instant, swaps to the scaled clip when it lands, 600 s patience on
+  that call), boot/card-create/dial-change audition prewarm (voiceout._warm_audition),
+  and the warm worker (second+ sentences in seconds, not 40 s reloads).
+- STALE PANES ROOT GOTCHA: dashboard discovery scans PROFILE-scope plugin dirs FIRST and
+  first-wins on the name — the weardev profile carried an old wearos copy (manifest without
+  label/tab) so /api/panes served the stale entry even after the launch-scope dir was
+  synced. Sync BOTH roots on every dev bump: ~/.hermes/plugins/wearos AND
+  ~/.hermes/profiles/weardev/plugins/wearos, then restart hermes-dashboard (the desktop
+  renderer only refetches /api/panes at window load → reload the desktop once).
