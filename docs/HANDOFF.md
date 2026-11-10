@@ -3,6 +3,12 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-10 (late) boundary — GPU slice + twin fix live; DESKTOP READ-ALOUD NOW STREAMS (contest ruling)
+
+- **Contest-compliance ruling (owner: "can we rewrite stuff in core?"):** the admission rule ('Public surfaces only') forbids the *plugin* from patching core at runtime — it does not forbid contributing to core. The Wear Kit entry is our plugin repo at a pinned SHA and works on vanilla core (the desktop lag is graceful, not a break). The streaming fix is therefore shipped as a **separate hermes-agent PR**, never as a monkey-patch inside the plugin. Full reasoning: SPEC §19.4(n).
+- **Streaming read-aloud (owner: "start as soon as we have it"):** hermes-agent branch `feat/desktop-read-aloud-stream` @ `318996aa25` — pending replies open a `SpeechStreamSession`, wakes append the tail, `finish()` at seal; server SentenceChunker + our `streams_pcm` provider synthesize sentence one mid-generation. 285 composer-hook tests green (2 new); eslint clean. Packaged desktop app on this box rebuilt from the commit (`wear-desktop-rebuild3`, exit 0 — check `/home/clay/.hermes/profiles/weardev/cache/scratch/desktop_build.log`); owner restarts the Hermes desktop app to pick it up.
+- **Demo caution:** a future `hermes update` restores the vanilla renderer until the core PR merges — reapply `318996aa25` or rebuild before filming the X video.
+
 ## 2026-11-10 (evening) boundary — RESIDENT ENGINE shipped; WearKit provider live; SENTENCE-BY-SENTENCE both lanes; ON-WATCH UI PARKED by owner
 
 - **Resident engine (owner: "keep the model loaded")** shipped: reaper off by default (`WEARKIT_TTS_IDLE_S=900` opt-in), boot-warm thread loads at gateway start, voice switching free (zero-shot per-request refs — only a MODEL-weights swap reloads). README discloses ~3.4 GB RSS + nice(10)/8-thread cap. SPEC §19.4(j).

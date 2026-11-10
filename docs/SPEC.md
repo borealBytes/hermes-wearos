@@ -1866,6 +1866,30 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   nice(10) — the engine shares this box with sglang and the gateway and must never
   outrank either. Proof: the line that failed 3/3 rendered audible (5.26 s,
   peak 25721, T 42 s single reload+retry) with nice=10 observed in ps.
+
+- **2026-11-10 (n): DESKTOP READ-ALOUD STREAMS AS TEXT LANDS — contest-compliant (owner:
+  "make it start as soon as we have it… but we've got to follow the contest rules — can we
+  rewrite stuff in core?").** The lag lived in the desktop client, not the gateway:
+  `use-auto-speak-replies.ts` had `if (!reply || reply.pending) return` — the pending reply
+  was ignored until settle, then spoken whole via POST. Ruled against the admission text
+  (docs ▸ Catalog submission, 'Public surfaces only'): the rule forbids the PLUGIN from
+  patching Hermes code or Desktop markup at runtime; the catalog entry is our plugin repo
+  at a pinned SHA, and it loads and speaks on VANILLA core (graceful lag, no breakage).
+  The fix is therefore a SEPARATE upstream core contribution — exactly what the 'Asking
+  for a hook' section invites — never a runtime monkey-patch shipped in our plugin.
+  The change (hermes-agent `feat/desktop-read-aloud-stream` @ 318996aa25): a pending reply
+  opens a `SpeechStreamSession`; each message wake appends only the text tail; `finish()`
+  at settle. The server's SentenceChunker (same cutter as §19.4(k)) speaks sentence one
+  while the rest still generates, and our provider's `streams_pcm` (§19.4(i)/(k)) means
+  the gateway synthesizes it on the resident GPU worker mid-stream. Invariants held: idle
+  gate (never overlaps clips), cross-window claims (`speak:live:<id>` at open + segment
+  claim at seal), consume-at-seal only (marking spoken mid-stream starves the feed —
+  caught by test), replaced-mid-stream seals honestly, non-streaming providers keep the
+  exact old whole-text POST path. 285 composer-hook tests green (2 new, 283 unchanged);
+  eslint clean; packaged app rebuilt from the committed tree (wear-desktop-rebuild3).
+  Demo-machine consequence: this box's desktop app has the fix; a clean `hermes update`
+  reverts the renderer to vanilla behavior until the core PR merges — reapply from the
+  branch or rebuild before filming.
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
