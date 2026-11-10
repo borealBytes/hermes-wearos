@@ -394,7 +394,14 @@ def _read_profile_key(profile: str) -> str:
     ambient scope. Another profile (device on a granted agent): bind that profile's
     scope explicitly (pure filesystem read, thread-safe)."""
     if profile == _running_profile():
-        return _get_secret("API_SERVER_KEY") or ""
+        k = _get_secret("API_SERVER_KEY") or ""
+        if k:
+            return k
+        # A gateway process that IS the default profile can have an empty ambient
+        # secret scope (systemd EnvironmentFile-less boot, `-I` bootstrap — measured
+        # 2026-11-10: a default-paired watch's lane session died 'has no
+        # API_SERVER_KEY set' while every NAMED profile's file scope resolved fine).
+        # Fall through to the same canonical file route, not process env.
     home = _profile_home(profile)
     if home is None:
         return ""
