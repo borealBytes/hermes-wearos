@@ -520,8 +520,17 @@ RUNNER_SRC = '''\
 Spawns fresh per synth (voiceout.py: an engine crash must not take the gateway),
 writes a 24 kHz mono PCM16 wav to --out. Reference codes are cached beside the
 card wav (upstream's own pattern) so repeat synths skip encode_reference.
+
+Generation runs at the RAW-TOKEN level on purpose (measured 2026-11-09):
+llama_cpp_python 0.3.36 (what neutts' unpinned `llama` extra resolves to today)
+strips CONTROL tokens from the rendered completion text, so upstream's
+regex-on-text sees "no valid speech tokens" and dies even though the model is
+speaking. We iterate .generate() ids and resolve names from the GGUF vocab
+ourselves — immune to the renderer. Same reason we accept a local codec DIR:
+neutts 1.4.1 allowlists the gated repo ids; the ungated HF-layout port loads
+through the same torchtune path (its own _from_pretrained minus the download).
 """
-import argparse, os, struct, sys, wave
+import argparse, os, re, struct, sys, wave
 
 def main():
     ap = argparse.ArgumentParser()
@@ -539,17 +548,78 @@ def main():
     codes_path = a.ref_wav + ".codes.pt"
     import torch
     from neutts import NeuTTS
+
+    class Engine(NeuTTS):
+        def _load_codec(self, repo, device):
+            if os.path.isdir(repo):
+                from neucodec import NeuCodec
+                from safetensors.torch import load_file
+                m = NeuCodec(24_000, 480)
+                sd = load_file(os.path.join(repo, "model.safetensors"))
+                drop = ("fc_post_s", "SemanticDecoder")  # upstream's own ignore list
+                sd = {k: v for k, v in sd.items()
+                      if not any(s in k for s in drop)}
+                m.load_state_dict(sd, strict=False)
+                m.eval()
+                self.codec = m
+                return
+            super()._load_codec(repo, device)
+
     # language is REQUIRED when the backbone is a local GGUF (neutts infers it
     # only from Neuphonic repo ids; measured 2026-11-09). en-us = the kit's pin.
-    tts = NeuTTS(backbone_repo=a.model, language="en-us", backbone_device="cpu",
+    tts = Engine(backbone_repo=a.model, language="en-us", backbone_device="cpu",
                  codec_repo=a.codec, codec_device="cpu", seed=a.seed)
     if os.path.isfile(codes_path):
         ref_codes = torch.load(codes_path, weights_only=True)
     else:
         ref_codes = tts.encode_reference(a.ref_wav)
         torch.save(ref_codes, codes_path)
-    wav = tts.infer(text, ref_codes, a.ref_text,
-                    temperature=a.temperature, top_k=a.top_k)
+
+    # raw-token generation (see module docstring)
+    bb = tts.backbone
+    prompt = tts._ggml_prompt(ref_codes, a.ref_text, text)
+    ids = bb.tokenize(prompt.encode(), add_bos=True, special=True)
+    end_id = bb.tokenize(b"<|SPEECH_GENERATION_END|>",
+                         add_bos=False, special=True)[0]
+    try:
+        bb.seed(a.seed)  # llama_cpp 0.3.x: per-call sampler reseed
+    except Exception:
+        pass
+    from gguf import GGUFReader
+    names = {}
+    for i, t in enumerate(GGUFReader(bb.model_path)
+                          .fields["tokenizer.ggml.tokens"].contents()):
+        names[i] = t.decode() if isinstance(t, bytes) else str(t)
+    SPEECH = re.compile(r"^<\\|speech_(\\d+)\\|>$")
+    pieces, ended = [], False
+    # repeat_penalty 1.1 = the llama.cpp eval default the vendor's __call__ path
+    # gets for free; our raw loop must pass it explicitly (speech token streams
+    # loop without it — measured 2026-11-09: rp absent → single-token buzz).
+    for t in bb.generate(ids, temp=a.temperature, top_k=a.top_k,
+                         repeat_penalty=1.1, reset=True):
+        if t == -1:
+            continue
+        t = int(t)
+        if t == end_id:
+            ended = True
+            break
+        nm = names.get(t, "")
+        if SPEECH.match(nm):
+            pieces.append(nm)
+        elif not nm.startswith("<|"):
+            pieces.append(nm)
+        if len(pieces) >= tts.max_context:
+            break  # same token budget the vendor's infer() passes to llama
+    if not pieces:
+        raise SystemExit("runner: model produced no speech tokens (temp "
+                         f"{a.temperature}, seed {a.seed})")
+    if not ended:
+        # truncated at the context ceiling: decode what we have, say so
+        print("runner: generation hit the context ceiling without an END token",
+              file=sys.stderr)
+    wav = tts._decode("".join(pieces))
+    if getattr(tts, "watermarker", None) is not None:
+        wav = tts.watermarker.apply_watermark(wav, sample_rate=tts.sample_rate)
     pcm = (wav * 32767).clip(-32768, 32767).astype("int16")
     with wave.open(a.out, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(tts.sample_rate)

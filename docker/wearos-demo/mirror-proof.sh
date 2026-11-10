@@ -37,25 +37,34 @@ PYV="$(command -v python3.13 || command -v python3.12 || command -v python3.11)"
 "$W/venv/bin/pip" install -q "torchao==0.11.0" 2>&1 | tail -1
 "$W/venv/bin/python" -c "import torchtune; from torchao.dtypes.nf4tensor import NF4Tensor; from neutts import NeuTTS; print('IMPORT-CHAIN-OK')"
 
-echo "== synth: sales narration, owner voice =="
-"$W/venv/bin/python" - "$W" <<'PY'
-import sys, wave, numpy as np
-W = sys.argv[1]
-import torch
-from neutts import NeuTTS
-tts = NeuTTS(backbone_repo=W + "/model.gguf", language="en-us", backbone_device="cpu",
-             codec_repo=W + "/codec", codec_device="cpu", seed=42)
-ref_codes = tts.encode_reference("/opt/wearos-in/clay.wav")
-torch.save(ref_codes, "/opt/wearos-in/clay.wav.codes.pt")
-text = open("/opt/wearos-in/narration.txt").read().strip().replace("\n\n", " ")
-wav = tts.infer(text, ref_codes,
-                "Your cron digest is ready: three farm alerts, no incidents, sprayer window opens Thursday at six ten.",
-                temperature=0.7, top_k=50)
-pcm = (wav * 32767).clip(-32768, 32767).astype("int16")
-with wave.open("/opt/wearos-out2/narration.wav", "wb") as f:
-    f.setnchannels(1); f.setsampwidth(2); f.setframerate(tts.sample_rate)
-    f.writeframes(pcm.tobytes())
-print("narration:", len(pcm) / tts.sample_rate, "s @", tts.sample_rate)
+echo "== synth via the PRODUCT RUNNER (dogfood: RUNNER_SRC from tts_air.py) =="
+HERE="$(cd "$(dirname "$0")" && pwd)"
+AIR="$HERE/../../hermes-plugin/tts_air.py"
+[ -f "$AIR" ] || { echo "tts_air.py not found next to this rig (repo must be mounted)"; exit 1; }
+"$W/venv/bin/python" - "$AIR" "$W/runner.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("tts_air", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+open(sys.argv[2], "w").write(m.RUNNER_SRC)
+PY
+# NOTE the measured facts this rig encodes (2026-11-09): (1) llama_cpp_python
+# 0.3.36 — what neutts' UNPINNED llama extra resolves to — strips control
+# tokens from rendered completion text, so the vendor's infer() sees "no valid
+# speech tokens" on EVERY GGUF; the runner generates at raw-token level against
+# the GGUF vocab instead. (2) The vendor path silently runs WITHOUT llama.cpp's
+# repeat_penalty default -> a single-token buzz; the runner passes 1.1.
+# (3) neutts 1.4.1's codec loader allowlists gated repo ids; the runner loads
+# the ungated HF-layout port dir directly (same tensors, allowlist skipped).
+"$W/venv/bin/python" "$W/runner.py" \
+  --model "$W/model.gguf" --codec "$W/codec" \
+  --ref-wav /opt/wearos-in/clay.wav \
+  --ref-text "Your cron digest is ready. Three farm alerts, no incidents, sprayer window opens Thursday at six ten." \
+  --text-file /opt/wearos-in/narration.txt \
+  --out /opt/wearos-out2/narration.wav --temperature 1.0 --top-k 50
+python3 - "$OUT/narration.wav" <<'PY'
+import sys, wave
+w = wave.open(sys.argv[1])
+print("narration:", w.getnframes() / w.getframerate(), "s @", w.getframerate())
 PY
 
 echo "== sha manifest =="
