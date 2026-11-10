@@ -236,3 +236,4 @@ off-screen' is the honest no-chime law, not a bug.
 Agent
 flashes): named profile without the plugin → auto-install from install-metadata source+revision, retry enable once. wear profile installed/enabled/granted live.
 - invalidate keeps serving stale (17:10 flash fix): pane refetch must never pay the fan-out sync; pane overlays the clicked state until server confirms; enable-all reports per-profile failures.
+## 2026-11-10 ~17:25 — PR #8 MERGED into feat/hermes-plugin (merge commit cc92c61). Develop from this worktree / branch onward; hermes-wearos-voiceout stays as the voice-out slice archive. Mirror: catalog main lags until feat/hermes-plugin->main; live box pinned pr-8@faf30a3f (identical content). Voice-out soundtest verified ok:true on GPU 1 — the owner 503 was an armed restart drain window, self-resolving.
