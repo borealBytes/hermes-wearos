@@ -124,6 +124,17 @@ class SentenceChunkingTests(unittest.TestCase):
     def test_short_text_stays_one_clip(self):
         self.assertEqual(vo._sentences("Short and sweet."), ["Short and sweet."])
 
+    def test_unbound_agent_falls_back_to_the_global_card(self):
+        # Owner bug 2026-11-10: pane POSTs agent='desktop', the voices map only
+        # carried '__default__' — the speakable box answered a refusal. The
+        # dropdown's selection IS the fallback voice for unbound agents.
+        c = vo.create_card(VOICED, "Global")
+        vo.set_voice("__default__", c["card_id"])
+        before = len(self.calls)              # create_card may audition once
+        r = vo.synthesize("Knock knock.", "desktop", want_words=False)
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(len(self.calls) - before, 1)
+
     def test_long_reply_splits_per_sentence(self):
         segs = vo._sentences(LONG3)
         self.assertEqual(len(segs), 3)

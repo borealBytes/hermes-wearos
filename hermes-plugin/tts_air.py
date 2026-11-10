@@ -943,7 +943,7 @@ def _worker_request(req: dict) -> None:
                     # the decode is not all-zero-safe, so token diversity is
                     # the recovery lever. (f) class bug: some generations
                     # decode to zeros; a fresh, hotter draw is the cheap fix.
-                    req["seed"] = int(req.get("seed", 42)) + 1
+                    req["seed"] = (int(req.get("seed", 42)) + 7919) % (2 ** 31)
                     req["temperature"] = round(
                         float(req.get("temperature", 0.7)) + 0.15, 2)
         finally:
@@ -1048,10 +1048,17 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
             argv = _synth_argv(chunk, ref_wav, ref_text, out)
             def arg(flag):
                 return argv[argv.index(flag) + 1]
+            # Seed varies by DRAW TEXT (not a fixed 42): a hand test 2026-11-10
+            # proved (seed 42, temp 0.7) decodes to zeros for this owner's card
+            # while 77/123 speak — a fixed first draw turns a sampler basin into
+            # a guaranteed 3/3 failure for whichever line starts there. crc32
+            # keeps each sentence's draw stable across caches and restarts.
+            import zlib
             _worker_request({"text_file": arg("--text-file"),
                              "ref_wav": arg("--ref-wav"),
                              "ref_text": arg("--ref-text"),
-                             "out": arg("--out")})
+                             "out": arg("--out"),
+                             "seed": zlib.crc32(chunk.encode()) % 65536})
             r, p = _pcm_from_wav(out.read_bytes())
             if i:
                 pcm += b"\x00\x00" * (r * 30 // 1000)   # 30 ms seam gap (demo-proven)

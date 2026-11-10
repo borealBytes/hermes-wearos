@@ -484,7 +484,15 @@ def synthesize(text: str, agent: str, *, want_words: bool = True,
     the live dial, not just the bound one); an unknown id is a refusal (400)."""
     p = read_prefs()
     speed = float((p.get("global") or {}).get("speed", SPEED_DEFAULT))
-    bound = (p.get("voices") or {}).get(agent or "__default__", "")
+    # Binding law: the agent's own voice wins; an unbound (or deliberately
+    # unbound — '' after a card delete) agent falls back to the GLOBAL card —
+    # the Voice-out dropdown's selection. A named-but-empty key must never
+    # strand a speakable box on a refusal (measured 2026-11-10: pane ▶ POSTs
+    # agent='desktop', the map only carried '__default__', and the owner got
+    # a 500 instead of his own voice).
+    vm = p.get("voices") or {}
+    bound = vm.get(agent or "__default__") or vm.get("__default__") \
+        or vm.get("default") or ""
     if card_id:
         if card_id not in (p.get("cards") or {}):
             raise ValueError(f"no such voice card: {card_id}")

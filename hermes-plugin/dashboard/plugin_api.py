@@ -228,8 +228,13 @@ def voice_post(body: dict):
         return ta.cancel()
     if action == "soundtest":
         import base64
-        r = vo.synthesize(str(body.get("text") or "")[:4000],
-                          str(body.get("agent") or "default"), want_words=False)
+        try:
+            r = vo.synthesize(str(body.get("text") or "")[:4000],
+                              str(body.get("agent") or "default"), want_words=False)
+        except Exception as exc:
+            # A button never answers 500: the pane shows this string in its red
+            # note line (honesty rule; owner hit exactly this 2026-11-10).
+            r = {"ok": False, "error": str(exc)[:300]}
         if isinstance(r.get("audio"), (bytes, bytearray)):
             r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
         return r
