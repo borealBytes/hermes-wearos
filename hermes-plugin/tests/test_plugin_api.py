@@ -152,8 +152,11 @@ def test_enable_delegates_to_the_manage_cli(wearos, api):
     assert out["ok"] is True
     assert fake.calls[-1] == ["/usr/bin/hermes", "-p", "chef", "plugins", "enable",
                               "wearos"]
+    # owner ruling 2026-11-10: enable IS the grant — one checkbox, no second box.
+    assert wearos._engine().grants().get("chef"), "enable must auto-grant"
     out2 = api.enable({"profile": "chef", "enable": False})
     assert fake.calls[-1][-2:] == ["disable", "wearos"]
+    assert not wearos._engine().grants().get("chef"), "disable must revoke"
     assert "--yes" not in fake.calls[-1]           # never --yes (review, rule 12)
     assert api.enable({"enable": True}) == {"error": "profile is required (no silent "
                                                      "all-profiles default)"}

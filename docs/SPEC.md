@@ -2384,3 +2384,14 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   emit `![desc](/abs/path.png)`, never raw paths. Proven: agent-written red PNG → card on screen.
 - **TALK orb** (`7727e7c`) — floating bottom-center (fell below the fold at 480×480);
   hold = Vosk push-to-talk, tap = keyboard; physical buttons belong to other apps.
+
+#### (n) 2026-11-10 — enable IS the grant; per-agent voice overrides surface in the pane (owner ruling)
+
+Pane step 3 collapses to one checkbox per agent: enabling the plugin also grants the
+watch the agent's key (`/enable` writes `set_grant(profile, enabled)`); disabling
+revokes. The "watch may use" box is gone (the `/grants` route stays for CLI/agents).
+Each row carries a voice dropdown writing the ALREADY-CANONICAL `voices[agent]`
+field in voiceout.yaml (blank = follow the single Voice-out card — no new global
+selector was needed; the Voice-out card IS the global default, per the owner). An
+"Enable all" box bulk-toggles every profile through the same `/enable` verb.
+Pref schema unchanged; watch replays keep higher-rev-wins semantics.

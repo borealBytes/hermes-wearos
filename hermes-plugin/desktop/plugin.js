@@ -252,10 +252,6 @@ async function revoke (name, label, profile) {
   })
 }
 
-async function setGrant (profile, allow) {
-  await act(() => rest('/grants', { method: 'POST', body: { profile, allow } }))
-}
-
 async function setAlerts (profile, pref) {
   await act(() => rest('/alerts', { method: 'POST', body: { profile, pref } }))
 }
@@ -383,13 +379,27 @@ function WearKitPane () {
   const checks = (status && status.checks) || {}
   const devices = Object.entries((status && status.devices) || {})
   const profiles = (status && status.profiles) || []
-  const grants = (status && status.grants) || {}
   const pairing = (status && status.pairing) || {}
   const windowOpen = !!pairing.window
   const pending = pairing.pending || []
   const lock = pairing.claim_lock || {}
   const releases = (status && status.apk_release_url) || FALLBACK_RELEASES
   const enabledCount = profiles.filter(p => p.enabled).length
+  // owner ruling 2026-11-10: enable implies the grant (one checkbox); each row's
+  // dropdown overrides the single Voice-out card below for that agent (blank =
+  // follow the global). Cards come from the /voice feed already in $voice.
+  const voFeedDoc = (($voice.get() || {}).voice || {})
+  const agentVoice = voFeedDoc.voices || {}
+  const cardList = Object.entries(voFeedDoc.cards || {})
+    .map(([id, m]) => ({ id, label: (m && m.label) || id }))
+  const allEnabled = profiles.length > 0 && profiles.every(p => p.enabled)
+  const enableAll = on => act(async () => {
+    for (const p of profiles.filter(q => !!q.enabled !== on)) {
+      await rest('/enable', { method: 'POST', body: { profile: p.name, enable: on } })
+    }
+  })
+  const setAgentVoice = (name, card) => voiceAct(() => rest('/voice', {
+    method: 'POST', body: { action: 'voice', agent: name, card } }))
 
   const lights = Object.entries(checks).map(([name, check]) =>
     jsx('div', {
@@ -512,9 +522,19 @@ function WearKitPane () {
             jsx('div', {
               className: 'text-(--ui-text-tertiary)',
               children: profiles.length
-                ? 'each box runs `hermes -p <agent> plugins enable wearos` — the same verb you would type; the second box lets paired watches use that agent (its API key rides the private lane, read in its own scope)'
+                ? 'one box = the whole decision: enables the plugin (`hermes -p <agent> plugins enable wearos` — the verb you would type) AND lets paired watches use that agent. The dropdown overrides which voice that agent speaks; blank follows the Voice-out card below.'
                 : error ? 'waiting on the backend — see the line above.' : 'no profiles on this gateway yet.'
             }),
+            profiles.length ? jsxs('label', {
+              className: 'flex cursor-pointer items-center gap-2 font-medium',
+              children: [
+                jsx('input', {
+                  type: 'checkbox', checked: allEnabled, disabled: busy,
+                  onChange: e => enableAll(e.target.checked)
+                }),
+                'Enable all'
+              ]
+            }, 'enable-all') : null,
             ...profiles.map(p => jsxs('div', {
               className: 'flex items-center gap-3',
               children: [
@@ -528,21 +548,17 @@ function WearKitPane () {
                     jsx('span', { children: p.name })
                   ]
                 }, p.name),
-                p.name === 'default'
-                  ? null
-                  : jsx('label', {
-                      className: 'flex cursor-pointer items-center gap-1 text-[10px] text-(--ui-text-secondary)',
-                      children: jsxs('span', {
-                        className: 'flex items-center gap-1',
-                        children: [
-                          jsx('input', {
-                            type: 'checkbox', checked: !!grants[p.name], disabled: busy,
-                            onChange: e => setGrant(p.name, e.target.checked)
-                          }),
-                          'watch may use'
-                        ]
-                      })
-                    }, `grant-${p.name}`)
+                jsx('select', {
+                  className: 'rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-[10px] text-(--ui-text-secondary) disabled:opacity-40',
+                  disabled: busy || !p.enabled,
+                  title: 'voice this agent speaks (blank = Voice-out default)',
+                  value: agentVoice[p.name] || '',
+                  onChange: e => setAgentVoice(p.name, e.target.value),
+                  children: [
+                    jsx('option', { value: '', children: 'voice-out default' }, 'global'),
+                    ...cardList.map(c => jsx('option', { value: c.id, children: c.label }, c.id))
+                  ]
+                }, `voice-${p.name}`)
               ]
             }, `row-${p.name}`))
           ]

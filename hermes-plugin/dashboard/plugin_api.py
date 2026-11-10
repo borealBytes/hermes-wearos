@@ -148,7 +148,12 @@ def enable(body: dict):
     profile = str(body.get("profile", "")).strip().lower()
     if not profile:
         return {"error": "profile is required (no silent all-profiles default)"}
-    return _p().delegate_enablement(profile, bool(body.get("enable", True)))
+    res = _p().delegate_enablement(profile, bool(body.get("enable", True)))
+    if res.get("ok"):
+        # owner ruling 2026-11-10: enabling IS the whole decision — the grant
+        # (watch may use this agent's key) rides with it; no second checkbox.
+        _p()._engine().set_grant(profile, bool(body.get("enable", True)))
+    return res
 
 
 # ── streaming-STT install (D16) ────────────────────────────────────────────────
