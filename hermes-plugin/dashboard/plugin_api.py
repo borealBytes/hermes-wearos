@@ -152,15 +152,26 @@ def enable(body: dict):
 
 
 # ── streaming-STT install (D16) ────────────────────────────────────────────────
+def _stt_mod():
+    # importlib, never the attribute: `_p()` may hand us the self-import identity
+    # (fresh mount / OOM-restart before the host bound the package), and a package
+    # attribute only exists once somebody imported the submodule — an
+    # import-ORDER lottery that broke the pane's STT card on the live box
+    # (AttributeError 2026-11-10). Same pattern as _voice_mods, same lesson.
+    import importlib
+    w = _p()
+    return importlib.import_module(w.__name__ + ".stt_install")
+
+
 @router.get("/stt")
 def stt():
-    stt_install = _p().stt_install
+    stt_install = _stt_mod()
     return stt_install.status() | {"preview": stt_install.preview()}
 
 
 @router.post("/stt")
 def stt_post(body: dict):
-    stt_install = _p().stt_install
+    stt_install = _stt_mod()
     action = str(body.get("action", "install")).lower()
     if action == "cancel":
         return stt_install.cancel()
