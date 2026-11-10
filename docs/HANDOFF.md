@@ -78,3 +78,7 @@ Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karao
 - Wear Kit pane: plugin enabled and BOTH halves detected (agent + desktop).
   The owner's desktop window predates the 09:53 gateway restart; Electron
   scans plugins at launch, so the tab returns after a desktop restart.
+- ▶ preview fetched (209 KB via tailnet, logcat) but was SILENT: ExoPlayer defaults
+  playWhenReady=false and the holder was prepare-only since 185764a — byte-count
+  logs hid it until an ear tested it. Fixed ed66c86 (p.play() after prepare), APK
+  on watch 10:40:25. Watch DND/volume ruled out first.
