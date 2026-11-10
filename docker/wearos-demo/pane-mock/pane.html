@@ -71,8 +71,7 @@ async function boot(){
   }catch(e){ document.getElementById("state").textContent="status load failed: "+e; }
 }
 boot();
-go.onclick=async()=>{
-  go.disabled=true; const st=document.getElementById("state");
+go.onclick=async()=>{  go.disabled=true; const st=document.getElementById("state");
   st.textContent="synthesizing on the gateway…";
   try{
     const r=await fetch(API+"/voice",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -99,4 +98,7 @@ function draw(ab){
     g.fillRect(y2>y1?x:x, Math.min(y1,y2), 1.4, Math.max(1.5,Math.abs(y1-y2)));
   }
 }
+// capture hook: demo-recording.sh loads ?autoplay to fire the soundtest itself
+// (no xdotool coordinate roulette); the window title signals playback state.
+if (new URLSearchParams(location.search).has("autoplay")) setTimeout(()=>go.click(), 400);
 </script></body></html>

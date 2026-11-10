@@ -703,9 +703,34 @@ def _time_scale(pcm16: bytes, factor: float) -> bytes:
     return bytes(out)
 
 
+def _sentences(text: str, limit: int = 120) -> list:
+    """Sentence chunks <=limit chars (the model's 2048-token KV window caps a
+    single generation at ~120 chars of speech — measured: full-text passes die
+    at llama_decode with the context-ceiling warning). Greedy pack on sentence
+    ends; a single monster sentence passes through alone."""
+    import re
+    chunks = []
+    for para in text.split("\n\n"):
+        buf = ""
+        for sent in re.split(r"(?<=[.!?]) +", para.strip().replace("\n", " ")):
+            if not sent:
+                continue
+            if buf and len(buf) + 1 + len(sent) > limit:
+                chunks.append(buf)
+                buf = sent
+            else:
+                buf = (buf + " " + sent).strip()
+        if buf:
+            chunks.append(buf)
+    return chunks
+
+
 def synth(text: str, card: Optional[dict], speed: float) -> tuple:
     """voiceout.register_synth target: (wav_bytes, rate) out. Raises with a NAMED
-    cause — never returns silence pretending to be speech."""
+    cause — never returns silence pretending to be speech. Text over the KV
+    ceiling is chunked per sentence and stitched with the demo-proven 30 ms
+    prosodic pause — the aligner runs on the STITCHED wav (voiceout.synthesize),
+    so word stamps stay monotonic across the seams."""
     probe = _probe()
     if not probe["installed"]:
         raise RuntimeError("NeuTTS Air not installed (pane ▸ Voice-out ▸ install)")
@@ -721,7 +746,6 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
         raise RuntimeError(f"card {card['card_id']} has no stored transcript — "
                            "zero-shot clone would be guessing the reference words")
     out = _root() / "synth.wav"
-    argv = _synth_argv(text, ref_wav, ref_text, out)
     env = dict(os.environ, HF_HOME=str(_root() / "cache"),
                HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()))
     for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
@@ -729,15 +753,20 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
     tok = _hf_token()
     if tok:
         env["HF_TOKEN"] = tok
+    rate, pcm = 0, b""
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True,
-                              timeout=SYNTH_TIMEOUT, env=env)
-        if proc.returncode != 0:
-            raise RuntimeError("engine failed: " + (proc.stderr or "")[-400:])
-        raw = out.read_bytes()
+        for i, chunk in enumerate(_sentences(text)):
+            argv = _synth_argv(chunk, ref_wav, ref_text, out)
+            proc = subprocess.run(argv, capture_output=True, text=True,
+                                  timeout=SYNTH_TIMEOUT, env=env)
+            if proc.returncode != 0:
+                raise RuntimeError("engine failed: " + (proc.stderr or "")[-400:])
+            r, p = _pcm_from_wav(out.read_bytes())
+            if i:
+                pcm += b"\x00\x00" * (r * 30 // 1000)   # 30 ms seam gap (demo-proven)
+            rate, pcm = r, pcm + p
     finally:
         out.unlink(missing_ok=True)
-    rate, pcm = _pcm_from_wav(raw)
     pcm = _time_scale(pcm, float(speed))
     return _wrap_wav(pcm, rate), rate
 

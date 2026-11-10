@@ -1369,6 +1369,11 @@ def register(ctx) -> None:
     # hf_token → env HF_TOKEN) through the plugin's own route, profile-scoped.
     from . import tts_air as _ta
     _ta._SECRETS = lambda key: _cfg(key) or _get_secret("HF_TOKEN")
+    # Register installed voice engines AT LOAD, not only at watch-lane bind:
+    # the dashboard soundtest and any host without tailscaled still get the
+    # engine the user installed (rig-measured gap 2026-11-09 — the lane call
+    # stays, it re-probes so mid-session installs activate without a restart).
+    _voiceout_register_engines()
     # Door + lane come up at LOAD on a daemon thread (0.23 has no gateway:startup hook;
     # a door that never comes up is a SILENT pairing failure). The pass is strictly
     # local: tailscale CLI probes only, never api.tailscale.com.

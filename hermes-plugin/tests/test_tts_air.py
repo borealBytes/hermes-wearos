@@ -94,6 +94,25 @@ class TtsAirTests(unittest.TestCase):
         self.assertEqual(sel["watch"], ["community-q4"])     # by default; watch = Q4
         self.assertTrue(any(r["gated"] and r["id"] == "official-q8" for r in menu))
 
+    def test_sentences_chunk_respects_kv_ceiling(self):
+        # the model dies past ~120 chars in one generation (measured: llama_decode
+        # fail at the 2048-token KV window); the product must chunk per sentence.
+        text = ("Hermes Wear OS. Your watch, and your own gateway. "
+                "Ask it anything and it answers out loud, word-synced, "
+                "in a voice you enrolled yourself. No cloud subscription, "
+                "nothing you cannot audit. Fully on-device speech in, "
+                "gateway-synthesized speech out.")
+        chunks = ta._sentences(text)
+        self.assertGreater(len(chunks), 2)
+        for c in chunks:
+            self.assertLessEqual(len(c), 120, c)
+        # nothing lost or reordered: chunks rejoin to the original word order
+        self.assertEqual(" ".join(chunks).split(), text.replace("\n", " ").split())
+        # a monster single sentence passes through alone (better a ceiling
+        # warning than silently dropped words)
+        long_one = "word " * 60
+        self.assertEqual(ta._sentences(long_one.strip()), [long_one.strip()])
+
     def test_codec_is_official_repo_until_a_port_is_verified(self):
         """bezzam/neucodec-hf LOOKS like the repo but ISN'T the package's shape
         (flat acoustic_* keys, 517-key w2v-Bert frontend, no pytorch_model.bin):
