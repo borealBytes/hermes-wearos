@@ -18,6 +18,15 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect } from 'react'
 
 const FALLBACK_RELEASES = 'https://github.com/borealBytes/hermes-wearos/releases/latest'
+
+// ON-WATCH VOICE-OUT IS PARKED (owner ruling 2026-11-10, issue #7): the watch-side
+// TTS *surface* is pulled from the pane — the 'watch' quant dropdown, the wrist copy,
+// and the recorder note — because there is no hardware test time before the deadline
+// and the milestone focus is the GATEWAY lane (Settings ▸ Voice ▸ 'wearkit-gateway').
+// The feature itself stays merged and tested: Kotlin player + GatewayTts lane,
+// voiceout tiers, pane REST actions. Flip to true to restore every control AS-IS.
+// SPEC §19.4(l).
+const WATCH_TTS_UI = false
 const REPO_URL = 'https://github.com/borealBytes/hermes-wearos'
 
 const $status = atom(null)
@@ -620,6 +629,10 @@ function WearKitPane () {
             : null,
 
       // ── voice-out (SPEC §19, slice 3) ───────────────────────────────────────
+      // Gateway lane. WATCH_TTS_UI (top of file) parks the ON-WATCH surface: with
+      // it false the 'watch' quant dropdown disappears and the copy stops naming
+      // the wrist — the feature (player, karaoke, tiers, lane) stays implemented
+      // and merged; flip the constant to true to restore every control AS-IS.
       air ? jsxs('div', {
         className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
         children: [
@@ -638,11 +651,14 @@ function WearKitPane () {
           }),
           jsx('div', {
             className: 'text-[10px] text-(--ui-text-tertiary)',
-            children: 'your agents speak on the watch — cloned voices, no cloud, audio only on your tailnet'
+            children: WATCH_TTS_UI
+              ? 'your agents speak on the watch — cloned voices, no cloud, audio only on your tailnet'
+              : 'your agents speak with cloned voices — no cloud, audio only on your tailnet (Settings ▸ Voice ▸ WearKit Gateway)'
           }),
 
-          // source dropdowns: the gateway speaks its best, the wrist pulls the small quant
-          ...['gateway', 'watch'].map(slot => jsxs('label', {
+          // source dropdowns. PARKED (owner 2026-11-10, SPEC §19.4(l)): the 'watch'
+          // quant selector is on-watch TTS surface — gateway-only focus hides it.
+          ...['gateway', ...(WATCH_TTS_UI ? ['watch'] : [])].map(slot => jsxs('label', {
             className: 'flex flex-col gap-0.5 text-xs',
             children: [
               jsx('span', {
@@ -784,10 +800,10 @@ function WearKitPane () {
                 ]
               })
             : null,
-          jsx('div', {
+          WATCH_TTS_UI ? jsx('div', {
             className: 'text-[10px] text-(--ui-text-tertiary)',
             children: 'record more voices from the watch — yours, or anyone’s (recorder ships with the player)'
-          })
+          }) : null
         ]
       }, 'voiceout-card') : null,
 

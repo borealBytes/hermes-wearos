@@ -1766,6 +1766,38 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   The reference wav still plays FLAT (1.0x = the speaker's own pace). Retries widened
   to 3 with seed rotation (attempt tuple had silently capped at 2).
 
+- **2026-11-10 (l): ON-WATCH TTS PARKED — pulled from the pane, kept in code
+  (owner: "remove the on-watch text-to-speech from the pane… and the watch model
+  version for TTS too… you're just changing the interface so we don't show those
+  buttons").** Interface-only: the Voice-out card STAYS (it owns the engine install,
+  the gateway quant dropdown, the ▶ audition, the dial, the voice cards — the gateway
+  lane needs them), but behind `WATCH_TTS_UI = false` at the top of
+  desktop/plugin.js the 'watch' quant dropdown is not rendered, the wrist-naming
+  copy swaps to gateway wording (naming Settings ▸ Voice ▸ WearKit Gateway), and the
+  recorder footnote hides. One flip restores every control AS-IS. Nothing else
+  moved: the Kotlin player + GatewayTts lane, voiceout tiers, and the pane's REST
+  actions all remain merged and tested, and a bound watch will still speak pushed
+  replies (runtime untouched — this is a CONSENT-SURFACE parking, so no half-tested
+  UI ships in the competition build). The gateway lane is the milestone focus:
+  Settings ▸ Voice ▸ 'wearkit-gateway' (§19.4(i)) on the resident engine (§19.4(j)).
+
+- **2026-11-10 (k): SENTENCE BY SENTENCE in BOTH lanes (owner: "we need sentence by
+  sentence… we're not waiting for the full damn pass").** The 12:58 CPU screenshot
+  was a 'big old line of text' rendered as ONE mega-generation. Now the server cuts
+  long replies at sentence boundaries (`voiceout._sentences`: ≤160 chars stays one
+  clip; fragments <24 chars merge forward) and renders each sentence as its own
+  short, individually cache-keyed draw stitched into one WAV with 80 ms breaths;
+  karaoke timelines shift with the cumulative position. Consequences: no single
+  multi-minute engine hold, repeated sentences across ANY future reply replay from
+  disk (first sentence of a boilerplate reply is instant), and the WearKit Gateway
+  provider declares `streams_pcm` + `stream_sample_rate` (24000, engine-verified;
+  drift raises instead of garbling) so the desktop speaker's own SentenceChunker
+  starts playback at sentence one — dictation no longer waits for the whole
+  paragraph. Engine lifecycle hardened with the same care: atexit terminate→kill
+  grace (resident workers die with the gateway, never orphan 3.4 GB), and a
+  `_SHUTTING_DOWN` flag stops boot-warm/retries from re-igniting a worker during a
+  stop. 137 pytest green (10 new).
+
 - **2026-11-10 (j): RESIDENT ENGINE (owner: "keep the model loaded").** The 900 s
   idle reaper made every first-speak-after-pause pay a full reload — now the worker
   is resident: reaper off by default (`WEARKIT_TTS_IDLE_S=900` restores it for small
