@@ -470,7 +470,13 @@ def _lane_lookup(token: str) -> Optional[str]:
 def _voiceout_register_engines() -> None:
     """Best-effort engine/aligner registration at lane start: each adapter
     self-probes and only registers when installed+verified (or honestly
-    size-verified-pending). Absent engines leave voiceout's refusal intact."""
+    size-verified-pending). Absent engines leave voiceout's refusal intact.
+
+    Idempotent and cheap (the probes are stat-level), so BOTH human doors —
+    the dashboard /voice route and the lane's voice surface — may call it
+    again lazily via `ensure_engines()` before an engine-backed action. One
+    swallowed startup probe must never strand the owner's Play button; the
+    first real click re-probes and registers (2026-11-10 owner report)."""
     try:
         from . import align_parakeet, tts_air
     except ImportError:              # flat loader outside a package context
@@ -521,6 +527,7 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
     """The voice-out surface (SPEC §19). Node law first: the WHOIS-verified node
     must be bound to a paired device — no token, but never just 'a tailnet peer'
     either (a stranger's node on the same tailnet gets 403)."""
+    _voiceout_register_engines()   # lazy heal (same rationale as ensure_engines)
     try:
         from . import voiceout
     except ImportError:
@@ -1410,3 +1417,21 @@ def register(ctx) -> None:
     # a door that never comes up is a SILENT pairing failure). The pass is strictly
     # local: tailscale CLI probes only, never api.tailscale.com.
     threading.Thread(target=_startup_pass, daemon=True, name="wearos-readiness").start()
+
+
+def ensure_engines() -> None:
+    """Lazy re-registration hook for the human doors (dashboard + lane voice
+    routes). See _voiceout_register_engines — probes are stat-level, safe per
+    request; a cold-start miss heals on the first action that needs it. The
+    prewarm gate re-arms until an engine is actually visible, so an engine
+    installed AFTER boot still gets its seed sentence cached before any
+    human click pays the cold-load tax."""
+    global _prewarm_done
+    _voiceout_register_engines()
+    try:
+        from . import voiceout
+        if voiceout.status().get("engine") and _prewarm_done.is_set():
+            _prewarm_done = threading.Event()     # re-arm once: engine just appeared
+            _voiceout_prewarm()
+    except Exception:
+        pass

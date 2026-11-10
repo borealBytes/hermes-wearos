@@ -177,9 +177,12 @@ def stt_post(body: dict):
 # logged-in human. Rule 13: consent links and token capture live HERE, in a
 # surface the owner can audit; rule 12: nothing installs without the button.
 
-def _voice_mods():
+def _voice_mods(ensure: bool = False):
     import importlib
     w = _p()
+    if ensure:
+        w.ensure_engines()       # lazy heal: a missed startup probe must not strand
+                                 # the button (owner report 2026-11-10)
     return (importlib.import_module(w.__name__ + ".voiceout"),
             importlib.import_module(w.__name__ + ".tts_air"),
             importlib.import_module(w.__name__ + ".align_parakeet"))
@@ -187,7 +190,7 @@ def _voice_mods():
 
 @router.get("/voice")
 def voice():
-    vo, ta, al = _voice_mods()
+    vo, ta, al = _voice_mods(ensure=True)
     return {"voice": vo.status(),
             "air": ta.status() | {"sources": ta.sources_menu(), "slots": ta._slots(),
                                   "preview": ta.preview()},
@@ -197,7 +200,7 @@ def voice():
 @router.post("/voice")
 def voice_post(body: dict):
     import os
-    vo, ta, _al = _voice_mods()
+    vo, ta, _al = _voice_mods(ensure=True)
     action = str(body.get("action", "")).lower()
     if action == "select":
         return ta.select_source(str(body.get("source") or ""),
