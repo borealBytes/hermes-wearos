@@ -34,8 +34,13 @@ class H(http.server.BaseHTTPRequestHandler):
                 req.add_header(h, self.headers[h])
         req.add_header("Authorization", "Bearer " + TOKEN)
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
-                self._send(r.read(), r.headers.get("Content-Type", "application/octet-stream"), r.status)
+            with urllib.request.urlopen(req, timeout=1200) as r:   # full-text
+                # soundtests synth minutes, not seconds: 180 was a measured
+                # cliff (RemoteDisconnected at exactly 180s, 2026-11-09).
+                data = r.read()
+                print("PROXIED", self.command, self.path, "->", r.status,
+                      len(data), flush=True)
+                self._send(data, r.headers.get("Content-Type", "application/octet-stream"), r.status)
         except urllib.error.HTTPError as e:
             self._send(e.read(), e.headers.get("Content-Type", "text/plain"), e.code)
 

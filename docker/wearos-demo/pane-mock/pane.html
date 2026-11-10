@@ -100,5 +100,7 @@ function draw(ab){
 }
 // capture hook: demo-recording.sh loads ?autoplay to fire the soundtest itself
 // (no xdotool coordinate roulette); the window title signals playback state.
-if (new URLSearchParams(location.search).has("autoplay")) setTimeout(()=>go.click(), 400);
+// ?text=... overrides the script so the REAL narration flows through the pane.
+const _q = new URLSearchParams(location.search);
+if (_q.has("autoplay")) { if (_q.get("text")) txt.value = _q.get("text"); setTimeout(()=>go.click(), 2500); }
 </script></body></html>

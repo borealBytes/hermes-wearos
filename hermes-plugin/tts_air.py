@@ -23,8 +23,8 @@ Speed: ``voiceout.synthesize`` hands us the GLOBAL speed (0.5–2.0); 1.0 replay
 speaker at THEIR measured pace, which is what a clone of their own reference audio
 naturally does. Off-1.0 is applied here as a stdlib time-scale (linear resample —
 pitch follows at extremes; WSOLA is a documented polish item, SPEC §19 amendment log).
-Chunking paragraphs to the model's ~30 s context window happens at the /voice route
-layer (slice 2c), not here.
+Paragraph chunking to the model's KV ceiling lives HERE (synth), not at
+the route layer — every caller gets it, including the watch lane.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 import struct
 import subprocess
 import sys
@@ -745,7 +746,10 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
     if not ref_text:
         raise RuntimeError(f"card {card['card_id']} has no stored transcript — "
                            "zero-shot clone would be guessing the reference words")
-    out = _root() / "synth.wav"
+    out = _root() / f"synth-{os.getpid()}-{id(threading.current_thread())}.wav"
+    # UNIQUE per call: two synths on the fixed name raced (killed client's
+    # server-side thread keeps writing after the POST dies — measured 500 via
+    # take-6). Siblings (.txt/.ref.txt from _synth_argv) are removed with it.
     env = dict(os.environ, HF_HOME=str(_root() / "cache"),
                HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()))
     for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
@@ -766,7 +770,8 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
                 pcm += b"\x00\x00" * (r * 30 // 1000)   # 30 ms seam gap (demo-proven)
             rate, pcm = r, pcm + p
     finally:
-        out.unlink(missing_ok=True)
+        for sib in (out, out.with_suffix(".txt"), out.with_suffix(".ref.txt")):
+            sib.unlink(missing_ok=True)   # leaves no litter (rule 17 neighbours)
     pcm = _time_scale(pcm, float(speed))
     return _wrap_wav(pcm, rate), rate
 

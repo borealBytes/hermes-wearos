@@ -3,11 +3,11 @@
 POSTs {action:soundtest} with the full narration to the container dashboard;
 tts_air.synth chunks per sentence (KV ceiling) and stitches internally, so the
 demo pack audio is byte-for-byte what the watch would receive (opus aside).
-Usage: demo_synth.py <token> <out.wav>   (reads /opt/wearos-out3/narration.txt)"""
+Usage: demo_synth.py <token> <text-file> <out.wav>"""
 import base64, json, sys, urllib.request
 
-token, out = sys.argv[1], sys.argv[2]
-text = open("/opt/wearos-out3/narration.txt").read().strip()
+token, text_file, out = sys.argv[1:4]
+text = open(text_file).read().strip()
 body = json.dumps({"action": "soundtest", "text": text, "agent": "default"}).encode()
 req = urllib.request.Request("http://127.0.0.1:9119/api/plugins/wearos/voice",
                              data=body, headers={"Content-Type": "application/json",
