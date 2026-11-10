@@ -25,12 +25,16 @@ import okhttp3.Request
  */
 object MediaPlayerHolder {
     private const val TAG = "HermesWear"
+    // ExoPlayer enforces its home thread (media3 verifyApplicationThread): build it on main
+    // and touch it ONLY from main. The download runs on a worker; playback hops back.
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private var player: ExoPlayer? = null
     private val http by lazy {
         OkHttpClient.Builder().proxySelector(TailnetRoute.SELECTOR).build()
     }
 
     fun play(context: Context, url: String) {
+        val app = context.applicationContext
         Thread {
             try {
                 val abs = resolve(context, url) ?: error("cannot resolve media url: $url")
@@ -41,13 +45,20 @@ object MediaPlayerHolder {
                         return@use
                     }
                     val dir = File(context.cacheDir, "media").apply { mkdirs() }
+                    dir.listFiles()?.forEach { if (it.name.startsWith("media-")) it.delete() }
                     val tmp = File.createTempFile("media-",
                         "-" + abs.substringAfterLast('/').take(24), dir)
                     resp.body?.byteStream()?.use { input -> tmp.outputStream().use(input::copyTo) }
                     if (tmp.length() == 0L) { tmp.delete(); error("empty body from $abs") }
-                    val p = player ?: ExoPlayer.Builder(context.applicationContext).build().also { player = it }
-                    p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
-                    p.prepare()
+                    main.post {
+                        try {
+                            val p = player ?: ExoPlayer.Builder(app).build().also { player = it }
+                            p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
+                            p.prepare()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "player prepare failed", e)
+                        }
+                    }
                     Log.i(TAG, "media play $abs (${tmp.length()} bytes via ${if (TailnetRoute.socksPort > 0) "tailnet" else "direct"})")
                 }
             } catch (e: Exception) {
@@ -65,12 +76,7 @@ object MediaPlayerHolder {
         return URI(if (base.endsWith("/")) base.dropLast(1) else base).resolve(url)?.toString()
     }
 
-    fun stop() {
-        player?.stop()
-    }
+    fun stop() { main.post { player?.stop() } }
 
-    fun release() {
-        player?.release()
-        player = null
-    }
+    fun release() { main.post { player?.release(); player = null } }
 }
