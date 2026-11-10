@@ -805,7 +805,7 @@ def _worker_request(req: dict) -> None:
                     except OSError:
                         pass
                     _WORKER = None
-                    if attempt == 2:
+                    if attempt == 3:
                         raise RuntimeError("engine failed: " + str(exc)[:400]) from exc
                     # Rotate the sampler seed for the retry: some failures are
                     # DEGENERATE GENERATIONS (measured 2026-11-10: certain
