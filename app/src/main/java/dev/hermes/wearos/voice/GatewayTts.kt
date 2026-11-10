@@ -219,9 +219,10 @@ object GatewayTts {
             dev.hermes.wearos.domain.TtsConfig.PREVIEW_TEXT }
         try {
             val client = http.newBuilder().readTimeout(600, TimeUnit.SECONDS).build()
-            val parsed = postChecked(client,
+            val parsed = postChecked(
                 JSONObject().put("text", text).put("agent", agent)
-                    .put("card_id", cardId).put("words", false).put("accept_opus", true), base)
+                    .put("card_id", cardId).put("words", false).put("accept_opus", true),
+                base, client)
             val b64 = parsed.optString("audio_wav_b64")
                 .ifEmpty { parsed.optString("audio_opus_b64") }
             if (b64.isEmpty()) error("no audio in answer")

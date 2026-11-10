@@ -648,6 +648,12 @@ def synth_one(tts, text, ref_wav, ref_text, out, seed, temperature, top_k):
     if not pieces:
         raise RuntimeError("model produced no speech tokens (temp %s, seed %s)"
                            % (temperature, seed))
+    # neucodec decode needs a floor of latent frames — a short reply like
+    # "you're welcome" crashed it (measured 2026-11-10: conv padding 1024 vs
+    # input 640). Hold the last token to the floor: the pad decodes to tail
+    # ambience, and the seam/trim law upstream already tolerates it.
+    while len(pieces) < 64:
+        pieces.append(pieces[-1])
     wav = tts._decode("".join(pieces))
     if getattr(tts, "watermarker", None) is not None:
         wav = tts.watermarker.apply_watermark(wav, sample_rate=tts.sample_rate)
