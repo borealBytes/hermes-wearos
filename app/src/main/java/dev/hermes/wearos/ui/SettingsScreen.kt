@@ -15,6 +15,7 @@ import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1034,12 +1035,14 @@ fun SettingsScreen(
         FieldLabel("voice source")
         val gw = dev.hermes.wearos.voice.GatewayTts
         gwProbe  // the entry probe bumps this volatile counter-backed state → fresh note/cards
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Equal-size pills, STACKED: two 150dp+ buttons side by side overflow the inscribed
+        // square of the round dial and the longer label ellipsizes into looking smaller.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("system" to "system", "gateway" to "gateway 🌐").forEach { (id, label) ->
                 val chosen = ttsSource == id
                 Button(
                     onClick = { speak.setVoiceSource(id); gwProbe++ },
-                    modifier = Modifier.size(width = 130.dp, height = 34.dp),
+                    modifier = Modifier.size(width = 168.dp, height = 36.dp),
                     colors = ButtonDefaults.buttonColors(
                         backgroundColor = if (chosen) MaterialTheme.colors.primary.copy(alpha = 0.5f)
                         else MaterialTheme.colors.surface.copy(alpha = 0.4f)),
