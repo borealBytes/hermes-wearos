@@ -405,8 +405,10 @@ function WearKitPane () {
     jsx('div', {
       className: 'flex items-center justify-between gap-2 text-sm',
       children: jsxs('span', {
+        // owner ruling 2026-11-10: glanceable green/red — an emoji checkbox, not
+        // a grey dot you have to squint at. Failure keeps the reason inline.
         className: check.ok ? 'text-(--ui-text-secondary)' : 'text-(--ui-text-danger)',
-        children: [check.ok ? '● ' : '○ ', name, check.ok ? '' : ` — ${check.detail}`]
+        children: [check.ok ? '✅ ' : '❌ ', name, check.ok ? '' : ` — ${check.detail}`]
       })
     }, name))
 
@@ -576,8 +578,10 @@ function WearKitPane () {
                 children: [
                   jsxs('span', {
                     className: 'text-(--ui-text-secondary)',
-                    children: [dev.label || name, ' · ', dev.profile,
-                               dev.node_id ? ' · node ✓' : ' · never connected']
+                    // owner ruling: no agent name on the row — one watch is ONE
+                    // pairing; which agents it may speak is the enable list's job.
+                    children: [dev.label || name,
+                               dev.node_id ? ' · tailnet node ✓' : ' · never connected']
                   }),
                   jsx('button', {
                     className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
