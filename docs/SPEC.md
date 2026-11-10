@@ -1794,9 +1794,11 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   drift raises instead of garbling) so the desktop speaker's own SentenceChunker
   starts playback at sentence one — dictation no longer waits for the whole
   paragraph. Engine lifecycle hardened with the same care: atexit terminate→kill
-  grace (resident workers die with the gateway, never orphan 3.4 GB), and a
+  grace (resident workers die with the gateway, never orphan 3.4 GB), a
   `_SHUTTING_DOWN` flag stops boot-warm/retries from re-igniting a worker during a
-  stop. 137 pytest green (10 new).
+  stop, and a pre-spawn sweep SIGKILLs init-parented air_runner strays (measured:
+  one stuck drain left THREE 3.4 GB workers on the box) plus a tracked-list reaper
+  enforcing one live worker per process. 137 pytest green (10 new).
 
 - **2026-11-10 (j): RESIDENT ENGINE (owner: "keep the model loaded").** The 900 s
   idle reaper made every first-speak-after-pause pay a full reload — now the worker

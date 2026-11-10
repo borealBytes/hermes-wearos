@@ -35,6 +35,7 @@ import json
 import select
 import os
 import shutil
+import signal
 import threading
 import struct
 import subprocess
@@ -777,6 +778,52 @@ import atexit as _atexit            # noqa: E402  (next to the lifecycle state)
 _atexit.register(_shutdown_worker)
 
 
+def _reap_stray_workers() -> None:
+    """One resident worker per process, and NO orphans (measured 2026-11-10: the
+    gateway's SIGKILL during a stuck drain left air_runner children reparented to
+    init — each holding ~3.4 GB of model weight that nobody will ever speak with).
+    Before every fresh spawn, kill air_runner processes whose parent is init: they
+    are, by construction, not owned by the live gateway or dashboard. Cheap /proc
+    scan, stdlib only (rule 10)."""
+    try:
+        pids = [int(p) for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return                       # non-linux: nothing to do
+    for pid in pids:
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as f:
+                cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+            if "air_runner.py" not in cmd:
+                continue
+            with open("/proc/%d/stat" % pid) as f:
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+            if ppid == 1 and pid != os.getpid():
+                os.kill(pid, signal.SIGKILL)
+        except (OSError, ValueError, IndexError):
+            continue                 # raced/permission — best effort
+
+
+_WORKERS_ALL: list = []              # every worker this process ever spawned
+
+
+def _reap_extra_tracked(keep) -> None:
+    """At most ONE live worker per process: anything we spawned and no longer
+    track as THE worker is an exit — its model memory is speakable by nobody."""
+    global _WORKERS_ALL
+    alive = []
+    for w in list(_WORKERS_ALL):
+        if w.poll() is not None:
+            continue                 # dead handle: drop
+        if w is keep:
+            alive.append(w)
+            continue
+        try:
+            w.kill()                 # live but untracked: exit
+        except OSError:
+            pass
+    _WORKERS_ALL = alive
+
+
 def engine_state() -> dict:
     """Live worker/queue state for the pane (issue #7 honesty: a spinner must
     say WHICH wait it is — model loading, queued, or speaking)."""
@@ -849,6 +896,7 @@ def _worker_request(req: dict) -> None:
                 w = _WORKER
                 if w is None or w.poll() is not None:
                     write_runner()
+                    _reap_stray_workers()          # init-parented leftovers from killed gates
                     _WORKER = w = subprocess.Popen(
                         _serve_argv(req.get("seed")), stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
@@ -856,6 +904,8 @@ def _worker_request(req: dict) -> None:
                         # background class: the engine must never outrank the
                         # gateway, sglang, or the owner's foreground work
                         preexec_fn=(lambda: os.nice(10) if os.name != "nt" else None))
+                    _WORKERS_ALL.append(w)
+                    _reap_extra_tracked(w)         # one worker per process, full stop
                 try:
                     w.stdin.write(json.dumps(req) + "\n")
                     w.stdin.flush()
