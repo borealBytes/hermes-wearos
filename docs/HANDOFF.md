@@ -1,7 +1,15 @@
 # HANDOFF — Wear Kit, voice-out milestone (updated at every slice boundary)
 
-**As of:** 2026-11-09 (late) · **From:** weardev desk (slices 2a–2c shipped) · **To:** next session of weardev
+**As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
+
+## 2026-11-09 LATER boundary — weight cache, quant menus, raw-token runner, codec ruling (read this first)
+
+- **Shipped since the slice-3 notes below:** shared `weight_cache.py` (hash-matched resume/hardlink reuse; backbone+STT+codec all ride it, `8cd12bc`); STT 6-variant quant menu; voice TTS 3-source menu (`official-q8`/`community-q8`/`community-q4`, default `community-q8`); `_profile_home` honors `HERMES_HOME` (sandbox/relocated installs); upstream merges through the STT sudo-gate card (UNION resolution in plugin.js).
+- **Engine findings (all measured, all in the code's comments):** (1) neutts needs **python<3.14** + **torchao==0.11.0** (import smoke gates installs, `install --repair`); (2) local GGUF backbones REQUIRE `language="en-us"`; (3) **llama_cpp_python 0.3.36** (neutts' unpinned `llama` extra) strips control tokens from rendered text → vendor `infer()` finds "no speech tokens" on EVERY community GGUF; the RUNNER now generates at **raw token level** against the GGUF vocab (tokens exist: 65,536 speech specials, ids 43690+); (4) raw loops must pass **repeat_penalty=1.1** (default-off → single-token buzz); (5) **the codec has NO mirror**: bezzam/neucodec-hf is the PAPER'S model (flat acoustic_* keys, 517-key w2v-Bert frontend, no pytorch_model.bin — roundtrip probe: every frame → ONE code) and both loaders assert the gated repo-id STRINGS. → official `neuphonic/neucodec` + free-account token is the only route; test pins it until a roundtrip-proven port exists.
+- **BLOCKER for the demo video:** needs the owner's HF read token (`hf_…`) for `neuphonic/neucodec` (gated: auto — sign the two repo pages with the free account). Then: rerun `docker/wearos-demo/mirror-proof.sh` in the `wearos-gw` container (HF_TOKEN + HF_HOME env) → narration.wav → ear test → pane+watch capture → inline here.
+- **Demo container:** `wearos-gw` (fresh- installs the branch plugin from `/opt/data/plugin-src`; dashboard :19119, gateway :18642, token `weardemo`). Host scratch: `~/.hermes/profiles/weardev/cache/scratch/wearos-demo/` (mirror/, runner probes, logs).
+- **Test recipe now:** `TMPDIR=/tmp PYTHONPATH=tests /tmp/wear-pytest-venv/bin/python -m pytest tests/` (venv carries ruamel.yaml; suite **119 passed, 1 skipped** at this commit).
 
 ## Where things stand (verified, not claimed)
 
