@@ -1,8 +1,11 @@
 """SPEC 19.4(m) — device choice: CPU floor, GPU by pane pick, GPU0 shield.
 
-The device switch must never lie: it reports the QUEUED side, not the wish,
-until the CUDA variant is actually on disk; and the only fence between the
-engine and the box's busiest GPU is CUDA_VISIBLE_DEVICES at spawn.
+The device switch must never lie. Owner doctrine 2026-11-10: a GPU pick
+means GPU *only* — while the CUDA build is unfinished the effective device
+is 'pending-gpu' and a speak REFUSES (never a quiet CPU downgrade); a CPU
+worker may exist only because CPU was the chosen backend. The only fence
+between the engine and the box's busiest GPU is CUDA_VISIBLE_DEVICES at
+spawn.
 """
 import os
 import sys
@@ -35,13 +38,22 @@ def test_roundtrip_and_validation(ta):
     assert ta.get_device() == "gpu:1"            # refusal changed nothing
 
 
-def test_effective_stays_cpu_until_cuda_venv_exists(ta):
+def test_gpu_pin_never_downgrades_to_cpu(ta):
     ta.set_device("gpu:1")
-    assert ta.effective_device() == "cpu"        # queued, not a lie
+    assert ta.effective_device() == "pending-gpu"   # queued, not a lie
     cu = ta._root() / "venv_cu"
     cu.mkdir(parents=True)
     (cu / ".cuda-installed").write_text("x")
     assert ta.effective_device() == "cuda"
+
+
+def test_pending_gpu_speak_refuses_without_spawning(ta, monkeypatch):
+    ta.set_device("gpu:1")                          # marker absent => pending
+    def no_spawn(*a, **k):
+        raise AssertionError("worker spawned under a pending GPU pin")
+    monkeypatch.setattr(ta.subprocess, "Popen", no_spawn)
+    with pytest.raises(RuntimeError, match="build is not ready"):
+        ta._worker_request({"text": "hi", "card": {}, "rate": 1.0})
 
 
 def test_gpu_pick_starts_the_one_time_build(ta, monkeypatch):

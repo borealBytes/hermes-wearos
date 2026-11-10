@@ -692,14 +692,15 @@ def get_device() -> str:
 
 
 def effective_device(device: Optional[str] = None) -> str:
-    """What the NEXT worker will really run on: 'cuda' only when the CUDA
-    variant is actually installed; while its one-time build runs the engine
-    stays honestly on CPU (the pane says so — no placebo switches)."""
+    """What the NEXT worker will really run on. Owner doctrine 2026-11-10:
+    a GPU pick means GPU — while the one-time CUDA build runs (or if it has
+    not started) the answer is 'pending-gpu', NOT a silent CPU downgrade.
+    A CPU worker must only ever exist because CPU was the chosen backend."""
     dev = device if device is not None else get_device()
     if dev.startswith("gpu:"):
         if (_root() / "venv_cu" / ".cuda-installed").is_file():
             return "cuda"
-        return "cpu"
+        return "pending-gpu"
     return "cpu"
 
 
@@ -1148,6 +1149,14 @@ def _worker_request(req: dict) -> None:
             for attempt in (1, 2, 3):
                 w = _WORKER
                 want = effective_device()          # device may have changed in the pane
+                if want == "pending-gpu":
+                    # GPU is the chosen backend but its worker build has not
+                    # finished — REFUSE loudly (owner doctrine 2026-11-10: a
+                    # GPU pin never quietly runs on CPU). No worker spawns;
+                    # the pane's Build row carries the fix.
+                    raise RuntimeError(
+                        "GPU selected but its engine build is not ready — "
+                        "Voice-out ▸ GPU row shows build progress")
                 if w is not None and _WORKER_DEV != want and w.poll() is None:
                     try:                           # lazy rebind: the pane flipped
                         w.terminate()              # cpu->gpu; next speak boots there
