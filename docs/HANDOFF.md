@@ -186,6 +186,20 @@ model (each ~90 s at all-core, nice 10) and (b) a gateway-child storm of
 worker from the interrupted probe was reaped. Load already falling
 (59→41).
 
-GATEWAY STILL ON ~13:19 CODE — the pane works against the dashboard route,
-but gateway-side voice-out (dictation lane) needs
-`systemctl --user restart hermes-gateway` from the owner's own shell.
+GATEWAY: restarted by the owner ~13:55 — now on b233ed3 (crc32 seeds, binding
+fallback, sentence streaming). ▶ on a changed line speaks on the FIRST draw.
+
+GPU EXECUTION SHIPPED (owner: "drop-down for CPU and GPUs… it's GPU 1 that we
+use, never, ever, ever GPU 0"): the answer to "can this model run on GPU" is
+YES, but the pinned llama-cpp wheel is CPU-only, so GPU = a second private
+venv (tts/venv_cu, llama-cpp rebuilt -DGGML_CUDA=on). The Voice-out card grew
+a 'speak on' dropdown: CPU + EVERY GPU (nvidia-smi: name, index, free GB).
+Picking a GPU IS the consent → one background build; the engine stays honestly
+on CPU until .cuda-installed, then the resident worker rebinds lazily on the
+next speak. THE GPU0 SHIELD: the worker env always carries
+CUDA_VISIBLE_DEVICES=<picked index> — sglang's GPU0 is not even visible to the
+engine. tts/device.json persists the pick. SPEC 19.4(m). Tests:
+tests/test_tts_air_device.py (7). Suite: 145 passed, 1 skipped, 3 subtests.
+ON THIS BOX: GPU1 = RTX PRO 6000 Blackwell (48 GB idle). NEXT: kick the CUDA
+build (pane dropdown, or tts_air.set_device('gpu:1')), re-time a sentence draw
+cpu-vs-gpu, and decide which lane the competition build ships on.

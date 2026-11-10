@@ -457,26 +457,7 @@ def _run() -> None:
         venv = root / "venv"
         sid, s = _source()
         model = root / "model" / s["file"]
-        if not (venv / "bin" / "python").is_file():
-            _set("venv", "creating the private venv")
-            subprocess.run([_venv_python(), "-m", "venv", str(venv)],
-                           check=True, capture_output=True, timeout=300)
-        if not (venv / ".neutts-installed").is_file():
-            _set("runtime", "pip install (torch CPU wheel + llama-cpp build, minutes)")
-            _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
-                       "--no-input", "-q", PKG_SPEC], "runtime")
-            # measured 2026-11-09: fresh resolves pair torchao>=0.12 with
-            # torchtune 0.6.1, which lost torchao.dtypes.nf4tensor — the codec
-            # decoder import dies at the FIRST SYNTH, the worst possible place.
-            # Pin the importable version and PROVE the chain imports before we
-            # call it installed (fail at install, never at the sound test).
-            _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
-                       "--no-input", "-q", "torchao==0.11.0"], "runtime")
-            _run_proc([str(venv / "bin" / "python"), "-c",
-                       "import torchtune; "
-                       "from torchao.dtypes.nf4tensor import NF4Tensor; "
-                       "from neutts import NeuTTS"], "runtime")
-            (venv / ".neutts-installed").write_text(PKG_SPEC)
+        _ensure_venv(venv, _set)
         if not _size_ok(model, s["bytes"]):
             _set("model", f"downloading {s['file']} "
                           f"(~{max(1, s['bytes'] // 1_000_000)} MB)")
@@ -527,6 +508,218 @@ def _run_proc(argv: list, phase: str) -> None:
     if _proc.returncode != 0:
         raise RuntimeError(f"{phase} failed ({argv[0]} exit {_proc.returncode}): "
                            f"{out[-300:]}")
+
+
+# ---------------------------------------------------------------- venv + device
+#
+# SPEC 19.4(m) — the engine speaks on CPU by default and CAN speak on any one
+# GPU the pane names. Two private venvs live side by side: 'venv' (CPU, the
+# floor every install gets) and 'venv_cu' (same pins, llama-cpp rebuilt with
+# the CUDA backend — a consent action, never automatic, rule 12). The device
+# choice persists in tts/device.json. A GPU worker is spawned with
+# CUDA_VISIBLE_DEVICES=<picked index>, so inside the worker 'cuda' is exactly
+# the chosen card and an unlucky mapping can NEVER reach GPU0 or another card.
+
+def _ensure_venv(venv: Path, setf) -> None:
+    """Create + fill one private venv with the pinned runtime (idempotent)."""
+    if not (venv / "bin" / "python").is_file():
+        setf("venv", "creating the private venv")
+        subprocess.run([_venv_python(), "-m", "venv", str(venv)],
+                       check=True, capture_output=True, timeout=300)
+    if not (venv / ".neutts-installed").is_file():
+        setf("runtime", "pip install (torch wheel + llama-cpp, minutes)")
+        _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
+                   "--no-input", "-q", PKG_SPEC], "runtime")
+        # measured 2026-11-09: fresh resolves pair torchao>=0.12 with
+        # torchtune 0.6.1, which lost torchao.dtypes.nf4tensor — the codec
+        # decoder import dies at the FIRST SYNTH, the worst possible place.
+        # Pin the importable version and PROVE the chain imports before we
+        # call it installed (fail at install, never at the sound test).
+        _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
+                   "--no-input", "-q", "torchao==0.11.0"], "runtime")
+        _run_proc([str(venv / "bin" / "python"), "-c",
+                   "import torchtune; "
+                   "from torchao.dtypes.nf4tensor import NF4Tensor; "
+                   "from neutts import NeuTTS"], "runtime")
+        (venv / ".neutts-installed").write_text(PKG_SPEC)
+
+
+_CUDA_BUILD = threading.Lock()
+_CUDA_STATE = {"phase": "idle", "detail": ""}
+LLAMA_PIN = "llama-cpp-python==0.3.36"          # the version PKG_SPEC resolved to
+
+def _cuda_state_write() -> None:
+    try:
+        (_root() / "cuda_build.json").write_text(json.dumps(_CUDA_STATE))
+    except OSError:
+        pass
+
+
+def _gpu_compute_cap(idx: int) -> str:
+    """sm arch for the picked card ('8.9' -> '89') so nvcc compiles ONE target:
+    minutes, not the ten-architecture tour."""
+    try:
+        r = subprocess.run(["nvidia-smi", f"-i", str(idx),
+                            "--query-gpu=compute_cap",
+                            "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=15)
+        cap = (r.stdout or "").strip().splitlines()[0].strip()
+        if cap.replace(".", "").isdigit():
+            return cap.replace(".", "")
+    except (OSError, subprocess.TimeoutExpired, IndexError):
+        pass
+    return "89"                                  # Ada floor; honest fallback
+
+
+def cuda_build_state() -> dict:
+    try:
+        return dict(json.loads((_root() / "cuda_build.json").read_text()),
+                    venv_cu=(_root() / "venv_cu" / ".cuda-installed").is_file())
+    except (OSError, ValueError):
+        return {"phase": "idle", "detail": "",
+                "venv_cu": (_root() / "venv_cu" / ".cuda-installed").is_file()}
+
+
+def build_cuda_gpu(idx: int) -> dict:
+    """One-time CUDA variant of the runtime (consent = the device pick).
+    Same pins as the CPU venv; llama-cpp is REBUILT from the identical pinned
+    source with GGML_CUDA on, for the picked card's compute capability only
+    (rule 17: pinned source, no floating binaries)."""
+    with _CUDA_BUILD:
+        st = cuda_build_state()
+        if st["phase"] == "building":
+            return st
+        _CUDA_STATE.update(phase="building",
+                           detail="creating the CUDA venv (reuses the wheel cache)")
+        _cuda_state_write()
+    def _run():
+        try:
+            venv = _root() / "venv_cu"
+            _ensure_venv(venv, lambda ph, det, p=0: _CUDA_STATE.update(
+                phase=ph, detail=det) or _cuda_state_write())
+            if not (venv / ".cuda-installed").is_file():
+                _CUDA_STATE.update(phase="building",
+                                   detail="building llama-cpp with the CUDA backend "
+                                          f"(arch {_gpu_compute_cap(idx)}, minutes, "
+                                          "CPU-heavy once)")
+                _cuda_state_write()
+                env = dict(_runner_env("cpu"),
+                           CMAKE_ARGS=f"-DGGML_CUDA=on "
+                                      f"-DCMAKE_CUDA_ARCHITECTURES={_gpu_compute_cap(idx)}",
+                           CMAKE_BUILD_PARALLEL_LEVEL="16")
+                for extra in ("cmake", "ninja"):
+                    subprocess.run([str(venv / "bin" / "python"), "-m", "pip",
+                                    "install", "--no-input", "-q", extra],
+                                   check=True, capture_output=True, timeout=600)
+                r = subprocess.run(
+                    [str(venv / "bin" / "python"), "-m", "pip", "install",
+                     "--no-input", "-q", "--no-deps", "--no-binary", ":all:",
+                     "--force-reinstall", LLAMA_PIN],
+                    env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, timeout=BUILD_TIMEOUT)
+                if r.returncode != 0:
+                    raise RuntimeError("CUDA llama-cpp build failed: "
+                                       + (r.stdout or "")[-400:])
+                v = subprocess.run(
+                    [str(venv / "bin" / "python"), "-c",
+                     "import torch, glob, os, llama_cpp; "
+                     "assert torch.cuda.is_available(), 'torch sees no CUDA'; "
+                     "assert any('cuda' in os.path.basename(x) for x in glob.glob("
+                     "os.path.dirname(llama_cpp.__file__) + '/**/*.so*', recursive=True)), "
+                     "'llama_cpp has no CUDA backend'; print('ok')"],
+                    env=dict(_runner_env("cpu"), CUDA_VISIBLE_DEVICES=str(idx)),
+                    capture_output=True, text=True, timeout=120)
+                if "ok" not in (v.stdout or ""):
+                    raise RuntimeError("CUDA verification failed: "
+                                       + ((v.stdout or "") + (v.stderr or ""))[-400:])
+                (venv / ".cuda-installed").write_text(LLAMA_PIN)
+            _CUDA_STATE.update(phase="done",
+                               detail=f"GPU {idx} ready — the next speak respawns "
+                                      "the engine on the card")
+        except Exception as exc:
+            _CUDA_STATE.update(phase="failed", detail=str(exc)[:400])
+        _cuda_state_write()
+    threading.Thread(target=_run, daemon=True).start()
+    return cuda_build_state()
+
+
+def get_device() -> str:
+    try:
+        return str(json.loads((_root() / "device.json").read_text())
+                   .get("device") or "cpu")
+    except (OSError, ValueError):
+        return "cpu"
+
+
+def effective_device(device: Optional[str] = None) -> str:
+    """What the NEXT worker will really run on: 'cuda' only when the CUDA
+    variant is actually installed; while its one-time build runs the engine
+    stays honestly on CPU (the pane says so — no placebo switches)."""
+    dev = device if device is not None else get_device()
+    if dev.startswith("gpu:"):
+        if (_root() / "venv_cu" / ".cuda-installed").is_file():
+            return "cuda"
+        return "cpu"
+    return "cpu"
+
+
+def devices() -> list:
+    """Every place the engine can speak: CPU + all GPUs nvidia-smi reveals,
+    with the memory/util truth of the moment so the owner picks right. No
+    nvidia-smi (or no CUDA venv) is reflected in each row's ready flag —
+    the dropdown lists reality, never an aspiration."""
+    cur = get_device()
+    out = [{"id": "cpu", "label": "CPU (bounded threads, background nice)",
+            "ready": True, "selected": cur == "cpu"}]
+    st = cuda_build_state()
+    try:
+        r = subprocess.run(
+            ["nvidia-smi",
+             "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+        rows = (r.stdout or "").splitlines() if r.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired):
+        rows = []
+    for line in rows:
+        f = [x.strip() for x in line.split(",")]
+        if len(f) < 5:
+            continue
+        try:
+            idx, name = int(f[0]), f[1]
+            used, total, util = int(f[2]), int(f[3]), int(f[4])
+        except ValueError:
+            continue
+        row = {"id": f"gpu:{idx}", "label": f"GPU {idx} · {name}",
+               "free_mb": max(0, total - used), "util": util,
+               "selected": cur == f"gpu:{idx}"}
+        if st["phase"] == "building":
+            row["ready"] = False
+            row["note"] = "building the CUDA engine once…"
+        elif st["venv_cu"]:
+            row["ready"] = True
+        else:
+            row["ready"] = False
+            row["note"] = "select to build the CUDA engine (one time, minutes)"
+        if used > total // 3:
+            row["note"] = (row.get("note", "") +
+                           f" · already carrying {used} MB (busy elsewhere)").strip(" ·")
+        out.append(row)
+    return out
+
+
+def set_device(dev: str) -> dict:
+    """Persist the choice; a GPU pick IS the consent (rule 12) to run the
+    one-time CUDA build. The live worker is left alone: every host process
+    rebinds lazily on its next request when the effective device changes."""
+    if dev != "cpu" and not (dev.startswith("gpu:") and dev[4:].isdigit()):
+        return {"ok": False, "error": "device must be 'cpu' or 'gpu:<index>'"}
+    _root().mkdir(parents=True, exist_ok=True)
+    (_root() / "device.json").write_text(json.dumps({"device": dev}))
+    if dev.startswith("gpu:"):
+        build_cuda_gpu(int(dev.split(":")[1]))
+    return {"ok": True, "device": dev, "build": cuda_build_state(),
+            "effective": effective_device(dev)}
 
 
 def _download(url: str, dest: Path, nbytes: int = 0,
@@ -583,7 +776,7 @@ _NAMES = None
 _CODES = {}
 
 
-def _tts(model, codec, seed):
+def _tts(model, codec, seed, device="cpu"):
     global _TTS
     if _TTS is None:
         import torch
@@ -593,8 +786,11 @@ def _tts(model, codec, seed):
         # The codec is the OFFICIAL gated repo id, never a dir: neutts AND neucodec
         # both hard-assert the two repo-id strings (local dirs assert) — except the
         # kit's pinned community port dir, which loads through the same path.
-        _TTS = NeuTTS(backbone_repo=model, language="en-us", backbone_device="cpu",
-                      codec_repo=codec, codec_device="cpu", seed=seed)
+        # device: 'cpu' or 'cuda' — CUDA_VISIBLE_DEVICES is set by the parent, so
+        # 'cuda' here is ALWAYS exactly the one GPU the pane selected (SPEC 19.4m:
+        # a GPU0-running sglang can never be touched by accident).
+        _TTS = NeuTTS(backbone_repo=model, language="en-us", backbone_device=device,
+                      codec_repo=codec, codec_device=device, seed=seed)
     return _TTS
 
 
@@ -684,6 +880,7 @@ def main():
     ap.add_argument("--ref-text")
     ap.add_argument("--out")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top-k", type=int, default=50)
     a = ap.parse_args()
@@ -697,7 +894,7 @@ def main():
         _proto = _io.open(os.dup(1), "w", buffering=1)
         _null = os.open(os.devnull, os.O_WRONLY)
         os.dup2(_null, 1)
-        tts = _tts(a.model, a.codec, a.seed)
+        tts = _tts(a.model, a.codec, a.seed, a.device)
         while True:
             r, _, _ = select.select([sys.stdin], [], [], IDLE_EXIT_S or None)
             if not r:
@@ -727,7 +924,7 @@ def main():
         raise SystemExit("one-shot mode needs --text-file/--ref-wav/--ref-text/--out")
     text = open(a.text_file, encoding="utf-8").read()
     ref_text = open(a.ref_text, encoding="utf-8").read()
-    synth_one(_tts(a.model, a.codec, a.seed), text, a.ref_wav, ref_text, a.out,
+    synth_one(_tts(a.model, a.codec, a.seed, a.device), text, a.ref_wav, ref_text, a.out,
               a.seed, a.temperature, a.top_k)
 
 
@@ -749,6 +946,7 @@ class ProtocolRefusal(RuntimeError):
 
 
 _WORKER = None
+_WORKER_DEV = None    # device the live worker was spawned on (pane flips rebind)
 _QUEUED = 0        # in-flight/queued requests — the pane's live "what is happening" number
 _LAST_OK = 0.0     # epoch of the last successful render (warm-truth for the chip)
 _SHUTTING_DOWN = False
@@ -835,7 +1033,14 @@ def engine_state() -> dict:
         phase = "loading"          # worker exists, first render not back yet
     else:
         phase = "idle"
-    return {"phase": phase, "queued": _QUEUED, "last_ok": _LAST_OK}
+    st = {"phase": phase, "queued": _QUEUED, "last_ok": _LAST_OK,
+          "device": get_device(), "effective": effective_device()}
+    bld = cuda_build_state()
+    if bld["phase"] in ("building", "failed"):
+        st["build"] = bld                # the pane names the wait, not a spinner
+    if _WORKER_DEV is not None and _WORKER_DEV != st["effective"] and not alive:
+        st["phase"] = "rebinding"        # device flipped: next speak boots there
+    return st
 
 
 # ONE model, ONE synthesis at a time, IN ARRIVAL ORDER (owner ruling
@@ -847,13 +1052,19 @@ _READY = threading.Condition()
 _NEXT = 0
 
 
-def _runner_env() -> dict:
+def _runner_env(device: Optional[str] = None) -> dict:
     env = dict(os.environ, HF_HOME=str(_root() / "cache"),
                HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()),
                # ONE worker, a bounded slice of the box (owner CPU-spike ruling
                # 2026-11-10): llama.cpp/torch default to ALL 32 threads and the
                # engine shares this host with sglang + the gateway itself.
                OMP_NUM_THREADS="8", MKL_NUM_THREADS="8")
+    dev = device if device is not None else get_device()
+    if dev.startswith("gpu:"):
+        # THE GPU0 SHIELD: the worker sees exactly the picked card as its
+        # cuda:0. An owner who picks GPU 1 cannot touch sglang's GPU 0 —
+        # not by convention, by visibility.
+        env["CUDA_VISIBLE_DEVICES"] = dev.split(":")[1]
     for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
         env.pop(_k, None)   # host interpreter paths must not shadow the venv
     tok = _hf_token()
@@ -862,11 +1073,13 @@ def _runner_env() -> dict:
     return env
 
 
-def _serve_argv(seed=None) -> list:
+def _serve_argv(seed=None, device: Optional[str] = None) -> list:
     _, s = _source()
-    argv = [str(_root() / "venv" / "bin" / "python"),
+    eff = effective_device(device)
+    py = _root() / ("venv_cu" if eff == "cuda" else "venv") / "bin" / "python"
+    argv = [str(py),
             str(_root() / "air_runner.py"),
-            "--serve",
+            "--serve", "--device", eff,
             "--model", str(_root() / "model" / s["file"]),
             "--codec", str(_root() / "codec") if s["codec"]["kind"] == "port"
                        else s["codec"]["repo"]]
@@ -883,7 +1096,7 @@ def _worker_request(req: dict) -> None:
     gateway): death/timeout/refusal → SIGKILL → fresh worker → up to 3 attempts
     total, rotating the sampler seed after each failure (degenerate generations
     are per-draw, not per-worker)."""
-    global _WORKER, _NEXT, _QUEUED, _LAST_OK
+    global _WORKER, _NEXT, _QUEUED, _LAST_OK, _WORKER_DEV
     if _SHUTTING_DOWN:
         raise RuntimeError("engine shutting down")   # never re-ignite during stop
     ticket = next(_TICK)
@@ -894,6 +1107,14 @@ def _worker_request(req: dict) -> None:
         try:
             for attempt in (1, 2, 3):
                 w = _WORKER
+                want = effective_device()          # device may have changed in the pane
+                if w is not None and _WORKER_DEV != want and w.poll() is None:
+                    try:                           # lazy rebind: the pane flipped
+                        w.terminate()              # cpu->gpu; next speak boots there
+                        w.wait(timeout=5)
+                    except Exception:
+                        w.kill()
+                    w = _WORKER = None
                 if w is None or w.poll() is not None:
                     write_runner()
                     _reap_stray_workers()          # init-parented leftovers from killed gates
@@ -904,6 +1125,7 @@ def _worker_request(req: dict) -> None:
                         # background class: the engine must never outrank the
                         # gateway, sglang, or the owner's foreground work
                         preexec_fn=(lambda: os.nice(10) if os.name != "nt" else None))
+                    _WORKER_DEV = want
                     _WORKERS_ALL.append(w)
                     _reap_extra_tracked(w)         # one worker per process, full stop
                 try:
@@ -962,8 +1184,10 @@ def _synth_argv(text: str, ref_wav: Path, ref_text: str, out_wav: Path) -> list:
     rf = out_wav.with_suffix(".ref.txt")
     rf.write_text(ref_text, encoding="utf-8")
     codec = s["codec"]
-    argv = [str(_root() / "venv" / "bin" / "python"),
+    eff = effective_device()
+    argv = [str(_root() / ("venv_cu" if eff == "cuda" else "venv") / "bin" / "python"),
             str(_root() / "air_runner.py"),
+            "--device", eff,
             "--model", str(_root() / "model" / s["file"]),
             "--codec", str(_root() / "codec") if codec["kind"] == "port"
                        else codec["repo"],

@@ -204,7 +204,8 @@ def voice():
     vo, ta, al = _voice_mods(ensure=True)
     return {"voice": vo.status(),
             "air": ta.status() | {"sources": ta.sources_menu(), "slots": ta._slots(),
-                                  "preview": ta.preview(), "engine": ta.engine_state()},
+                                  "preview": ta.preview(), "engine": ta.engine_state(),
+                                  "devices": ta.devices()},
             "aligner": al.status()}
 
 
@@ -238,6 +239,13 @@ def voice_post(body: dict):
         if isinstance(r.get("audio"), (bytes, bytearray)):
             r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
         return r
+    if action == "engine_devices":
+        return {"ok": True, "devices": ta.devices()}
+    if action == "set_engine_device":
+        # The pick IS the consent (rule 12): a GPU choice starts the one-time
+        # CUDA variant build; the engine keeps speaking on CPU meanwhile and
+        # rebinds the worker the moment the build is done. SPEC 19.4(m).
+        return ta.set_device(str(body.get("device") or "cpu"))
     if action == "speed":
         return vo.set_speed(float(body.get("speed", 1.0)))
     if action == "karaoke":

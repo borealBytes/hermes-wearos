@@ -81,6 +81,19 @@ function voPick (slot) {
   }))
 }
 
+// 'Speak on' = CPU or one named GPU (SPEC 19.4m). The pick IS the consent to
+// build the CUDA engine variant once; meanwhile the CPU engine keeps talking
+// and the note says so — never a placebo switch.
+function voSetDevice (ev) {
+  const dev = ev.target.value
+  $voNote.set(dev.startsWith('gpu:')
+    ? 'engine still on CPU while the one-time CUDA build runs (see the row below)'
+    : 'engine moving back to CPU on the next speak')
+  voiceAct(() => rest('/voice', {
+    method: 'POST', body: { action: 'set_engine_device', device: dev }
+  }))
+}
+
 async function sttSelect (ev) {
   await act(() => rest('/stt', {
     method: 'POST', body: { action: 'select', variant: ev.target.value }
@@ -756,6 +769,35 @@ function WearKitPane () {
             ]
           }),
           voNote ? jsx('div', { className: 'text-[10px] text-(--ui-text-tertiary)', children: voNote }) : null,
+
+          // 'Speak on' (SPEC 19.4m): CPU or any GPU nvidia-smi reveals — the
+          // worker is fenced with CUDA_VISIBLE_DEVICES to the picked index,
+          // so the card you don't pick can never be touched.
+          (air.devices || []).length > 1 ? jsxs('label', {
+            className: 'flex flex-col gap-0.5 text-xs',
+            children: [
+              jsx('span', {
+                className: 'text-[10px] text-(--ui-text-tertiary)',
+                children: 'speak on (GPU selection builds the CUDA engine once; ' +
+                          'until it is done the engine stays honestly on CPU)'
+              }),
+              jsx('select', {
+                className: 'rounded border border-(--ui-border) bg-transparent px-1 py-1 text-xs',
+                value: (air.engine || {}).device || 'cpu', disabled: busy,
+                onChange: voSetDevice,
+                children: (air.devices || []).map(d => jsx('option', {
+                  value: d.id,
+                  children: d.label + (d.free_mb != null ? ` · ${Math.round(d.free_mb / 1024)} GB free` : '') +
+                    (d.note ? ` · ${d.note}` : '') + (d.selected ? ' · chosen' : '')
+                }, d.id))
+              }),
+              (air.engine || {}).build && (air.engine || {}).build.phase === 'building'
+                ? jsx('div', { className: 'text-[10px] text-(--ui-text-secondary)', children: 'building: ' + ((air.engine || {}).build.detail || 'one CUDA build…') })
+                : (air.engine || {}).build && (air.engine || {}).build.phase === 'failed'
+                  ? jsx('div', { className: 'text-[10px] text-(--ui-text-danger)', children: 'CUDA build failed: ' + ((air.engine || {}).build.detail || '') })
+                  : null
+            ]
+          }, 'vo-device') : null,
 
           // one global speed dial + karaoke toggle (canonical prefs, rev-bumped)
           voicing ? jsxs('div', {

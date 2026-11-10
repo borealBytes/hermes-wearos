@@ -1781,6 +1781,25 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   UI ships in the competition build). The gateway lane is the milestone focus:
   Settings ▸ Voice ▸ 'wearkit-gateway' (§19.4(i)) on the resident engine (§19.4(j)).
 
+- **2026-11-10 (m): GPU EXECUTION, CPU FLOOR (owner: "Can this model run on GPU?
+  I want the drop-down for CPU and GPUs, expose all the GPUs… for me it's GPU 1,
+  never, ever, ever GPU 0").** The pinned llama.cpp wheel ships CPU-only and the
+  neutts backbone loads through it, so GPU support is a SECOND private venv
+  (`tts/venv_cu`) with llama-cpp-python rebuilt against CUDA (`-DGGML_CUDA=on`,
+  nvcc 13.2 on this box), on the same pinned neutts commit. Surface: the Voice-out
+  card grows a 'speak on' dropdown fed by `tts_air.devices()` (nvidia-smi
+  enumeration — CPU plus EVERY GPU by name, index, and free VRAM). Selecting a
+  GPU IS the install consent (rule 12) and starts the one build in a background
+  thread; until `.cuda-installed` lands the switch reports queued and the engine
+  stays honestly on CPU (no placebo). Selection persists in `tts/device.json`;
+  the resident worker REBINDS lazily (next speak boots on the new device).
+  Hard rules: (1) the GPU0 shield — the worker env always carries
+  `CUDA_VISIBLE_DEVICES=<picked index>`, so inside the engine exactly one card
+  is visible and the card you did not pick can never be touched; (2) the CUDA
+  build failing degrades to CPU with the reason on the pane, it never breaks
+  speech; (3) the pane never shows spinner silence — `engine_state()` carries
+  phase ('rebinding') and build progress. Tests: `test_tts_air_device.py`.
+
 - **2026-11-10 (k): SENTENCE BY SENTENCE in BOTH lanes (owner: "we need sentence by
   sentence… we're not waiting for the full damn pass").** The 12:58 CPU screenshot
   was a 'big old line of text' rendered as ONE mega-generation. Now the server cuts
