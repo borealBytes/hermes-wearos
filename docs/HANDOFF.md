@@ -203,7 +203,12 @@ tests/test_tts_air_device.py (7). Suite: 145 passed, 1 skipped, 3 subtests.
 ON THIS BOX: GPU1 = RTX 4070 (idle). DONE 14:34: the CUDA variant installed
 from the hash-pinned release wheel (see SPEC 19.4m measured note) — marker
 `venv_cu/.cuda-installed` on disk, verification probe passed. Old CPU workers
-killed (the gateway's old code had DOUBLE-spawned — 273% + 24% twins). NEXT:
-owner restarts the gateway from their own shell; the first speak after boots
-the engine into venv_cu with CUDA_VISIBLE_DEVICES=1 (GPU 0 not even visible),
-then re-time a sentence draw cpu-vs-gpu and pick the competition lane.
+killed (the gateway's old code had DOUBLE-spawned — 273% + 24% twins). DONE
+14:48 — HARDWARE PROOF (owner + weardev both heard it): gateway restarted,
+resident worker now `venv_cu --device cuda` holding 4.3 GB on GPU 1 (GPU 0
+untouched at 90 GB/100% — the shield held); the Watch Ultra (app 0.9.0 = the
+12:07 f1fc974 build, pairing kept across -r install) spoke a live reply over
+the tailnet lane — Android AudioTrack started at 24000 Hz mono, USAGE_MEDIA.
+Watch gate learned: Settings ▸ Voice out ▸ source 'gateway 🌐' (default is
+'system'; voice_out itself defaults ON). 'voice suppressed — answer settled
+off-screen' is the honest no-chime law, not a bug.
