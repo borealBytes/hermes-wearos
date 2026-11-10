@@ -1807,6 +1807,20 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   in ~5 min total (11.8 GB peak was the wheel unpack, nice 10). The worker
   rebind, the visible-devices fence and the verification probe all ran for
   real on this box before this line was written.
+- **2026-11-10 (m2): THE GPU PIN IS EXCLUSIVE (owner, post-restart review of the
+  CPU-twin incident: "If GPU is selected, that's the only one that should
+  run").** Supersedes (m) hard-rule 2 (silent CPU degrade). A GPU pick with
+  an unfinished CUDA build yields `effective_device() == 'pending-gpu'`: no
+  worker spawns, and a speak REFUSES with 'GPU selected but its engine build
+  is not ready' — the pane's Build row carries the remedy. A CPU worker may
+  now exist ONLY because CPU is the selected backend; the incident that
+  proved the old rule wrong was a stale-code gateway (booted 15:29 from a
+  pre-GPU slice plugin copy) running its CPU default beside the new CUDA
+  worker while the twin-respawn loop kept replacing instances — the pane's
+  chip watched a respawner, not an engine, and showed 'loading' forever.
+  Tests: `test_gpu_pin_never_downgrades_to_cpu`,
+  `test_pending_gpu_speak_refuses_without_spawning` (Popen spy: pending pin
+  must never spawn). Commit `9072ce9`.
 
 - **2026-11-10 (k): SENTENCE BY SENTENCE in BOTH lanes (owner: "we need sentence by
   sentence… we're not waiting for the full damn pass").** The 12:58 CPU screenshot
