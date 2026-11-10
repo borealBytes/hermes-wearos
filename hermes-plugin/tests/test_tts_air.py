@@ -94,6 +94,16 @@ class TtsAirTests(unittest.TestCase):
         self.assertEqual(sel["watch"], ["community-q4"])     # by default; watch = Q4
         self.assertTrue(any(r["gated"] and r["id"] == "official-q8" for r in menu))
 
+    def test_codec_is_official_repo_until_a_port_is_verified(self):
+        """bezzam/neucodec-hf LOOKS like the repo but ISN'T the package's shape
+        (flat acoustic_* keys, 517-key w2v-Bert frontend, no pytorch_model.bin):
+        the loader roundtrip encoded every frame of real speech to ONE code.
+        Both loaders also hard-assert the gated ids. No row may go back to the
+        port until a roundtrip passes against it (measured 2026-11-09)."""
+        for sid, row in ta.SOURCES.items():
+            self.assertEqual(row["codec"]["kind"], "repo", sid)
+            self.assertEqual(row["codec"]["repo"], ta.CODEC_REPO, sid)
+
     def test_select_source_moves_selection_and_rejects_invention(self):
         r = ta.select_source("alt-q8-drinking", for_slot="gateway")
         self.assertTrue(r["ok"])

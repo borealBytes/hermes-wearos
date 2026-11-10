@@ -68,26 +68,27 @@ CODEC_REPO = "neuphonic/neucodec"                      # PyTorch codec (encode+d
 # Community re-quants differ from the official file by a few hundred bytes of
 # GGUF metadata (their own quantization of the same Apache-2.0 weights), so each
 # row pins its OWN byte count; SHAs record on first verified fetch like MODEL_SHA256.
+# THE CODEC IS NEVER MIRRORED (measured 2026-11-09): the only HF-layout port
+# (bezzam/neucodec-hf) is the PAPER'S model — flat acoustic_* keys + a 517-key
+# w2v-Bert semantic frontend, missing the pytorch_model.bin neutts' loader is
+# written against (loader roundtrip: every audio frame encodes to ONE code).
+# Both the neutts AND the neucodec loaders hard-assert the gated repo ids, so
+# the official pytorch bin is the only fit until a verified port appears; the
+# kind:"port" plumbing stays for that day.
 SOURCES = {
     "community-q8": {
         "label": "Community Q8_0 — mradermacher re-quant (no account, ungated; "
                  "the most-downloaded source on the Hub)",
         "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q8_0.gguf",
         "bytes": 802_659_296, "gated": False,
-        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
-                  "files": ("config.json", "model.safetensors",
-                            "preprocessor_config.json"),
-                  "bytes": 2_519_855_456},
+        "codec": {"kind": "repo", "repo": CODEC_REPO},
     },
     "community-q4": {
         "label": "Community Q4_K_M — mradermacher re-quant (no account, ungated; "
                  "half the RAM — the watch-size quant)",
         "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q4_K_M.gguf",
         "bytes": 596_267_936, "gated": False,
-        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
-                  "files": ("config.json", "model.safetensors",
-                            "preprocessor_config.json"),
-                  "bytes": 2_519_855_456},
+        "codec": {"kind": "repo", "repo": CODEC_REPO},
     },
     "official-q8": {
         "label": "Official Q8_0 — Neuphonic's own file (HF consent + token, one-time)",
@@ -106,10 +107,7 @@ SOURCES = {
         "label": "Alt Q8_0 — MrDrinking re-quant (no account, ungated)",
         "repo": "MrDrinking/neutts-air-Q8_0-GGUF", "file": "neutts-air-q8_0.gguf",
         "bytes": 802_658_880, "gated": False,
-        "codec": {"kind": "port", "repo": "bezzam/neucodec-hf",
-                  "files": ("config.json", "model.safetensors",
-                            "preprocessor_config.json"),
-                  "bytes": 2_519_855_456},
+        "codec": {"kind": "repo", "repo": CODEC_REPO},
     },
 }
 # Owner ruling 2026-11-09, second pass: the DEFAULT is the best community quant
@@ -548,25 +546,15 @@ def main():
     codes_path = a.ref_wav + ".codes.pt"
     import torch
     from neutts import NeuTTS
-
-    class Engine(NeuTTS):
-        def _load_codec(self, repo, device):
-            # neutts 1.4.1 allowlists gated repo ids; the transformers-style
-            # loader itself takes a LOCAL DIR fine (docstring-verified) — so we
-            # skip only the allowlist, never the config-driven construction.
-            # (A hand-rolled load_state_dict onto default-init NeuCodec LOOKS
-            # fine, 823M params 'loaded', then encodes every frame to one code:
-            # it ignores config.json. Measured 2026-11-09.)
-            if os.path.isdir(repo):
-                from neucodec import NeuCodec
-                self.codec = NeuCodec.from_pretrained(repo)
-                self.codec.eval()
-                return
-            super()._load_codec(repo, device)
-
     # language is REQUIRED when the backbone is a local GGUF (neutts infers it
     # only from Neuphonic repo ids; measured 2026-11-09). en-us = the kit's pin.
-    tts = Engine(backbone_repo=a.model, language="en-us", backbone_device="cpu",
+    # The codec is the OFFICIAL gated repo id, never a dir: neutts AND neucodec
+    # both hard-assert the two repo-id strings (local dirs assert), and the
+    # community HF 'port' is the paper's model, not this package's (measured:
+    # every audio frame -> ONE code). hf_hub_download picks up HF_TOKEN/HF_HOME
+    # from the env voiceout.synth sets. The ungated community mirrors cover the
+    # BACKBONE; the codec token is the one honest requirement (rule 13).
+    tts = NeuTTS(backbone_repo=a.model, language="en-us", backbone_device="cpu",
                  codec_repo=a.codec, codec_device="cpu", seed=a.seed)
     if os.path.isfile(codes_path):
         ref_codes = torch.load(codes_path, weights_only=True)

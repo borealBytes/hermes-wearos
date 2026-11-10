@@ -17,12 +17,13 @@ sz() { stat -c%s "$1" 2>/dev/null || echo 0; }
   "https://huggingface.co/mradermacher/neutts-air-GGUF/resolve/main/neutts-air.Q8_0.gguf"   # the shipping DEFAULT row
 ls -la "$W/model.gguf"
 
-echo "== codec (HF-port mirror, ungated) =="
-for F in config.json model.safetensors preprocessor_config.json; do
-  want=292; case "$F" in model.safetensors) want=2519855456 ;; config.json) want=2964 ;; esac
-  [ "$(sz "$W/codec/$F")" = "$want" ] || curl -sSL -C - -o "$W/codec/$F" "https://huggingface.co/bezzam/neucodec-hf/resolve/main/$F"
-done
-ls -la "$W/codec"
+echo "== codec: OFFICIAL gated repo, warmed after the venv exists (token check) =="
+# The bezzam HF-layout 'port' is the paper's model (flat acoustic_* keys, no
+# pytorch_model.bin): the roundtrip probe encoded every frame of real speech to
+# ONE code. And BOTH loaders (neutts._load_codec, neucodec._from_pretrained)
+# hard-assert the gated repo-id STRINGS — there is no local-dir bypass at all.
+# Measured 2026-11-09; the codec row in the pane is honest about the token.
+[ -n "$HF_TOKEN" ] || echo "MIRROR-PROOF needs HF_TOKEN (free account, one-time consent on the Neuphonic repos)"
 
 echo "== venv + pinned runtime =="
 PYV="$(command -v python3.13 || command -v python3.12 || command -v python3.11)"   # neutts pin: >=3.10,<3.14
@@ -36,6 +37,13 @@ PYV="$(command -v python3.13 || command -v python3.12 || command -v python3.11)"
 # by the synth below, not by pip's resolver).
 "$W/venv/bin/pip" install -q "torchao==0.11.0" 2>&1 | tail -1
 "$W/venv/bin/python" -c "import torchtune; from torchao.dtypes.nf4tensor import NF4Tensor; from neutts import NeuTTS; print('IMPORT-CHAIN-OK')"
+
+echo "== codec warm (official gated bin; token + consent from the HF account) =="
+[ -n "$HF_TOKEN" ] || { echo "HF_TOKEN required for the gated codec"; exit 2; }
+"$W/venv/bin/python" -c "
+from huggingface_hub import hf_hub_download
+import os
+print('cached:', hf_hub_download('neuphonic/neucodec', 'pytorch_model.bin'))"
 
 echo "== synth via the PRODUCT RUNNER (dogfood: RUNNER_SRC from tts_air.py) =="
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -53,12 +61,12 @@ PY
 # speech tokens" on EVERY GGUF; the runner generates at raw-token level against
 # the GGUF vocab instead. (2) The vendor path silently runs WITHOUT llama.cpp's
 # repeat_penalty default -> a single-token buzz; the runner passes 1.1.
-# (3) neutts 1.4.1's codec loader allowlists gated repo ids; the runner passes
-# the ungated HF-layout port DIR straight to NeuCodec.from_pretrained (skips
-# the allowlist, keeps the config-driven build — a hand-rolled state_dict load
-# ignores config.json and encodes every frame to a single code; measured).
+# (3) The codec CANNOT be mirrored today: the bezzam HF-layout 'port' is the
+# paper's model (wrong keys; roundtrip -> one code), and both loaders assert the
+# gated repo-id strings, so the official pytorch bin + free-account token is
+# the only correct route (measured 2026-11-09; see the SOURCES note in tts_air.py).
 "$W/venv/bin/python" "$W/runner.py" \
-  --model "$W/model.gguf" --codec "$W/codec" \
+  --model "$W/model.gguf" --codec neuphonic/neucodec \
   --ref-wav /opt/wearos-in/clay.wav \
   --ref-text "Your cron digest is ready. Three farm alerts, no incidents, sprayer window opens Thursday at six ten." \
   --text-file /opt/wearos-in/narration.txt \
