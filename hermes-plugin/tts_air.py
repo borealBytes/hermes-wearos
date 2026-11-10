@@ -738,6 +738,12 @@ def write_runner() -> Path:
     return p
 
 
+class ProtocolRefusal(RuntimeError):
+    """The warm worker answered honestly ('no, that draw decoded to silence').
+    Healthy worker — the retry loop must NOT respawn it (CPU law, owner
+    2026-11-10: the reload storm is what spiked the 7950X to load 24)."""
+
+
 _WORKER = None
 _QUEUED = 0        # in-flight/queued requests — the pane's live "what is happening" number
 _LAST_OK = 0.0     # epoch of the last successful render (warm-truth for the chip)
@@ -768,7 +774,11 @@ _NEXT = 0
 
 def _runner_env() -> dict:
     env = dict(os.environ, HF_HOME=str(_root() / "cache"),
-               HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()))
+               HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()),
+               # ONE worker, a bounded slice of the box (owner CPU-spike ruling
+               # 2026-11-10): llama.cpp/torch default to ALL 32 threads and the
+               # engine shares this host with sglang + the gateway itself.
+               OMP_NUM_THREADS="8", MKL_NUM_THREADS="8")
     for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
         env.pop(_k, None)   # host interpreter paths must not shadow the venv
     tok = _hf_token()
@@ -777,14 +787,19 @@ def _runner_env() -> dict:
     return env
 
 
-def _serve_argv() -> list:
+def _serve_argv(seed=None) -> list:
     _, s = _source()
-    return [str(_root() / "venv" / "bin" / "python"),
+    argv = [str(_root() / "venv" / "bin" / "python"),
             str(_root() / "air_runner.py"),
             "--serve",
             "--model", str(_root() / "model" / s["file"]),
             "--codec", str(_root() / "codec") if s["codec"]["kind"] == "port"
                        else s["codec"]["repo"]]
+    if seed is not None:
+        # neutts 1.4.1 seeds the sampler ONLY at construction, so a rotated
+        # draw across a respawn needs the seed in argv, not just in the request.
+        argv += ["--seed", str(int(seed))]
+    return argv
 
 
 def _worker_request(req: dict) -> None:
@@ -805,8 +820,12 @@ def _worker_request(req: dict) -> None:
                 if w is None or w.poll() is not None:
                     write_runner()
                     _WORKER = w = subprocess.Popen(
-                        _serve_argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL, text=True, env=_runner_env())
+                        _serve_argv(req.get("seed")), stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, env=_runner_env(),
+                        # background class: the engine must never outrank the
+                        # gateway, sglang, or the owner's foreground work
+                        preexec_fn=(lambda: os.nice(10) if os.name != "nt" else None))
                 try:
                     w.stdin.write(json.dumps(req) + "\n")
                     w.stdin.flush()
@@ -818,24 +837,35 @@ def _worker_request(req: dict) -> None:
                         raise OSError("worker died mid-request")
                     res = json.loads(line)
                     if not res.get("ok"):
-                        raise RuntimeError(res.get("error") or "runner refused")
+                        # ENGINE'S OWN REFUSAL (e.g. silence guard): the worker
+                        # is healthy — respawning it would pay a full model
+                        # reload (30-90 s at all-core, the owner's CPU-spike
+                        # complaint 2026-11-10). Keep it; the rotated draw
+                        # below rides the same warm model.
+                        raise ProtocolRefusal(res.get("error") or "runner refused")
                     _LAST_OK = time.time()
                     return
                 except Exception as exc:
-                    try:
-                        w.kill()
-                    except OSError:
-                        pass
-                    _WORKER = None
+                    if not isinstance(exc, ProtocolRefusal):
+                        try:
+                            w.kill()
+                        except OSError:
+                            pass
+                        _WORKER = None
                     if attempt == 3:
                         raise RuntimeError("engine failed: " + str(exc)[:400]) from exc
-                    # Rotate the sampler seed for the retry: some failures are
-                    # DEGENERATE GENERATIONS (measured 2026-11-10: certain
-                    # lines decoded to digital silence while the same worker
-                    # rendered the shipped card line 4/4). A fresh draw is the
-                    # cheapest recovery; respawn-once also restores a clean
-                    # model state either way.
+                    # Rotate BOTH knobs for the retry. The sampler seed alone
+                    # proved insufficient (measured 2026-11-10: one test line
+                    # drew digital silence 3/3 across argv-level seed changes —
+                    # neutts 1.4.1 has no per-call backbone seed hook, only a
+                    # constructor arg). temperature rides the per-request
+                    # generate() call and therefore ALWAYS changes the draw;
+                    # the decode is not all-zero-safe, so token diversity is
+                    # the recovery lever. (f) class bug: some generations
+                    # decode to zeros; a fresh, hotter draw is the cheap fix.
                     req["seed"] = int(req.get("seed", 42)) + 1
+                    req["temperature"] = round(
+                        float(req.get("temperature", 0.7)) + 0.15, 2)
         finally:
             _QUEUED = max(0, _QUEUED - 1)
             _NEXT += 1

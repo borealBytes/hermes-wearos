@@ -1765,6 +1765,20 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   Word timestamps are media-time, so karaoke alignment is untouched by playback rate.
   The reference wav still plays FLAT (1.0x = the speaker's own pace). Retries widened
   to 3 with seed rotation (attempt tuple had silently capped at 2).
+
+- **2026-11-10 (h): CPU discipline for the engine worker (owner: htop load 24).** The
+  retry design was secretly a reload storm: every refusal SIGKILLed the worker and a
+  respawn pays a full llama.cpp load at ALL 32 threads. Measured root cause of the
+  3/3-silence line: respawn-at-seed-42 REPLAYS the identical sampler stream — retries
+  were deterministically identical, and neutts 1.4.1 has no per-call backbone seed hook
+  (constructor only). Laws now: (1) an ENGINE'S OWN REFUSAL (ProtocolRefusal: silence
+  guard, bad draw) keeps the warm worker — the llama RNG has advanced, so the next draw
+  is genuinely new; (2) the retry rotates temperature too (rides the per-request
+  generate() call — a second, real diversity lever) and feeds the seed into the respawn
+  argv (the only place neutts listens); (3) workers run at OMP/MKL_NUM_THREADS=8 and
+  nice(10) — the engine shares this box with sglang and the gateway and must never
+  outrank either. Proof: the line that failed 3/3 rendered audible (5.26 s,
+  peak 25721, T 42 s single reload+retry) with nice=10 observed in ps.
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
