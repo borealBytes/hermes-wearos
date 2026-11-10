@@ -658,6 +658,12 @@ def synth_one(tts, text, ref_wav, ref_text, out, seed, temperature, top_k):
     if getattr(tts, "watermarker", None) is not None:
         wav = tts.watermarker.apply_watermark(wav, sample_rate=tts.sample_rate)
     pcm = (wav * 32767).clip(-32768, 32767).astype("int16")
+    if int(abs(pcm).max(initial=0)) < 128:
+        # Honesty guard (measured 2026-11-10: serve-mode renders could return
+        # ok with an all-zero decode). Silence is a FAILURE here, so the
+        # parent falls back to the audible system tier instead of caching and
+        # speaking nothing.
+        raise RuntimeError("engine decoded digital silence")
     with wave.open(out, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(tts.sample_rate)
         w.writeframes(pcm.tobytes())
@@ -801,6 +807,13 @@ def _worker_request(req: dict) -> None:
                     _WORKER = None
                     if attempt == 2:
                         raise RuntimeError("engine failed: " + str(exc)[:400]) from exc
+                    # Rotate the sampler seed for the retry: some failures are
+                    # DEGENERATE GENERATIONS (measured 2026-11-10: certain
+                    # lines decoded to digital silence while the same worker
+                    # rendered the shipped card line 4/4). A fresh draw is the
+                    # cheapest recovery; respawn-once also restores a clean
+                    # model state either way.
+                    req["seed"] = int(req.get("seed", 42)) + 1
         finally:
             _NEXT += 1
             _READY.notify_all()

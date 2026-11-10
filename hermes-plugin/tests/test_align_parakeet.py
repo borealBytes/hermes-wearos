@@ -83,7 +83,7 @@ class AlignTests(unittest.TestCase):
         text = "Your cron digest is ready today"
         fake_wav = b"RIFF" + struct.pack("<I", 36 + 4800) + b"WAVEfmt " \
             + struct.pack("<IHHIIHH", 16, 1, 1, 24000, 48000, 2, 16) \
-            + b"data" + struct.pack("<I", 4800) + b"\x00" * 4800
+            + b"data" + struct.pack("<I", 4800) + b"\x00\x10" * 2400  # audible, not silence
         vo._SYNTH["air"] = lambda t, c, s: (fake_wav, 24000)
         vo._ALIGN["parakeet"] = lambda a, r, t: [
             {"text": w, "start": i * 0.5, "end": i * 0.5 + 0.4}

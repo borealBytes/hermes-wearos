@@ -464,6 +464,22 @@ def _cache_dir() -> Path:
     return d
 
 
+def _silent(audio: bytes) -> bool:
+    """True if a WAV carries no audible signal (int16 peak < 128)."""
+    import io as _io
+    import struct
+    import wave
+    try:
+        w = wave.open(_io.BytesIO(audio))
+        d = w.readframes(w.getnframes())
+        if len(d) < 2:
+            return True
+        s = struct.unpack("<%dh" % (len(d) // 2), d[:400000])
+        return max(abs(x) for x in s) < 128
+    except Exception:
+        return False
+
+
 def _cache_get(key: str, want_words: bool) -> Optional[dict]:
     try:
         d = _cache_dir()
@@ -472,6 +488,14 @@ def _cache_get(key: str, want_words: bool) -> Optional[dict]:
             return None
         meta = json.loads(side.read_text("utf-8"))
         audio = wav.read_bytes()
+        if _silent(audio):
+            # A zero-peak clip is an engine failure, not a result (measured
+            # 2026-11-10: a serve-mode render cached 1.25 s of digital
+            # silence and every ▶ swapped the audible reference for it).
+            # Drop the entry so the next call re-renders.
+            wav.unlink(missing_ok=True)
+            side.unlink(missing_ok=True)
+            return None
         words = meta.get("words", []) if want_words else []
         return {"ok": True, "tier": "gateway", "audio": audio, "rate": meta["rate"],
                 "words": words, "align": meta.get("align", "none"),

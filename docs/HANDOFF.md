@@ -130,3 +130,15 @@ Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karao
   synced. Sync BOTH roots on every dev bump: ~/.hermes/plugins/wearos AND
   ~/.hermes/profiles/weardev/plugins/wearos, then restart hermes-dashboard (the desktop
   renderer only refetches /api/panes at window load → reload the desktop once).
+
+- **2026-11-10 (f): silence is a failure; opt-in pane half.** A serve-mode render cached
+  1.25 s of DIGITAL SILENCE and every ▶ swapped the audible reference for it (owner: 'play
+  button isn't working'), so the engine now refuses its own zeros: runner-side peak<128 =>
+  RuntimeError('engine decoded digital silence'); voiceout._cache_get purges zero-peak entries
+  on read (self-heal); a failed request retries once with a rotated sampler seed (certain
+  lines drew degenerate generations; the shipped card line measured 4/4 audible at 29 s/warm
+  call). Lesson: `ok:true` with silent audio is a lying contract — honesty law extends to the
+  bytes, not just the UI. Separately, the Wear Kit pane ships OFF by design: the desktop half
+  of a unified package carries .hermes-package.json => runtime-loader defaultEnabled:false
+  (GHSA-mcfc-hp25-cjv7); enabling is the owner's toggle at Capabilities > Plugins (decision
+  key hermes.desktop.pluginDecisions.v2, Electron localStorage — not file-flippable from here).

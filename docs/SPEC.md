@@ -1735,6 +1735,17 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   pace). Dashboard pane discovery scans profile-scope roots FIRST — dev-sync must write
   every plugin root and bounce hermes-dashboard.
 
+- **2026-11-10 (f): silence is a failure; opt-in pane half.** A serve-mode render cached
+  1.25 s of DIGITAL SILENCE and every ▶ swapped the audible reference for it (owner: 'play
+  button isn't working'), so the engine now refuses its own zeros: runner-side peak<128 =>
+  RuntimeError('engine decoded digital silence'); voiceout._cache_get purges zero-peak entries
+  on read (self-heal); a failed request retries once with a rotated sampler seed (certain
+  lines drew degenerate generations; the shipped card line measured 4/4 audible at 29 s/warm
+  call). Lesson: `ok:true` with silent audio is a lying contract — honesty law extends to the
+  bytes, not just the UI. Separately, the Wear Kit pane ships OFF by design: the desktop half
+  of a unified package carries .hermes-package.json => runtime-loader defaultEnabled:false
+  (GHSA-mcfc-hp25-cjv7); enabling is the owner's toggle at Capabilities > Plugins (decision
+  key hermes.desktop.pluginDecisions.v2, Electron localStorage — not file-flippable from here).
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
