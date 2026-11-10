@@ -232,3 +232,6 @@ off-screen' is the honest no-chime law, not a bug.
 - Pair card: button toggles open/close (POST /pair/window action=close), countdown as bare "575s" chip (owner 16:45: no dead-end open-window label).
 - Inventory TTL 300s + invalidate-on-mutation (CPU noise 16:52: 10s TTL re-ran 26 cold CLIs per poll while pane open). Tests race-hardened (mut-argv filter).
 - Pair card absorbs Paired-watches (owner 16:55): one box for the pairing concern; no number on Pair; enable step renumbered 2.
+- enable self-heal (owner 17:05 Where
+Agent
+flashes): named profile without the plugin → auto-install from install-metadata source+revision, retry enable once. wear profile installed/enabled/granted live.

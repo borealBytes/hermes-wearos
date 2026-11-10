@@ -970,10 +970,30 @@ def _clean_env() -> dict:
     return env
 
 
+def _install_source_ref() -> tuple[str, str]:
+    """(source, 40-hex revision) of THIS plugin per the install metadata at
+    <HERMES_HOME>/plugins/.install-metadata.json — the pin the pane itself runs
+    on. Empty strings when the plugin is a checkout/link without metadata."""
+    home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+    try:
+        meta = json.loads((home / "plugins" / ".install-metadata.json").read_text("utf-8"))
+        row = meta.get("wearos") or {}
+        return str(row.get("source") or ""), str(row.get("revision") or "")
+    except (OSError, ValueError):
+        return "", ""
+
+
 def delegate_enablement(profile: str, enable: bool) -> dict:
     """One checkbox = one fixed-argv `hermes -p <profile> plugins enable|disable
     wearos` (review fix: no hand-rolled YAML editor; the CLI's consent flow runs, we
-    NEVER pass --yes; the value lives in core's hands)."""
+    NEVER pass --yes; the value lives in core's hands).
+
+    Enable self-heals (owner ruling 2026-11-10 ~17:05, the 'Where Agent flashes'
+    report): a named profile that never INSTALLS wearos answers 'No plugin named',
+    which used to just flash the checkbox back. When that happens and the pane's
+    own install metadata names the repo+ref, we install from that exact pin (same
+    consent flags the pane's Enable-all uses — --yes rides the pinned community
+    source, --force matches how the owner re-pins) and retry the enable once."""
     profile = re.sub(r"[^a-z0-9_-]", "", str(profile or "").strip().lower())[:64]
     if not profile:
         return {"name": profile, "error": "profile name is required"}
@@ -981,14 +1001,38 @@ def delegate_enablement(profile: str, enable: bool) -> dict:
     if not hermes:
         return {"name": profile, "error": "hermes CLI not on PATH"}
     verb = "enable" if enable else "disable"
-    argv = ([hermes] if profile == "default" else [hermes, "-p", profile]
-            ) + ["plugins", verb, "wearos"]
+    prefix = [hermes] if profile == "default" else [hermes, "-p", profile]
+    argv = prefix + ["plugins", verb, "wearos"]
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=60,
                              stdin=subprocess.DEVNULL, env=_clean_env())
     except (subprocess.SubprocessError, OSError) as exc:
         return {"name": profile, "error": f"{verb} failed: {exc}"}
     text = ((out.stdout or "") + (out.stderr or "")).strip()
+    if verb == "enable" and out.returncode != 0 and "No plugin named" in text:
+        repo, ref = _install_source_ref()
+        if repo and re.fullmatch(r"[0-9a-f]{40}", ref or ""):
+            try:
+                inst = subprocess.run(
+                    prefix + ["plugins", "install", repo, "--force",
+                              "--ref", ref, "--yes"],
+                    capture_output=True, text=True, timeout=180,
+                    stdin=subprocess.DEVNULL, env=_clean_env())
+            except (subprocess.SubprocessError, OSError) as exc:
+                return {"name": profile, "ok": False, "verb": "install",
+                        "detail": f"auto-install failed: {exc}"}
+            if inst.returncode == 0:
+                try:
+                    out = subprocess.run(argv, capture_output=True, text=True,
+                                         timeout=60, stdin=subprocess.DEVNULL,
+                                         env=_clean_env())
+                except (subprocess.SubprocessError, OSError) as exc:
+                    return {"name": profile, "error": f"{verb} failed: {exc}"}
+                text = ((out.stdout or "") + (out.stderr or "")).strip()
+            else:
+                return {"name": profile, "ok": False, "verb": "install",
+                        "detail": ("auto-install failed: "
+                                   + ((inst.stdout or "") + (inst.stderr or "")).strip()[-400:])}
     return {"name": profile, "ok": out.returncode == 0, "verb": verb,
             "detail": text[-600:] or ("done" if out.returncode == 0 else "failed")}
 
