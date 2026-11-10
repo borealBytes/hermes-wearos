@@ -1,0 +1,2 @@
+30c3ea13ceeb2de693c56e5e33a1b7e00d44c95dcdd08a4ed0d552d0bf59ebdf  neuphonic/neucodec pytorch_model.bin
+589adb5df73ee56ef68cd2f3056d8c8b938bd6440f81221d99332bb51640b7ad  neuphonic/neutts-air-q8-gguf (official backbone)

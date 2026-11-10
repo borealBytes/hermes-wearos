@@ -599,7 +599,8 @@ def main():
 
     # raw-token generation (see module docstring)
     bb = tts.backbone
-    prompt = tts._ggml_prompt(ref_codes, a.ref_text, text)
+    ref_text = open(a.ref_text, encoding="utf-8").read()   # argv carries the PATH (file contract)
+    prompt = tts._ggml_prompt(ref_codes, ref_text, text)
     ids = bb.tokenize(prompt.encode(), add_bos=True, special=True)
     end_id = bb.tokenize(b"<|SPEECH_GENERATION_END|>",
                          add_bos=False, special=True)[0]
@@ -723,6 +724,8 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
     argv = _synth_argv(text, ref_wav, ref_text, out)
     env = dict(os.environ, HF_HOME=str(_root() / "cache"),
                HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()))
+    for _k in ("PYTHONPATH", "PYTHONHOME", "CONDA_PREFIX", "CONDA_DEFAULT_ENV"):
+        env.pop(_k, None)   # host interpreter paths must not shadow the venv
     tok = _hf_token()
     if tok:
         env["HF_TOKEN"] = tok

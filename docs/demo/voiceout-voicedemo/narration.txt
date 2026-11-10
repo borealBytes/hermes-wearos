@@ -1,0 +1,16 @@
+Hermes Wear OS. Your watch, and your own gateway.
+
+It is a Wear OS app that talks straight to the Hermes gateway you self-host,
+over your own Tailscale tailnet. Ask it anything. It streams the answer,
+renders your charts and diagrams, and now it can say it out loud — in your
+own voice.
+
+On the watch: push-to-talk in, on-device transcription, a spoken reply with
+word-synced karaoke you can follow at a glance, and a tap to stop, right on
+the orb.
+
+On the desktop: the Hermes side pane is where you enroll a voice, set the
+one global speed dial, and preview every line before it reaches your wrist.
+
+No cloud subscription. Nothing you cannot audit. Hermes Wear OS — the agent
+on your wrist, speaking with your voice.
