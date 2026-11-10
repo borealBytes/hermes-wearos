@@ -150,8 +150,9 @@ Plus: gateway notifications with approve buttons (above), a GBoard prompt editor
 
 **Moving proof, one take** — the fullscreen player on the owner's Galaxy Watch streaming a
 MiniMax H3 northern-lights render (via the `weardev` agent's `MEDIA:` line through watchkit
-`/media`), with the bezel-volume readout driven over adb mid-playback. Click it — GitHub plays
-mp4s right here: [`docs/evidence/proof-play.mp4`](docs/evidence/proof-play.mp4)
+`/media`), with the bezel-volume readout driven over adb mid-playback. GitHub renders the mp4
+below as a player (image-style link — the documented README-video recipe):
+![Real-device proof: MiniMax northern-lights clip playing fullscreen on a Galaxy Watch](docs/evidence/proof-play.mp4)
 
 ## How the orb works
 
