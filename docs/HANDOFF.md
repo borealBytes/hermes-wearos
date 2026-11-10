@@ -162,3 +162,30 @@ Then: 4 = watch prefs client (replay-on-reconnect, rides the rev law), 5 = karao
   of a unified package carries .hermes-package.json => runtime-loader defaultEnabled:false
   (GHSA-mcfc-hp25-cjv7); enabling is the owner's toggle at Capabilities > Plugins (decision
   key hermes.desktop.pluginDecisions.v2, Electron localStorage — not file-flippable from here).
+
+## 2026-11-10 ~13:45 — b233ed3: pane ▶ 500 RESOLVED (pre-restart notes)
+
+Root cause chain of the red 'synth request failed: 500': the soundtest route
+POSTed agent='desktop' but the voices map only carried '__default__' →
+refusal raised through the route as a bare HTTP 500. And even once bound,
+the fixed first draw (seed 42, temp 0.7) sits in a silence basin for the
+owner's card (hand test: 77/123 speak, 42 zeros) so the old +1 retry walked
+the basin and died 3/3.
+
+Fixes (all in b233ed3, deployed to both plugin roots, dashboard restarted
+13:39:45):
+* unbound agents fall back to the GLOBAL card — the dropdown's selection;
+* soundtest answers {"ok": false, "error": ...} JSON, pane shows the red
+  note, never a 500;
+* synth seeds = crc32(draw text); silence retries jump seed +7919.
+
+CPU note: the 13:41-13:45 all-core pin was (a) my probe chains re-loading the
+model (each ~90 s at all-core, nice 10) and (b) a gateway-child storm of
+'hermes -p <profile> plugins list --json' cold starts (12+ concurrent, all
+~30 profiles) that predates and is independent of the wear kit. Orphan
+worker from the interrupted probe was reaped. Load already falling
+(59→41).
+
+GATEWAY STILL ON ~13:19 CODE — the pane works against the dashboard route,
+but gateway-side voice-out (dictation lane) needs
+`systemctl --user restart hermes-gateway` from the owner's own shell.
