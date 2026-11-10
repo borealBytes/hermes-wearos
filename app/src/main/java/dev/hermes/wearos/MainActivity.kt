@@ -40,6 +40,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -678,6 +680,22 @@ class MainActivity : ComponentActivity() {
                     introSource = introSource,
                 ) {
                     VoiceHost(session, speak)
+                    // SWIPE-ADVANCE (owner 2026-11-10: "i also used to be able to hw back OR
+                    // SWIPE between chat, sessions, agents" — batch 6 gave the ring a back
+                    // button leg but the forward swipe got lost). A horizontal drag leftward
+                    // anywhere in the body advances the SAME ring physical back walks; a
+                    // rightward drag is yielded untouched — that is the edge-back gesture's
+                    // job and stealing it would break "just get me back to the chat".
+                    SwipeForward(onForward = {
+                        when (BackRing.action(screen)) {
+                            BackRing.Action.ToSessions -> screen = Screen.Sessions
+                            BackRing.Action.ToAgents -> {
+                                showAgents = true
+                                uiScope.launch { agents.refresh() }
+                            }
+                            BackRing.Action.ToChat -> screen = Screen.Chat
+                        }
+                    }) {
                     when (screen) {
                         Screen.Chat -> ChatBody(
                             state = state, voiceOut = voiceOut, voiceStatus = voiceStatus,
@@ -870,6 +888,7 @@ class MainActivity : ComponentActivity() {
                         Screen.Settings -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
                             SettingsScreen(context = context, settings = settings, speak = speak)
                         }
+                    }
                     }
                 }
 
@@ -1160,6 +1179,38 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
             content()
         }
     }
+}
+
+/** Forward leg of the ring under a FINGER (owner 2026-11-10): a horizontal drag leftward past
+ *  [slop] anywhere in the body calls [onForward] once on release; a rightward drag CANCELLATES
+ *  early so the system edge-back keeps its gesture. Vertical lists are untouched — a scrolling
+ *  child consumes the stream and this detector bows out with it. Pure gesture, no state: the
+ *  where-to logic stays in BackRing (unit-tested) beside the physical-back handler. */
+@Composable
+private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
+    val slop = with(LocalDensity.current) { 56.dp.toPx() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(slop) {
+                awaitEachGesture {
+                    awaitFirstDown(pass = PointerEventPass.Initial)
+                    var total = 0f
+                    var taken = false
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        total += ev.calculatePan().x
+                        if (!taken) {
+                            if (total <= -slop) taken = true
+                            else if (total >= slop) break // rightward: belongs to edge-back
+                        }
+                        if (taken) ev.changes.forEach { it.consume() }
+                        if (ev.changes.none { it.pressed }) break
+                    }
+                    if (taken && total <= -slop) onForward()
+                }
+            },
+    ) { content() }
 }
 
 @Composable

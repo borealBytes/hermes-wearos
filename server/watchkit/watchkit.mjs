@@ -4,7 +4,10 @@
  * the watch can't do on-device, behind one bearer token, tailnet-only:
  *
  *   GET  /health          → {status:"ok", version, uptime_s}                (public probe)
- *   GET  /agents          → {agents:["default", …profiles/<name>/ with config.yaml]}  (bearer)
+ *   GET  /agents          → {agents:[ … ]}  (bearer) — the plugin's GRANT MAP filters the
+ *                                     profile scan: the watch switcher shows exactly the agents
+ *                                     ticked in the Wear Kit pane (enable law, §pairing v2);
+ *                                     no pairing store ⇒ the full scan (standalone watchkit).
  *   GET  /sessions        → gateway-shaped session list for a profile (bearer)
  *        ?profile=<name>&limit=<n≤30>[&source=cron][&archived=1]
  *        → {object:"list", data:[{id,title,last_active,message_count,profile,source}]}
@@ -149,7 +152,33 @@ function listAgents() {
       if (fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, 'config.yaml'))) agents.push(name);
     } catch { /* vanished mid-scan / unreadable — skip */ }
   }
-  return agents;
+  // PAIRING v2 ENABLE LAW (owner 2026-11-10: "on the watch it should only show me the
+  // agents that are enabled from our Wear Kit pane"). The plugin's grant map IS the
+  // enable state (pane checkbox: enable⇒grant, uncheck⇒revoke), and the lane key
+  // delivery already honors it — the switcher list must match, or the watch offers
+  // agents whose asks will 401. Store missing (standalone watchkit, pre-pairing):
+  // fall back to the full scan.
+  const g = grantedSet();
+  return g ? agents.filter(a => g.has(a)) : agents;
+}
+
+// The plugin keeps its pairing/grant store at <gateway-home>/plugin-data/wearos/
+// pairing.json; re-read only when the file's mtime moves (grant writes are rare —
+// every pane mutation rewrites it, so a click is visible to the watch on next poll).
+// HERMES_HOME is deliberately NOT consulted: watchkit may be launched from any
+// profile's shell, and the store lives under the GATEWAY's home (the default
+// profile). Pin it per box with WATCHKIT_PAIRING or config.pairing_store.
+const PAIRING_STORE = process.env.WATCHKIT_PAIRING || cfg.pairing_store ||
+  path.join(os.homedir(), '.hermes', 'plugin-data', 'wearos', 'pairing.json');
+let _grantsCache = { stamp: -1, set: null };
+function grantedSet() {
+  try {
+    const st = fs.statSync(PAIRING_STORE);
+    if (_grantsCache.set && st.mtimeMs === _grantsCache.stamp) return _grantsCache.set;
+    const doc = JSON.parse(fs.readFileSync(PAIRING_STORE, 'utf8'));
+    _grantsCache = { stamp: st.mtimeMs, set: new Set(Object.keys(doc.grants || {})) };
+  } catch { return null; /* no store ⇒ no filter */ }
+  return _grantsCache.set;
 }
 
 // ── command catalog (the watch's ⌘ / 6:00 dial overlay) ────────────────────

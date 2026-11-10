@@ -2395,3 +2395,26 @@ field in voiceout.yaml (blank = follow the single Voice-out card — no new glob
 selector was needed; the Voice-out card IS the global default, per the owner). An
 "Enable all" box bulk-toggles every profile through the same `/enable` verb.
 Pref schema unchanged; watch replays keep higher-rev-wins semantics.
+
+#### (o) 2026-11-10 — the enable law reaches the WATCH; the ring gains a swipe leg (owner: "it should only show me the active enabled")
+
+Two provable halves of one ruling, both hardware-driven same evening:
+
+1. **Switcher = grants.** The owner's fresh-install Agents dialog listed all 26 gateway
+   profiles — useless and a lie (unchecked agents 401 on every ask anyway). watchkit
+   `GET /agents` now filters its profile scan through the plugin's grant map
+   (`<gateway-home>/plugin-data/wearos/pairing.json`, mtime-hot-reload, `pairing_store`
+   config pin — HERMES_HOME deliberately NOT consulted, watchkit may launch from any
+   profile's shell). Store absent (standalone watchkit / pre-pairing) ⇒ full scan.
+   Since (n), grants ARE the pane's checkboxes, so the watch now shows exactly what
+   the pane ticks, within one poll of the click. This supersedes the 2026-10
+   walkthrough line "dialog lists profiles … + every profiles/<name>/ with a
+   config.yaml".
+2. **Forward swipe restored.** Batch 6 replaced the pager with the BackRing
+   (physical back walks Chat→Sessions→Agents→Chat) but left the FINGER only a
+   backward edge-swipe — the owner experienced the Agents leg as "gone".
+   `SwipeForward` (MainActivity) wraps the screen switch: a leftward horizontal drag
+   past 56 dp advances the same `BackRing.action(screen)` mapping the physical back
+   uses; a rightward drag cancels early so edge-back keeps its gesture; vertical
+   scrolling bows out on child consumption. One mapping, two input paths — no new
+   destination, the Agents overlay stays the dialog it became in batch 6.

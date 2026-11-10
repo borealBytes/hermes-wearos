@@ -3,6 +3,15 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-10 (night) boundary — PR #8 MERGED; fresh-install ceremony done; enable law reaches the watch (SPEC §19.4(o))
+
+- **PR #8 merged** into `feat/hermes-plugin` @ `cc92c61` (ledger `28e8ead` on top); worktree `hermes-wearos-plugin` is the new floor. Mirror `borealBytes/hermes-wearos-plugin` pr-8 = content-identical; pane pin refreshed via `plugins install --force --ref` (pipeline in this file's Deploy traps).
+- **Fresh-install proof:** uninstall → `setup.sh --skip-build --config watchos.config.json --agent-keys` → tailnet REUSABLE key broadcast → ACTIVE → pair window → `-e pair_knock` → logcat code → `POST /pair/claim` → pickup ≤5 s. Gotchas learned: API token rotated mid-ceremony ⇒ claim 500 (journal names the 401 instantly); `watchos.config.json` hostname does NOT ride the key-broadcast (node enrolled as `hermes-wearos`) — fix in-app; a self-restart while this session hosts tool calls drains only after the turn yields (never panic at `deactivating`).
+- **Pane settings honesty:** every secret description now names its admin URL + exact scopes; the APK line warns REUSABLE/non-ephemeral (the trap that ate the evening). Same links ride the Pair card as anchors.
+- **The (o) batch (owner: "swipe between chat/sessions/agents… should only show the enabled ones"):** watchkit `/agents` filters by the plugin grant map (mtime-hot, `pairing_store` pin, HERMES_HOME NOT trusted — a named-profile shell poisoned the first deploy); MainActivity `SwipeForward` restores the ring's forward leg for fingers (left-drag advances; right-drag yields to edge-back). JVM tests + install proven on the Ultra: picker shows exactly the pane's ticks.
+- **Still open tonight:** owner eyeball of swipe paging + checkbox toggle on the live watch; <90 s X video; catalog PR blurb; Typeform. Box hygiene owed: 27 orphaned desktop-ssh connectors, `linux-gpu-fallback.json` SwiftShader pin, `mcp-stderr.log` 415 MB truncate.
+
+
 ## 2026-11-10 (late) boundary — GPU slice + twin fix live; DESKTOP READ-ALOUD NOW STREAMS (contest ruling)
 
 - **Contest-compliance ruling (owner: "can we rewrite stuff in core?"):** the admission rule ('Public surfaces only') forbids the *plugin* from patching core at runtime — it does not forbid contributing to core. The Wear Kit entry is our plugin repo at a pinned SHA and works on vanilla core (the desktop lag is graceful, not a break). The streaming fix is therefore shipped as a **separate hermes-agent PR**, never as a monkey-patch inside the plugin. Full reasoning: SPEC §19.4(n).
