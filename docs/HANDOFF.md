@@ -231,3 +231,4 @@ off-screen' is the honest no-chime law, not a bug.
 - Lane key fallback (2026-11-10 16:50): _read_profile_key falls through to the canonical FILE secret scope when the ambient scope of the running (default) profile is empty — systemd gateway boots carry no API_SERVER_KEY env; file route is the rule-11 truth. Live proof pending re-knock after deploy.
 - Pair card: button toggles open/close (POST /pair/window action=close), countdown as bare "575s" chip (owner 16:45: no dead-end open-window label).
 - Inventory TTL 300s + invalidate-on-mutation (CPU noise 16:52: 10s TTL re-ran 26 cold CLIs per poll while pane open). Tests race-hardened (mut-argv filter).
+- Pair card absorbs Paired-watches (owner 16:55): one box for the pairing concern; no number on Pair; enable step renumbered 2.

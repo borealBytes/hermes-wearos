@@ -481,7 +481,7 @@ function WearKitPane () {
           jsxs('div', {
             className: 'flex items-center justify-between',
             children: [
-              jsx('span', { className: 'font-medium', children: '2. Pair a watch' }),
+              jsx('span', { className: 'font-medium', children: 'Pair a watch' }),
               jsxs('div', {
                 className: 'flex items-center gap-2',
                 children: [
@@ -525,7 +525,36 @@ function WearKitPane () {
           jsx('div', {
             className: 'text-[10px] text-(--ui-text-tertiary)',
             children: 'codes typed HERE or in a terminal (hermes watch pair <CODE>) — messaging platforms route you to your computer.'
-          })
+          }),
+          // owner ruling 2026-11-10 ~16:55: the paired list lives INSIDE this
+          // card — pair, then see them; one box for the whole pairing concern.
+          devices.length ? jsxs('div', {
+            className: 'flex flex-col gap-1 border-t border-(--ui-border) pt-1',
+            children: [
+              jsx('div', { className: 'text-[10px] font-medium text-(--ui-text-secondary)', children: 'Paired watches' }),
+              ...devices.map(([name, dev]) => jsxs('div', {
+                className: 'flex items-center justify-between gap-1 text-xs',
+                children: [
+                  jsxs('span', {
+                    className: 'text-(--ui-text-secondary)',
+                    // owner ruling: no agent name on the row — one watch is ONE
+                    // pairing; which agents it may speak is the enable list's job.
+                    children: [dev.label || name,
+                               dev.node_id ? ' · tailnet node ✓' : ' · never connected']
+                  }),
+                  jsx('button', {
+                    className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
+                    type: 'button', disabled: busy,
+                    onClick: () => revoke(name, dev.label || name, dev.profile),
+                    children: 'Remove'
+                  })
+                ]
+              }, name))
+            ]
+          }, 'devices-card') : jsx('div', {
+            className: 'text-xs text-(--ui-text-tertiary)',
+            children: 'no watches paired yet — install the APK, tap Pair on the watch, approve the code above.'
+          }, 'devices-empty')
         ]
       }, 'pair-card'),
 
@@ -533,7 +562,7 @@ function WearKitPane () {
       //    Wear Kit and granting the watch to use an agent are the same decision;
       //    one row per agent, both boxes, no duplicated list below) ─────────────
       jsx(Step, {
-        done: enabledCount > 0, n: 3, title: 'Enable Wear Kit for your agents',
+        done: enabledCount > 0, n: 2, title: 'Enable Wear Kit for your agents',
         children: jsxs('div', {
           className: 'flex flex-col gap-1',
           children: [
@@ -582,37 +611,6 @@ function WearKitPane () {
           ]
         })
       }, 'enable-card'),
-
-      // ── devices ───────────────────────────────────────────────────────────────
-      devices.length
-        ? jsxs('div', {
-            className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
-            children: [
-              jsx('div', { className: 'font-medium', children: 'Paired watches' }),
-              ...devices.map(([name, dev]) => jsxs('div', {
-                className: 'flex items-center justify-between gap-1 text-xs',
-                children: [
-                  jsxs('span', {
-                    className: 'text-(--ui-text-secondary)',
-                    // owner ruling: no agent name on the row — one watch is ONE
-                    // pairing; which agents it may speak is the enable list's job.
-                    children: [dev.label || name,
-                               dev.node_id ? ' · tailnet node ✓' : ' · never connected']
-                  }),
-                  jsx('button', {
-                    className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
-                    type: 'button', disabled: busy,
-                    onClick: () => revoke(name, dev.label || name, dev.profile),
-                    children: 'Remove'
-                  })
-                ]
-              }, name))
-            ]
-          }, 'devices-card')
-        : jsx('div', {
-            className: 'text-xs text-(--ui-text-tertiary)',
-            children: 'no watches paired yet — install the APK, tap Pair on the watch, approve the code above.'
-          }, 'devices-empty'),
 
       // ── agent key grants (D17) — merged INTO the enable list above (owner
       //    ruling 2026-11-10): one row per agent, enable + watch-may-use together.
