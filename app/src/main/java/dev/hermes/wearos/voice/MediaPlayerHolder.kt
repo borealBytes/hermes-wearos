@@ -106,6 +106,10 @@ object MediaPlayerHolder {
                     this.onEnded = onEnded
                     p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
                     p.prepare()
+                    p.play()   // ExoPlayer defaults playWhenReady=FALSE — prepare alone
+                               // fetches and buffers into silence (the ear-level bug of 2026-11-10:
+                               // this holder was always prepare-only, and the tailnet byte-proof in
+                               // logcat hid it until someone actually listened).
                 } catch (e: Exception) {
                     Log.e(TAG, "player prepare failed", e)
                     this.onEnded = null
