@@ -205,6 +205,11 @@ async function toggle (profile, on) {
   })
 }
 
+async function closePairWindow () {
+  $pairNote.set('window closed')
+  await act(() => rest('/pair/window', { method: 'POST', body: { action: 'close' } }))
+}
+
 async function openPairWindow () {
   $pairNote.set('opening…')
   await act(async () => {
@@ -477,11 +482,22 @@ function WearKitPane () {
             className: 'flex items-center justify-between',
             children: [
               jsx('span', { className: 'font-medium', children: '2. Pair a watch' }),
-              jsx('button', {
-                className: 'rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
-                type: 'button', disabled: busy || windowOpen,
-                onClick: openPairWindow,
-                children: windowOpen ? `open (${pairing.window.seconds_left}s)` : 'open window'
+              jsxs('div', {
+                className: 'flex items-center gap-2',
+                children: [
+                  windowOpen ? jsx('span', {
+                    className: 'text-[10px] text-(--ui-text-tertiary)',
+                    children: `${pairing.window.seconds_left}s`
+                  }, 'pair-count') : null,
+                  jsx('button', {
+                    className: 'rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
+                    type: 'button', disabled: busy,
+                    // owner ruling 2026-11-10: the same button that opened the
+                    // window closes it — no dead-end 'open (575s)' label.
+                    onClick: () => (windowOpen ? closePairWindow() : openPairWindow()),
+                    children: windowOpen ? 'close' : 'open window'
+                  })
+                ]
               })
             ]
           }),
