@@ -556,6 +556,14 @@ function WearKitPane () {
             className: 'text-[10px] text-(--ui-text-tertiary)',
             children: 'codes typed HERE or in a terminal (hermes watch pair <CODE>) — messaging platforms route you to your computer.'
           }),
+          jsx('div', {
+            className: 'flex gap-3 text-[10px]',
+            children: [
+              jsx('a', { className: 'underline', href: 'https://login.tailscale.com/admin/settings/keys', rel: 'noreferrer', target: '_blank', children: 'tailscale API key' }),
+              jsx('a', { className: 'underline', href: 'https://login.tailscale.com/admin/settings/oauth', rel: 'noreferrer', target: '_blank', children: 'oauth client' }),
+              jsx('a', { className: 'underline', href: 'https://huggingface.co/settings/tokens', rel: 'noreferrer', target: '_blank', children: 'HF token' })
+            ]
+          }, 'source-links'),
           // owner ruling 2026-11-10 ~16:55: the paired list lives INSIDE this
           // card — pair, then see them; one box for the whole pairing concern.
           devices.length ? jsxs('div', {

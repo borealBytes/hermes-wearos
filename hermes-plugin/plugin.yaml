@@ -59,23 +59,32 @@ config_schema:
     type: str
     description: >-
       Tailnet handle as used by the Tailscale admin console (e.g. "example.ts.example");
-      the plugin accepts and validates it live before anything else.
+      the plugin accepts and validates it live before anything else. Find yours:
+      https://login.tailscale.com/admin/settings/network (the "tailnet name" in your
+      device DNS names).
   tailscale_api_token:
     type: secret
     description: >-
       Tailscale API token (Owner or Admin role) used to mint one-use enrollment keys,
-      read/patch tailnet prefs, and DELETE a revoked watch's node. Alternative to the
-      OAuth client pair below.
+      read/patch tailnet prefs, and DELETE a revoked watch's node. Create:
+      https://login.tailscale.com/admin/settings/keys → API tokens → "Add API key",
+      scopes: Devices = Write (revoke deletes the watch node), Auth keys = Write
+      (pairing mints the one-use enrollment key), Users = Read (health probe).
+      Alternative to the OAuth client pair below.
   tailscale_oauth_client_id:
     type: str
     description: >-
-      Optional OAuth client id (preferred over a personal token): scopes auth_keys +
+      Optional OAuth client id (preferred over a personal token): create at
+      https://login.tailscale.com/admin/settings/oauth with scopes auth_keys +
       devices:core (write covers revoke's node deletion) + dns:read + a policy-file
       READ grant, restricted to the watch tag so the plugin can only ever mint keys
       carrying that tag.
   tailscale_oauth_client_secret:
     type: secret
-    description: Secret for tailscale_oauth_client_id; exchanged via client_credentials.
+    description: >-
+      Secret for tailscale_oauth_client_id; exchanged via client_credentials. Shown
+      once at creation (same page:
+      https://login.tailscale.com/admin/settings/oauth) — store it here, not in git.
   watch_tag:
     type: str
     default: "tag:hermes-watch"
@@ -95,10 +104,14 @@ config_schema:
     description: >-
       Hugging Face read token for the voice-out weights (ONLY needed when a
       gated official row is selected — the community default needs no account).
-      One-time consent click at the model page, then paste here or in the pane.
-      Read through this plugin's declared secret route (profile-scoped); the
-      pane's token box stores it 0600 in the plugin's own data dir; never
-      echoed by any route, never logged.
+      Create a "read" token (fine-grained is fine) at
+      https://huggingface.co/settings/tokens, then accept the two model agreements
+      once while logged in: https://huggingface.co/neuphonic/NeuTTS-Air and
+      https://huggingface.co/neuphonic/NeuTTS-Air-GGUF — without those clicks the
+      download 401s even with a valid token. Paste here or in the pane. Read through
+      this plugin's declared secret route (profile-scoped); the pane's token box
+      stores it 0600 in the plugin's own data dir; never echoed by any route, never
+      logged.
   claim_port:
     type: int
     default: 42653
@@ -115,4 +128,10 @@ config_schema:
   apk_release_url:
     type: str
     default: "https://github.com/borealBytes/hermes-wearos/releases/latest"
-    description: Where "install the watch app" points (CI-built APK + SHA256SUMS).
+    description: >-
+      Where "install the watch app" points (CI-built APK + SHA256SUMS). First run
+      needs a REUSABLE, non-ephemeral Tailscale auth key
+      (https://login.tailscale.com/admin/settings/keys → generate): ephemeral dies
+      at the first reinstall and strands the app in NEEDS_AUTH. The node enrolls
+      once with it; every pairing after that uses a single-use key the gateway
+      mints itself.
