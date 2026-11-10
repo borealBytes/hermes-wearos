@@ -207,7 +207,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 | hero GIF | re-cut as **`demo-walkthrough-v0.8.0.gif`** (v0.7.0 GIF purged per §9): splash film FIRST (shipped-asset frames) → 16 captioned v0.8 feature beats (incl. 02b grid, 56 modes, aurora 48, animated 50) → end card; 42 s loop, 5.06 MB, `v0.8.0 · wear-demo` bug; README hero img swapped to it (35-splash-film.gif stays in the feature grid). Silent master for the v0.8 tour video rides the wave-4 trio | alt lists the beats | refreshed |
 | weights section | numbers re-measured (106 MB APK incl. the gomobile tailnet node) | table matches `unzip -l` of the shipped debug APK | refreshed |
 | — (new, 2026-11-08 / catalog-PR wave) | `49-video-player.gif` **replaced with a real generated clip** (comfy MiniMax H3 aurora, take-5 recipe in row 50), plus the plugin-side gallery `hermes-plugin/docs/screenshots/{05-aurora-player.gif, 06-pin-screen.png, 07-stop-running.png, 12-keyboard.png, 66-wearkit-pane.png}` — the mirror repo now carries its own visuals, plugin surfaces first | plugin README gallery re-ordered (pane → PIN → aurora → orb → keyboard → the wrist set); monorepo README gains the pane image + Play-Store/sidecar-trajectory copy | shot ✓ (2026-11-08) |
-| — (new, 2026-11-09 / MEDIA-EPIC real-watch proof) | `48-media-cards.png` re-shot on the SM-L705U (live `MEDIA:` echo chat: video card w/ poster + ▶ + name, audio card below), NEW `49b-video-playing.gif` (scrcpy take of the fullscreen player mid-playback, circle cut not cropped), masked stills `docs/evidence/media-playing-fullscreen.png` + `media-player-controls.png`, full take as release asset `proof-play.mp4` (v0.9.0) | media row captions refreshed (cards copy now names what the re-shot shows; player caption links the release take) | shot ✓ (2026-11-09) |
+| — (new, 2026-11-09 / MEDIA-EPIC real-watch proof) | `48-media-cards.png` re-shot on the SM-L705U (live `MEDIA:` echo chat: video card w/ poster + ▶ + name, audio card below), NEW `49b-video-playing.gif` (scrcpy take of the fullscreen player mid-playback, circle cut not cropped), masked stills `docs/evidence/media-playing-fullscreen.png` + `media-player-controls.png`, full take as release asset `proof-play.mp4` (v0.9.0). **Re-cut minutes later on the owner's note that the proof clip must be the comfyui agent's MiniMax H3 northern-lights render, not testsrc2:** `49b` + both stills now show the aurora mid-sweep (🔊 readout in-frame), and the full take ships BOTH as a committed `docs/evidence/proof-play.mp4` (faststart — GitHub release assets serve `application/octet-stream`, which `<video>` refuses; raw.githubusercontent serves `video/mp4` + CORS, so the webui player plays it inline) and as the release asset | media row captions refreshed; README embeds the mp4 inline | shot ✓ (2026-11-09) |
 | `68-pin-screen.png` (monorepo wall; the mirror ships it as `docs/screenshots/06-pin-screen.png`) | **the PIN hero**: captured on the `hermeswear` AVD with app state wiped and a generic tailnet handle (`acme-corp`), fresh APK from main — the Pair page needs a build ≥ `adb8b59`; the Pair list rests at this scroll offset (PIN y≈422), so the masked disc IS a genuine viewport. Saved sRGBA: transparent outside the bezel, like every other masked shot | 6-digit PIN is the pairing UX; sweep-clean (`--psm 11`) | shot ✓ (2026-11-08) |
 | `hermes-plugin/docs/banner.png` | **re-cut**: two round glass discs — `30-settings-lane.png` (the popped dial, idle) + the PIN hero — under the wordmark; the old chart-card/terminal diptych is gone because the catalog's ONE image should show the watch, not a chart. Generator: `/tmp/opencode/make_banner.py` (2x supersampled, DejaVu spaced caps, ring stroke 58/92/132) | sweep hits `borealBytes` only (the footer org line — intended) | refreshed |
 | `67-wearkit-pane.png` (monorepo wall; the mirror ships it as `docs/screenshots/66-wearkit-pane.png`) | desktop pane screenshot with the owner's private agent rows **blurred** (merge / upwork / redridge-treasurer) and a transient 502 banner stitched out; `borealBytes/hermes-wearos` on card 1 kept — public org citation | (none; blur disclosure inline) | shot ✓ (re-shoot when the pane grows the install verbs) |
@@ -775,3 +775,23 @@ Branch keeps exactly ONE generation of every tracked media path.
   the pinned commit, built, downloaded the pinned GGUF and finished `installed and verified`
   (model_verified: true). Screens: circle-masked ×3 (chat/sessions/settings) + `tesseract --psm 11`
   secret sweep — CLEAN. Lessons pinned in SPEC §11.4 addendum + fix commits c7b280a..30055a8.
+
+- **2026-11-09 (MEDIA-EPIC proof re-cut — the aurora take, real Galaxy Watch)** — owner review
+  killed the testsrc2 take: the video in the playback proof must be the comfyui agent's
+  **MiniMax H3 northern-lights render**. Echo chat re-posted (session `api-auroraproof01`), card
+  tapped on-device, and the take rolled on the **adb-reverse lane** (`tailnet_on off` + reverse
+  keeper to :8642/:42651) while the freshly re-enrolled tailnet node's TCP to the gateway sat
+  refused (`connection was refused` on tailscale0 — ACL suspicion, pending). Capture gotchas
+  paid in full: the Samsung panel kills the display ~8 s after the last input *even with*
+  `stay_on_while_plugged_in=7` — `scrcpy --stay-awake` (needs control; `--no-control` conflicts)
+  holds it for the take; screencap answers 1975-byte black PNGs while dark (size-check before
+  believing anything); the gateway `/media` 404 rabbit-hole was a red herring — media streams
+  from **watchkit** (`Watchkit.mediaUrl` rides the watchkit base + its own bearer), and the
+  earlier `playback failed` was a stale watchkit token, extra `set_watchkit` (not
+  `set_watchkit_token`). The watch also self-healed pairing-v2 mid-session (gw endpoints back to
+  the MagicDNS FQDN) — pushed endpoints re-applied after each force-stop since `-e tailnet_on`
+  is in-memory. New artifacts (commit-replacing the testsrc take): `49b-video-playing.gif`,
+  `docs/evidence/media-playing-fullscreen.png`, `media-player-controls.png`, and the committed
+  faststart `docs/evidence/proof-play.mp4` embedded inline in the README — release-asset mp4s
+  serve `application/octet-stream`, which browser `<video>` refuses; raw.githubusercontent
+  serves `video/mp4` with CORS, so the OpenCode webui plays it right in the chat.
