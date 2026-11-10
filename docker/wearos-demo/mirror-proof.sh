@@ -53,8 +53,10 @@ PY
 # speech tokens" on EVERY GGUF; the runner generates at raw-token level against
 # the GGUF vocab instead. (2) The vendor path silently runs WITHOUT llama.cpp's
 # repeat_penalty default -> a single-token buzz; the runner passes 1.1.
-# (3) neutts 1.4.1's codec loader allowlists gated repo ids; the runner loads
-# the ungated HF-layout port dir directly (same tensors, allowlist skipped).
+# (3) neutts 1.4.1's codec loader allowlists gated repo ids; the runner passes
+# the ungated HF-layout port DIR straight to NeuCodec.from_pretrained (skips
+# the allowlist, keeps the config-driven build — a hand-rolled state_dict load
+# ignores config.json and encodes every frame to a single code; measured).
 "$W/venv/bin/python" "$W/runner.py" \
   --model "$W/model.gguf" --codec "$W/codec" \
   --ref-wav /opt/wearos-in/clay.wav \

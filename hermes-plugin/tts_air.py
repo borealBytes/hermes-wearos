@@ -551,17 +551,16 @@ def main():
 
     class Engine(NeuTTS):
         def _load_codec(self, repo, device):
+            # neutts 1.4.1 allowlists gated repo ids; the transformers-style
+            # loader itself takes a LOCAL DIR fine (docstring-verified) — so we
+            # skip only the allowlist, never the config-driven construction.
+            # (A hand-rolled load_state_dict onto default-init NeuCodec LOOKS
+            # fine, 823M params 'loaded', then encodes every frame to one code:
+            # it ignores config.json. Measured 2026-11-09.)
             if os.path.isdir(repo):
                 from neucodec import NeuCodec
-                from safetensors.torch import load_file
-                m = NeuCodec(24_000, 480)
-                sd = load_file(os.path.join(repo, "model.safetensors"))
-                drop = ("fc_post_s", "SemanticDecoder")  # upstream's own ignore list
-                sd = {k: v for k, v in sd.items()
-                      if not any(s in k for s in drop)}
-                m.load_state_dict(sd, strict=False)
-                m.eval()
-                self.codec = m
+                self.codec = NeuCodec.from_pretrained(repo)
+                self.codec.eval()
                 return
             super()._load_codec(repo, device)
 
