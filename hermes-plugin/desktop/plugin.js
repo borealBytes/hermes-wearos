@@ -443,6 +443,20 @@ function WearKitPane () {
           })
         : null,
 
+      // ── 1 · APK (owner ruling 2026-11-10: install first, THEN pair, THEN
+      //    enable — the step order is the story; checked once a watch exists,
+      //    because a paired watch proves the APK is on the wrist) ───────────
+      jsx(Step, {
+        done: devices.length > 0, n: 1, title: 'Install the APK on the watch',
+        children: jsxs('span', {
+          children: [
+            'Get the Wear OS app from ',
+            jsx('a', { className: 'underline', href: releases, rel: 'noreferrer', target: '_blank', children: 'GitHub Releases' }),
+            ' (CI-built APK + SHA256SUMS), sideload it, open it once.'
+          ]
+        })
+      }, 'apk-card'),
+
       // ── pairing card ──────────────────────────────────────────────────────────
       jsxs('div', {
         className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
@@ -450,7 +464,7 @@ function WearKitPane () {
           jsxs('div', {
             className: 'flex items-center justify-between',
             children: [
-              jsx('span', { className: 'font-medium', children: 'Pair a watch' }),
+              jsx('span', { className: 'font-medium', children: '2. Pair a watch' }),
               jsx('button', {
                 className: 'rounded border border-(--ui-border) px-2 py-1 text-xs disabled:opacity-50',
                 type: 'button', disabled: busy || windowOpen,
@@ -491,7 +505,7 @@ function WearKitPane () {
       //    Wear Kit and granting the watch to use an agent are the same decision;
       //    one row per agent, both boxes, no duplicated list below) ─────────────
       jsx(Step, {
-        done: enabledCount > 0, n: 1, title: 'Enable Wear Kit for your agents',
+        done: enabledCount > 0, n: 3, title: 'Enable Wear Kit for your agents',
         children: jsxs('div', {
           className: 'flex flex-col gap-1',
           children: [
@@ -559,15 +573,9 @@ function WearKitPane () {
               }, name))
             ]
           }, 'devices-card')
-        : jsx(Step, {
-            n: 2, title: 'Install the APK, then pair',
-            children: jsxs('span', {
-              children: [
-                'Get the Wear OS app from ',
-                jsx('a', { className: 'underline', href: releases, rel: 'noreferrer', target: '_blank', children: 'GitHub Releases' }),
-                ' (CI-built APK + SHA256SUMS), open it, tap Pair.'
-              ]
-            })
+        : jsx('div', {
+            className: 'text-xs text-(--ui-text-tertiary)',
+            children: 'no watches paired yet — install the APK, tap Pair on the watch, approve the code above.'
           }, 'devices-empty'),
 
       // ── agent key grants (D17) — merged INTO the enable list above (owner

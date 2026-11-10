@@ -83,6 +83,39 @@ def test_status_shape(wearos, api):
     assert payload["door"] == {"listening": False}
 
 
+def test_inventory_serving_serves_stale_and_refreshes_off_the_path(wearos, api,
+                                                                   monkeypatch):
+    """The 2026-11-10 /status timeout: 27 profiles x cold CLI fan-out = 68-84 s.
+    A stale cache must SERVE immediately; the refresh rides a background thread."""
+    import time
+    fake = wearos._INVENTORY_CACHE["fake"]
+    stale = [{"name": "old", "enabled": True, "visible": True, "version": "0.0.1",
+              "source": "x"}]
+    wearos._INVENTORY_CACHE["inv"] = (time.monotonic() - 999, stale)
+    started = []
+    monkeypatch.setattr(wearos.threading, "Thread",
+                        lambda target=None, **kw: type(
+                            "T", (), {"start": lambda s: started.append(target),
+                                      "join": lambda s: None})())
+    fake.calls.clear()
+    rows = wearos._inventory_serving(max_age=10.0)
+    assert rows == stale                      # served, not blocked
+    assert fake.calls == []                   # no CLI on the request path
+    assert len(started) == 1                  # exactly one refresh queued
+    started[0]()                              # run the queued refresh
+    assert wearos._INVENTORY_CACHE["inv"][1] != stale and fake.calls
+    assert wearos._INVENTORY_REFRESHING is False
+    # while a refresh is in flight, a second serving call must not queue another
+    fake.calls.clear()
+    wearos._INVENTORY_CACHE["inv"] = (time.monotonic() - 999, stale)
+    started.clear()
+    rows2 = wearos._inventory_serving(max_age=10.0)
+    wearos._INVENTORY_REFRESHING = True       # simulate in-flight refresh
+    wearos._inventory_serving(max_age=10.0)
+    wearos._INVENTORY_REFRESHING = False
+    assert rows2 == stale
+
+
 def test_pair_window_claim_round_trip(wearos, api):
     opened = api.pair_window({"action": "open"})
     assert opened["opened"]["profile"] == "default"

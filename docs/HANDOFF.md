@@ -221,3 +221,8 @@ the tailnet lane — Android AudioTrack started at 24000 Hz mono, USAGE_MEDIA.
 Watch gate learned: Settings ▸ Voice out ▸ source 'gateway 🌐' (default is
 'system'; voice_out itself defaults ON). 'voice suppressed — answer settled
 off-screen' is the honest no-chime law, not a bug.
+## 2026-11-10 ~16:30 — /status timeout + CLI-storm fix + pane step reorder
+- Symptom: pane showed no paired watch/agents though pairing.json healthy. Cause: `/status` took 68–84 s (sequential 27-profile `hermes plugins list` fan-out); pane timeout -> retry -> overlapping scans pinned the box (load 28.7).
+- Fix: `_profile_inventory` parallelized (8 workers); new `_inventory_serving()` serves newest cache whatever age, refreshes on ONE background thread; status path uses it. Test: stale-serves-with-zero-CLI-calls + single-refresh.
+- Pane (owner ruling): steps reordered — 1. Install the APK, 2. Pair a watch, 3. Enable Wear Kit; paired-watches card follows; empty-state is a pointer line.
+- Env note: test_plugin_api.py only runs where fastapi importable (was silently skipped locally); there test_voice_post_select_install_soundtest fails PRE-EXISTING: real token rejected by huggingface.co — follow-up (was masked by earlier gutter bug).

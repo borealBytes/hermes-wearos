@@ -875,8 +875,8 @@ def _profile_inventory(max_age: float = 10.0) -> list:
     if hit and now - hit[0] < max_age:
         return hit[1]
     hermes = shutil.which("hermes")
-    out = []
-    for name in _all_profile_names():
+
+    def _row(name: str) -> dict:
         row = {"name": name, "enabled": False, "visible": False, "version": "",
                "source": ""}
         if hermes:
@@ -896,9 +896,49 @@ def _profile_inventory(max_age: float = 10.0) -> list:
                         break
             except (subprocess.SubprocessError, OSError, ValueError):
                 pass
-        out.append(row)
+        return row
+
+    names = _all_profile_names()
+    if len(names) > 1:
+        # one cold CLI per profile is ~3 s; sequential on 27 profiles that was a
+        # 68–84 s /status (2026-11-10). Fan out, keep _all_profile_names() order.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            out = list(ex.map(_row, names))
+    else:
+        out = [_row(n) for n in names]
     _INVENTORY_CACHE["inv"] = (now, out)
     return out
+
+
+_INVENTORY_LOCK = threading.Lock()
+_INVENTORY_REFRESHING = False
+
+
+def _inventory_serving(max_age: float = 10.0) -> list:
+    """Status-path read: NEVER blocks on the CLI fan-out (measured 68–84 s on a
+    27-profile gateway — the pane's /status timed out and showed no watches/agents,
+    2026-11-10). Serve the newest scan whatever its age; if stale, refresh on one
+    background thread. First call per process seeds synchronously (unavoidable)."""
+    global _INVENTORY_REFRESHING
+    hit = _INVENTORY_CACHE.get("inv")
+    if hit is None:
+        return _profile_inventory(max_age=0)
+    if time.monotonic() - hit[0] >= max_age:
+        with _INVENTORY_LOCK:
+            if not _INVENTORY_REFRESHING:
+                _INVENTORY_REFRESHING = True
+                threading.Thread(target=_inventory_refresh, daemon=True).start()
+    return hit[1]
+
+
+def _inventory_refresh() -> None:
+    global _INVENTORY_REFRESHING
+    try:
+        _profile_inventory(max_age=0)
+    finally:
+        with _INVENTORY_LOCK:
+            _INVENTORY_REFRESHING = False
 
 
 def _clean_env() -> dict:
@@ -1180,7 +1220,7 @@ def _tool_watch_status(args: dict, **kw) -> str:
         "checks": local_checks(),
         "devices": _engine().devices(),
         "pairing": pairing_state(),
-        "profiles": _profile_inventory(),
+        "profiles": _inventory_serving(),
         "grants": _engine().grants(),
         "apk_release_url": str(_cfg("apk_release_url", RELEASES_LATEST) or RELEASES_LATEST),
     }
