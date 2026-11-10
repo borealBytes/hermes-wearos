@@ -204,11 +204,10 @@ def voice_post(body: dict):
                                 str(body.get("for") or "both"))
     if action == "install":
         tok = str(body.get("token") or "").strip()
-        if tok:                                   # paste box: store 0600, never echo
-            tf = ta._root() / "hf_token"
-            tf.parent.mkdir(parents=True, exist_ok=True)
-            tf.write_text(tok)
-            os.chmod(tf, 0o600)
+        if tok:                                   # paste box: validated, 0600, never echo
+            v = ta.store_token(tok)
+            if not v.get("ok"):
+                return {"error": f"token {v.get('error', 'rejected')}"}
         return ta.start(interactive=True, source=str(body.get("source") or "") or None,
                         for_slot=str(body.get("for") or "gateway"))
     if action == "cancel":

@@ -153,6 +153,41 @@ def _root() -> Path:
     return home / "plugin-data" / "wearos" / "tts"
 
 
+def validate_token(token: str) -> dict:
+    """One-shot HF whoami (stdlib urllib, 10 s): the pane paste box and CLI
+    --token refuse an invalid/dead token AT PASTE TIME instead of learning at
+    download time. Returns {ok, user|reason}. Never logs the secret."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(
+        "https://huggingface.co/api/whoami-v2",
+        headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return {"ok": True, "user": str(json.load(r).get("name") or "?")}
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403, 404):
+            return {"ok": False, "reason": "rejected by huggingface.co "
+                    "(token not found, expired, or deleted)"}
+        return {"ok": True, "user": "?"}          # unexpected status: don't
+    except OSError:                              # block a token we can't prove
+        return {"ok": True, "user": "?"}          # dead from here (offline?)
+    return {"ok": True, "user": "?"}
+
+
+def store_token(token: str) -> dict:
+    """Validated, then written 0600 (rule 11 file fallback route)."""
+    token = token.strip()
+    v = validate_token(token)
+    if not v["ok"]:
+        return {"ok": False, "error": v["reason"]}
+    _root().mkdir(parents=True, exist_ok=True)
+    tf = _root() / "hf_token"
+    tf.write_text(token)
+    os.chmod(tf, 0o600)                          # no window before 0600
+    return {"ok": True, "user": v["user"]}
+
+
 def _hf_token() -> str:
     """The HF read token, never logged. Rule 11: through the plugin's declared
     secret route first (config_schema secret hf_token → profile-scoped), then the
@@ -764,10 +799,10 @@ if __name__ == "__main__":
             print(f"{marks} {row['id']:26} {size:>11}  [{state}]  {row['label']}")
     else:
         if a.token:
-            (_root()).mkdir(parents=True, exist_ok=True)
-            tf = _root() / "hf_token"
-            tf.write_text(a.token.strip())
-            os.chmod(tf, 0o600)
+            v = store_token(a.token)              # whoami-validated, stored 0600
+            if not v.get("ok"):
+                raise SystemExit(f"--token: {v.get('error')}")
+            print(f"token stored (HF account: {v['user']})")
         r = start(interactive=True, source=a.source, for_slot=a.slot)
         print(r)
         if r.get("started"):
