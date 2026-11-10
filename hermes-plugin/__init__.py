@@ -881,29 +881,9 @@ def _profile_inventory(max_age: float = 10.0) -> list:
     hit = _INVENTORY_CACHE.get("inv")
     if hit and now - hit[0] < max_age:
         return hit[1]
-    hermes = shutil.which("hermes")
 
     def _row(name: str) -> dict:
-        row = {"name": name, "enabled": False, "visible": False, "version": "",
-               "source": ""}
-        if hermes:
-            argv = ([hermes] if name == "default" else [hermes, "-p", name]) + \
-                   ["plugins", "list", "--json"]
-            try:
-                res = subprocess.run(argv, capture_output=True, text=True, timeout=30,
-                                     stdin=subprocess.DEVNULL,
-                                     env=_clean_env())
-                rows = json.loads(res.stdout) if res.returncode == 0 else []
-                for r in rows if isinstance(rows, list) else []:
-                    if str(r.get("name", "")) == "wearos":
-                        row.update({"enabled": r.get("status") == "enabled",
-                                    "visible": True,
-                                    "version": str(r.get("version") or ""),
-                                    "source": str(r.get("source") or "")})
-                        break
-            except (subprocess.SubprocessError, OSError, ValueError):
-                pass
-        return row
+        return _inventory_row(name)
 
     names = _all_profile_names()
     if len(names) > 1:
@@ -916,6 +896,51 @@ def _profile_inventory(max_age: float = 10.0) -> list:
         out = [_row(n) for n in names]
     _INVENTORY_CACHE["inv"] = (now, out)
     return out
+
+
+def _inventory_row(name: str) -> dict:
+    """One profile's wearos-plugin state, read straight from the CLI (the same
+    source the fan-out uses). Module-level so the /enable handler can patch a
+    single row WITHOUT waiting on a full rescan."""
+    hermes = shutil.which("hermes")
+    row = {"name": name, "enabled": False, "visible": False, "version": "",
+           "source": ""}
+    if hermes:
+        argv = ([hermes] if name == "default" else [hermes, "-p", name]) + \
+               ["plugins", "list", "--json"]
+        try:
+            res = subprocess.run(argv, capture_output=True, text=True, timeout=30,
+                                 stdin=subprocess.DEVNULL,
+                                 env=_clean_env())
+            rows = json.loads(res.stdout) if res.returncode == 0 else []
+            for r in rows if isinstance(rows, list) else []:
+                if str(r.get("name", "")) == "wearos":
+                    row.update({"enabled": r.get("status") == "enabled",
+                                "visible": True,
+                                "version": str(r.get("version") or ""),
+                                "source": str(r.get("source") or "")})
+                    break
+        except (subprocess.SubprocessError, OSError, ValueError):
+            pass
+    return row
+
+
+def refresh_inventory_row(profile: str) -> None:
+    """Post-mutation SYNC half (the owner's 'checkbox flashes' round two,
+    2026-11-10 ~18:20): serve-stale + background fan-out converges the clicked
+    row in seconds — but 'seconds' already reads as broken when the box jumps
+    back. Re-read the MUTATED profile alone (one CLI, ~1-2 s) and splice it into
+    the cached snapshot; the full fan-out still runs behind it to catch drift on
+    the others."""
+    row = _inventory_row(profile)
+    hit = _INVENTORY_CACHE.get("inv")
+    if hit is not None:
+        rows = [{**r, **row} if r.get("name") == profile else r for r in hit[1]]
+        if not any(r.get("name") == profile for r in rows):
+            rows.append(row)  # brand-new profile enabled from the pane: the row
+                              # must exist NOW, not after the fan-out catches up
+        _INVENTORY_CACHE["inv"] = (hit[0], rows)
+    invalidate_inventory()
 
 
 _INVENTORY_LOCK = threading.Lock()

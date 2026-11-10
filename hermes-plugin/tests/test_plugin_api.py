@@ -166,6 +166,28 @@ def test_enable_delegates_to_the_manage_cli(wearos, api):
                                                      "all-profiles default)"}
 
 
+def test_enable_row_is_true_in_the_very_next_status(wearos, api):
+    """Round two of 'checkbox flashes' (owner 2026-11-10 ~18:20): the pane
+    refetches /status the instant the click returns; serve-stale + background
+    fan-out still let the box jump BACK for seconds. After /enable ok the
+    mutated row must answer TRUE from the same process, immediately — and a
+    profile with no cached row yet must APPEAR, not wait for the fan-out."""
+    fake = wearos._INVENTORY_CACHE["fake"]
+    fake.rows = [{"name": "wearos", "status": "disabled", "version": "0.2.0",
+                  "description": "d", "source": "user", "removed": None}]
+    assert api.status()["profiles"][0]["enabled"] is False
+    fake.rows = [{"name": "wearos", "status": "enabled", "version": "0.2.0",
+                  "description": "d", "source": "user", "removed": None}]
+    assert api.enable({"profile": "default", "enable": True}).get("ok")
+    assert api.status()["profiles"][0]["enabled"] is True
+    assert api.enable({"profile": "default", "enable": False}).get("ok")
+    # disable answers from the fresh read too (the CLI above flipped back):
+    fake.rows = [{"name": "wearos", "status": "disabled", "version": "0.2.0",
+                  "description": "d", "source": "user", "removed": None}]
+    assert api.enable({"profile": "default", "enable": False}).get("ok")
+    assert api.status()["profiles"][0]["enabled"] is False
+
+
 def test_enable_surfaces_the_consult_no_plugin_error(wearos, api):
     fake = wearos._INVENTORY_CACHE["fake"]
     fake.fail = ("chef",)

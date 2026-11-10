@@ -153,8 +153,10 @@ def enable(body: dict):
         # owner ruling 2026-11-10: enabling IS the whole decision — the grant
         # (watch may use this agent's key) rides with it; no second checkbox.
         _p()._engine().set_grant(profile, bool(body.get("enable", True)))
-        _p().invalidate_inventory()   # the row just changed; don't make the pane
-                                      # wait on a TTL to see its own click land
+        # the row just changed: re-read THAT row synchronously (one CLI) and
+        # splice it — the pane's very next fetch sees its own click, no flash.
+        # The full fan-out invalidation still runs behind it for the others.
+        _p().refresh_inventory_row(profile)
     return res
 
 
