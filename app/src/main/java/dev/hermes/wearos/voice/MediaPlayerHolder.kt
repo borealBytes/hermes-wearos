@@ -50,7 +50,7 @@ object MediaPlayerHolder {
     }
 
     /** Download (tailnet-routed) then play. [onEnded] optional — see class doc. */
-    fun play(context: Context, url: String, onEnded: (() -> Unit)? = null) {
+    fun play(context: Context, url: String, onEnded: (() -> Unit)? = null, gain: Float = 1f) {
         val app = context.applicationContext
         Thread {
             try {
@@ -66,7 +66,8 @@ object MediaPlayerHolder {
                     if (bytes.isEmpty()) {
                         onEnded?.let { main.post(it) }; error("empty body from $abs")
                     }
-                    playBytes(app, bytes, resp.header("Content-Type") ?: "audio/wav", onEnded)
+                    playBytes(app, bytes, resp.header("Content-Type") ?: "audio/wav",
+                        onEnded, gain)
                     Log.i(TAG, "media play $abs (${bytes.size} bytes via ${if (TailnetRoute.socksPort > 0) "tailnet" else "direct"})")
                 }
             } catch (e: Exception) {

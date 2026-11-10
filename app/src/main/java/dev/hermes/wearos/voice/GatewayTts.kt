@@ -83,9 +83,14 @@ object GatewayTts {
             note = "lane unreachable (${e.javaClass.simpleName})"
             false
         }
-        refreshPrefs()   // best-effort: the voice list shows ✓ default / dial value when present
+        refreshPrefsOkBestEffort()
         return ok
     }
+
+    /** The cards snapshot already carries rev/speed/voices; this keeps the older
+     *  prefs-only path available (setAsDefault/setSpeed fall back to it before their
+     *  first write) — harmless one-liner, kept separate for clarity. */
+    private fun refreshPrefsOkBestEffort() { runCatching { refreshPrefs() } }
 
     /** GET /voice/prefs — the watch mirrors, never owns; edits go back via [setAsDefault]/[setSpeed]. */
     fun refreshPrefs(): Boolean {
@@ -162,17 +167,25 @@ object GatewayTts {
             onDone = {}, onFail = { note = "gateway refused the preview" })
     }
 
-    /** Parse a /voice/cards body — pure enough to unit-test the honesty rules. */
+    /** Parse a /voice/cards body — pure enough to unit-test the honesty rules.
+     *  The body is the FULL canonical snapshot (rev, speed, voices, cards), so one
+     *  GET mirrors everything the page shows: list, ✓ default, dial value. */
     internal fun applyStatusJson(raw: String): Boolean = try {
         val o = JSONObject(raw)
         engineReady = o.optBoolean("engine", false)
+        prefsRev = o.optInt("rev", prefsRev)
+        laneSpeed = o.optDouble("speed", laneSpeed.toDouble()).toFloat()
+        defaultCard = o.optJSONObject("voices")?.optString("__default__").orEmpty()
         val cs = o.optJSONObject("cards")
+        val tmap = mutableMapOf<String, String>()
         cards = buildList {
             if (cs != null) for (k in cs.keys()) {
                 val m = cs.optJSONObject(k)
                 add(k to (m?.optString("label").orEmpty().ifEmpty { k }))
+                if (m != null) tmap[k] = m.optString("transcript").orEmpty()
             }
         }
+        transcripts = tmap
         note = when {
             !engineReady -> "engine not installed on the gateway"
             cards.isEmpty() -> "no voice cards yet — record one on the pane"
@@ -182,6 +195,39 @@ object GatewayTts {
     } catch (e: Exception) {
         note = "bad lane answer (${e.javaClass.simpleName})"
         false
+    }
+
+    /** Card id → its reference transcript (the ▶ audition line, served by the snapshot). */
+    @Volatile var transcripts: Map<String, String> = emptyMap()
+        private set
+
+    /**
+     * ▶ on a voice row: audition THAT card through the real pipeline — global dial speed,
+     *  ref_rate-normalized, reply-volume gain — not the flat reference wav. Falls back to
+     *  the raw card wav when the engine can't speak (an honest lesser sound, never silence).
+     */
+    fun previewCard(cardId: String, agent: String) {
+        val base = laneBase()
+        val ctx = appContext
+        if (base.isEmpty() || ctx == null) return
+        val text = transcripts[cardId].orEmpty().ifEmpty {
+            dev.hermes.wearos.domain.TtsConfig.PREVIEW_TEXT }
+        try {
+            val parsed = postChecked(JSONObject().put("text", text).put("agent", agent)
+                .put("card_id", cardId).put("words", false).put("accept_opus", true), base)
+            val b64 = parsed.optString("audio_wav_b64")
+                .ifEmpty { parsed.optString("audio_opus_b64") }
+            if (b64.isEmpty()) error("no audio in answer")
+            MediaPlayerHolder.playBytes(ctx, Base64.getDecoder().decode(b64),
+                parsed.optString("content_type").ifEmpty { "audio/wav" },
+                gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
+                    .getOrDefault(1f))
+        } catch (e: Exception) {
+            Log.i(TAG, "card audition via synth failed (${e.message}) — playing reference wav")
+            MediaPlayerHolder.play(ctx, "$base/voice/card_wav?card_id=$cardId",
+                gain = runCatching { dev.hermes.wearos.WearApp.Graph.settings.ttsVolumeForSync() }
+                    .getOrDefault(1f))
+        }
     }
 
     // ── the speak queue ──────────────────────────────────────────────────────────────────────

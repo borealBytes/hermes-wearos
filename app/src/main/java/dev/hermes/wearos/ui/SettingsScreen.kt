@@ -1071,8 +1071,7 @@ fun SettingsScreen(
                         Text(label.take(14), style = MaterialTheme.typography.body2,
                             modifier = Modifier.weight(1f))
                         Button(
-                            onClick = { dev.hermes.wearos.voice.MediaPlayerHolder.play(
-                                ctx, gw.laneBase() + "/voice/card_wav?card_id=$cid") },
+                            onClick = { Thread { gw.previewCard(cid, agentNow) }.start() },
                             modifier = Modifier.size(width = 48.dp, height = 34.dp),
                             colors = ButtonDefaults.buttonColors(
                                 backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),

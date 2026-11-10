@@ -78,6 +78,17 @@ class VoiceoutTests(unittest.TestCase):
         self.assertTrue(r["ok"]); self.assertEqual(r["tier"], "watch")
         self.assertEqual(r["karaoke"], "sentence")       # honest unit for this tier
 
+    def test_card_id_override_for_auditions(self):
+        # The picker's ▶ auditions ANY card at the live dial speed: an explicit card_id
+        # overrides the agent's bound voice; an unknown card is a refusal, never a
+        # silent fall-through to the bound one.
+        c = vo.create_card(VOICED, "Audition")
+        vo.set_mode("farmbot", "gateway")
+        r = vo.synthesize("hello", "farmbot", card_id=c["card_id"])
+        self.assertFalse(r["ok"]); self.assertIn("engine", r["error"])
+        with self.assertRaises(ValueError):
+            vo.synthesize("hello", "farmbot", card_id="ghost-card")
+
     def test_delete_unbinds_never_orphans(self):
         c = vo.create_card(VOICED, "Doomed")
         vo.set_voice("farmbot", c["card_id"])

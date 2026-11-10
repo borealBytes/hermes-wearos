@@ -574,7 +574,8 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
         import base64
         r = voiceout.synthesize(str(body.get("text") or "")[:4000],
                                 str(body.get("agent") or dev.get("profile") or ""),
-                                want_words=bool(body.get("words", True)))
+                                want_words=bool(body.get("words", True)),
+                                card_id=str(body.get("card_id") or "") or None)
         if isinstance(r.get("audio"), (bytes, bytearray)):
             r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
         return 200, r

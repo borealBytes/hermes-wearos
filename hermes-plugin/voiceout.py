@@ -357,14 +357,23 @@ def register_aligner(name: str, fn: Callable) -> None:
     _ALIGN[name] = fn
 
 
-def synthesize(text: str, agent: str, *, want_words: bool = True) -> dict:
+def synthesize(text: str, agent: str, *, want_words: bool = True,
+               card_id: Optional[str] = None) -> dict:
     """The watch-facing contract: text in, {audio_opus_b64|pcm_b64, words[], engine,
     tier_note} out. Rate = GLOBAL speed scaled against the card's measured ref_rate:
     tokens run at (global_speed * WPM_TARGET/ref_rate_wpm), so 1.0x replays a speaker
-    at THEIR OWN measured pace — a fast speaker's clone never 'fixes' their speed."""
+    at THEIR OWN measured pace — a fast speaker's clone never 'fixes' their speed.
+    [card_id] overrides the agent's bound voice (the picker's ▶ auditions ANY card at
+    the live dial speed, not just the bound one); an unknown id is a refusal (400)."""
     p = read_prefs()
     speed = float((p.get("global") or {}).get("speed", SPEED_DEFAULT))
-    card_id = (p.get("voices") or {}).get(agent or "__default__", "")
+    bound = (p.get("voices") or {}).get(agent or "__default__", "")
+    if card_id:
+        if card_id not in (p.get("cards") or {}):
+            raise ValueError(f"no such voice card: {card_id}")
+        card_id = str(card_id)
+    else:
+        card_id = bound
     card = (p.get("cards") or {}).get(card_id)
     mode = (p.get("modes") or {}).get(agent or "__default__", "gateway")
     if mode == "off":
