@@ -83,6 +83,39 @@ def test_status_shape(wearos, api):
     assert payload["door"] == {"listening": False}
 
 
+def test_inventory_serving_serves_stale_and_refreshes_off_the_path(wearos, api,
+                                                                   monkeypatch):
+    """The 2026-11-10 /status timeout: 27 profiles x cold CLI fan-out = 68-84 s.
+    A stale cache must SERVE immediately; the refresh rides a background thread."""
+    import time
+    fake = wearos._INVENTORY_CACHE["fake"]
+    stale = [{"name": "old", "enabled": True, "visible": True, "version": "0.0.1",
+              "source": "x"}]
+    wearos._INVENTORY_CACHE["inv"] = (time.monotonic() - 999, stale)
+    started = []
+    monkeypatch.setattr(wearos.threading, "Thread",
+                        lambda target=None, **kw: type(
+                            "T", (), {"start": lambda s: started.append(target),
+                                      "join": lambda s: None})())
+    fake.calls.clear()
+    rows = wearos._inventory_serving(max_age=10.0)
+    assert rows == stale                      # served, not blocked
+    assert fake.calls == []                   # no CLI on the request path
+    assert len(started) == 1                  # exactly one refresh queued
+    started[0]()                              # run the queued refresh
+    assert wearos._INVENTORY_CACHE["inv"][1] != stale and fake.calls
+    assert wearos._INVENTORY_REFRESHING is False
+    # while a refresh is in flight, a second serving call must not queue another
+    fake.calls.clear()
+    wearos._INVENTORY_CACHE["inv"] = (time.monotonic() - 999, stale)
+    started.clear()
+    rows2 = wearos._inventory_serving(max_age=10.0)
+    wearos._INVENTORY_REFRESHING = True       # simulate in-flight refresh
+    wearos._inventory_serving(max_age=10.0)
+    wearos._INVENTORY_REFRESHING = False
+    assert rows2 == stale
+
+
 def test_pair_window_claim_round_trip(wearos, api):
     opened = api.pair_window({"action": "open"})
     assert opened["opened"]["profile"] == "default"
@@ -117,11 +150,18 @@ def test_enable_delegates_to_the_manage_cli(wearos, api):
     fake.calls.clear()
     out = api.enable({"profile": "chef", "enable": True})
     assert out["ok"] is True
-    assert fake.calls[-1] == ["/usr/bin/hermes", "-p", "chef", "plugins", "enable",
-                              "wearos"]
+    # eager background refresh (invalidate_inventory) may append 'list' calls —
+    # filter to the mutation argv we assert on.
+    mut = [c for c in fake.calls if "enable" in c or "disable" in c]
+    assert mut and mut[-1] == ["/usr/bin/hermes", "-p", "chef", "plugins", "enable",
+                               "wearos"]
+    # owner ruling 2026-11-10: enable IS the grant — one checkbox, no second box.
+    assert wearos._engine().grants().get("chef"), "enable must auto-grant"
     out2 = api.enable({"profile": "chef", "enable": False})
-    assert fake.calls[-1][-2:] == ["disable", "wearos"]
-    assert "--yes" not in fake.calls[-1]           # never --yes (review, rule 12)
+    mut = [c for c in fake.calls if "enable" in c or "disable" in c]
+    assert mut[-1][-2:] == ["disable", "wearos"]
+    assert not wearos._engine().grants().get("chef"), "disable must revoke"
+    assert "--yes" not in mut[-1]                  # never --yes (review, rule 12)
     assert api.enable({"enable": True}) == {"error": "profile is required (no silent "
                                                      "all-profiles default)"}
 
@@ -146,3 +186,47 @@ def test_stt_status_reports_the_pinned_plan(wearos, api):
     assert payload["installed"] is False
     assert payload["model_verified"] is False
     assert payload["lib"] is False
+
+
+# ── voice-out pane door (slice 3) ───────────────────────────────────────────────
+
+def _tair(wearos):
+    import importlib
+    return importlib.import_module(wearos.__name__ + ".tts_air")
+
+
+def test_voice_feed_shapes_the_pane(wearos, api):
+    feed = api.voice()
+    assert set(feed) == {"voice", "air", "aligner"}
+    assert feed["air"]["slots"] == {"gateway": "community-q8",   # community default
+                                    "watch": "community-q4"}      # watch-size quant
+    assert {r["id"] for r in feed["air"]["sources"]} == set(_tair(wearos).SOURCES)
+    assert feed["voice"]["cards"] == {}
+    hosts = feed["air"]["preview"]["hosts"]                      # rule 13: hosts up front
+    assert "huggingface.co" in hosts and "pypi.org" in hosts
+
+
+def test_voice_post_select_install_soundtest(wearos, api, monkeypatch):
+    ta = _tair(wearos)
+    out = api.voice_post({"action": "select", "source": "official-q4", "for": "watch"})
+    assert out["ok"] and out["slots"]["watch"] == "official-q4"
+    assert out["slots"]["gateway"] == "community-q8"             # other slot untouched
+    assert not api.voice_post({"action": "select", "source": "nope"})["ok"]
+
+    # install: gated row + token → stored 0600; worker thread faked, no pip in tests
+    monkeypatch.setattr(ta.shutil, "which", lambda n: "/usr/bin/" + n)
+    monkeypatch.setattr(ta.threading, "Thread",
+                        lambda **kw: type("T", (), {"start": lambda s: None,
+                                                    "is_alive": lambda s: False})())
+    r = api.voice_post({"action": "install", "source": "official-q8",
+                        "token": "hf_pane_test"})
+    assert r.get("started"), r
+    tf = ta._root() / "hf_token"
+    assert tf.read_text() == "hf_pane_test"
+    import stat
+    assert stat.S_IMODE(tf.stat().st_mode) == 0o600
+
+    # sound test without an engine: the refusal TEXT, never a silent button
+    r = api.voice_post({"action": "soundtest", "text": "hello"})
+    assert "audio_wav_b64" not in r and r.get("error")
+    assert "unknown voice action" in api.voice_post({"action": "launch-missiles"})["error"]

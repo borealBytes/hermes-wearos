@@ -1,0 +1,23 @@
+{
+  "air": {
+    "phase": "idle",
+    "detail": "",
+    "percent": 0,
+    "log": [],
+    "started": 0.0,
+    "error": "",
+    "installed": false,
+    "venv": false,
+    "model": false,
+    "model_verified": false,
+    "verified_pending": false,
+    "model_size_expected": 802658528,
+    "dir": "/tmp/wearos-home/plugin-data/wearos/tts",
+    "hf_token": false,
+    "toolchain": true
+  },
+  "aligner": {
+    "ready": false,
+    "last_error": ""
+  }
+}

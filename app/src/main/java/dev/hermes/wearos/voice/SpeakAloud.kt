@@ -40,6 +40,8 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     private val audio: AudioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
+    init { GatewayTts.bind(appContext) }
+
     private val _state = MutableStateFlow(State.None)
     val state: StateFlow<State> = _state
 
@@ -63,6 +65,11 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
     @Volatile private var voiceName = ""
     @Volatile private var fallbackName = ""
     @Volatile private var engineName = ""
+    /** Voice-out SOURCE (issue #7): "system" = the OS TTS cascade; "gateway" = Wear Kit cloned
+     *  voices via the private lane (GatewayTts). The system engine stays initialized either
+     *  way: the gateway is a fallback-away, never a dead end — a lane that refuses mid-answer
+     *  re-queues the rest of the answer on the local cascade, in order. */
+    @Volatile private var source = "system"
     /** Engine package the LIVE tts was built with ("" = system default); null until init runs. */
     @Volatile private var activeEnginePkg: String? = null
     /** Voice name currently set on the engine — the cascade snaps back to preferred with it. */
@@ -142,6 +149,8 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         settings.loadTtsVolume()
         settings.loadTtsEngine()
         settings.loadTtsFallback()
+        settings.loadTtsSource()
+        source = settings.ttsSourceValue()
         rate = settings.ttsRateValue()
         voiceName = settings.ttsVoiceValue()
         settings.loadTtsVolume()
@@ -187,6 +196,21 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         Log.i(TAG, "tts engine → '${p.ifEmpty { "system default" }}' (engine restart)")
         restartEngine()
     }
+
+    /** Settings ▸ Voice-out: WHERE the voice comes from — "system" (OS cascade) or "gateway"
+     *  (Wear Kit cloned voices over the private lane). Switching cuts any live gateway queue;
+     *  the picker probes GET /voice/cards before offering gateway (honesty: no engine = no
+     *  silent dead-end, the note says why). */
+    fun setVoiceSource(v: String) {
+        val s = if (v.trim().lowercase() == "gateway") "gateway" else "system"
+        if (s == source) return
+        source = s
+        if (s == "system") GatewayTts.clear()   // leaving gateway: cut what it was speaking
+        scope.launch { settings.setTtsSource(s) }
+        Log.i(TAG, "voice-out source → $s")
+    }
+
+    fun voiceSource(): String = source
 
     /** Tear the live engine down and re-init on the preferred package. Always lands on main:
      *  TextToSpeech binds its init callback to the creating looper (Application scope is not main). */
@@ -384,7 +408,9 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
      * silent AND still (no `_speaking`, so the orb keeps its face and the karaoke cursor sleeps).
      */
     fun feed(textSoFar: String) {
-        if (!_enabled.value || _state.value != State.Ready) return
+        if (!_enabled.value) return
+        // gateway source streams through the lane — it needs no system-TTS Ready handshake
+        if (source != "gateway" && _state.value != State.Ready) return
         val mute = dev.hermes.wearos.domain.TtsConfig.muted(settings.ttsVolumeForSync())
         if (textSoFar.length < scanFrom) resetTracking()
         var segStart = scanFrom
@@ -438,6 +464,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         _speaking.value = false
         _speakingOffset.value = null
         try { tts?.stop() } catch (e: Exception) { /* engine gone */ }
+        GatewayTts.clear()   // orb-STOP covers the gateway queue too (SPEC §12.11 mute heritage)
         pending.set(0)
         restoreVolume()
     }
@@ -456,6 +483,23 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
 
     /** Speak one utterance at [step] of the voice chain; registers it for fallback retry + karaoke follow. */
     private fun speakOne(text: String, queueAdd: Boolean, step: Int, offset: Int = -1) {
+        // GATEWAY SOURCE (issue #7): cloned voices through the lane. The pending count is held
+        // across the network+playback; if the lane refuses mid-answer the sentence re-queues
+        // on the LOCAL cascade (QUEUE_ADD keeps order), and the settle fires exactly once.
+        if (source == "gateway" && GatewayTts.available()) {
+            volume = settings.ttsVolumeForSync()
+            boostVolume()
+            pending.incrementAndGet()
+            _speaking.value = true
+            GatewayTts.enqueue(text, settings.profileSync(),
+                onDone = { utteranceSettled() },
+                onFail = { speakLocal(text, queueAdd = true, step, offset) })
+            return
+        }
+        speakLocal(text, queueAdd, step, offset)
+    }
+
+    private fun speakLocal(text: String, queueAdd: Boolean, step: Int, offset: Int = -1) {
         val t = tts ?: return
         if (_state.value != State.Ready) return
         // PER-UTTERANCE agent resolution (owner 2026-10-29): the agent that OWNS this reply is

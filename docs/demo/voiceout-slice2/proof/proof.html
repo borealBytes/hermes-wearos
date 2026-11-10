@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+ body{margin:0;background:#12141a;color:#e8eaef;font:15px/1.55 -apple-system,'Segoe UI',Roboto,sans-serif}
+ .wrap{max-width:1180px;margin:0 auto;padding:34px 40px}
+ h1{font-size:26px;margin:0 0 2px} .sub{color:#8a93a6;margin:0 0 26px}
+ .kpis{display:flex;gap:14px;margin-bottom:26px}
+ .k{flex:1;background:#1A1D22;border:1px solid #262b34;border-radius:14px;padding:14px 18px}
+ .k b{display:block;font-size:26px;color:#7A9CC6;font-variant-numeric:tabular-nums}
+ .k span{font-size:12px;color:#8a93a6;text-transform:uppercase;letter-spacing:.06em}
+ h2{font-size:15px;color:#9fb4d8;margin:30px 0 10px;text-transform:uppercase;letter-spacing:.08em}
+ pre{background:#14161c;border:1px solid #262b34;border-radius:12px;padding:18px 20px;font:13px/1.7 'JetBrains Mono',monospace;color:#c6d2be;overflow:hidden;margin:0}
+ pre .ok{color:#7fbf7f} pre .dim{color:#6b7484}
+ audio{width:100%;margin:6px 0}
+ .callout{background:#20242e;border-left:4px solid #C0392B;border-radius:8px;padding:12px 16px;color:#d8c6c2;font-size:14px}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+ .pill{display:inline-block;background:#1A1D22;border:1px solid #2e3542;color:#7A9CC6;border-radius:99px;padding:3px 12px;font-size:12.5px;margin:2px 4px 2px 0}
+</style></head><body><div class="wrap">
+<h1>Hermes Wear Kit — voice-out lane proof</h1>
+<p class="sub">Fresh <b>hermes-wearos:voiceout</b> container (built on hermes-film:dev + this branch) · every <b>/voice/*</b> route over real HTTP · owner's recorded voice as the card · 2026-11-09</p>
+
+<div class="kpis">
+ <div class="k"><span>card</span><b>b553254d</b>founder voice · seed default</div>
+ <div class="k"><span>measured ref_rate</span><b>213.4 <small style="font-size:13px">wpm</small></b>4.78 s voiced, VAD-measured</div>
+ <div class="k"><span>wav round trip</span><b>209,678 B = √</b>GET /voice/card_wav verbatim</div>
+ <div class="k"><span>engine state</span><b>honest</b>refusal names the fix</div>
+</div>
+
+<h2>The lane, live (verbatim container output)</h2>
+<pre id="log"></pre>
+
+<div class="grid">
+<div>
+<h2>Your voice, streamed back over the lane</h2>
+<audio controls src="card.opus"></audio>
+<div>
+ <span class="pill">POST /voice/card_create</span>
+ <span class="pill">GET /voice/card_wav</span>
+ <span class="pill">node-law auth · no bearer</span>
+ <span class="pill">rev-merge replay (PUT rev 4 → rev 6)</span>
+ <span class="pill">17-word scripted prompt</span>
+</div>
+</div>
+<div>
+<h2>No-engine refusal (never silence)</h2>
+<div class="callout"><b>POST /voice/synthesize → 200 ok:false</b><br>
+“no TTS engine registered (install NeuTTS Air)” — the pane's Install button is the named fix. Engines probe: <i>air: idle · aligner: absent</i>.</div>
+<h2>What this proves / what's pending</h2>
+<pre style="font-size:12.5px;line-height:1.6">PROVEN  pairing door → node binding → whole /voice/* surface
+PROVEN  prefs rev-law both directions, offline-replay shape
+PROVEN  real human card: measure, store, stream verbatim
+PENDING  gated HF weights (one-time consent + token) → real
+         Air audio + word-synced karaoke. Slice 3 pane is next.</pre>
+</div>
+</div>
+</div>
+<script>
+const LOG = `== pairing ceremony (door) ==
+   session on container-watch: 200 (node n-demo now bound)
+== GET /voice/prefs (no bearer — the socket is the credential) ==
+   200 rev=1
+== PUT /voice/prefs (watch-side edit replay, rev 4) ==
+   200 speed=1.15 rev=6
+== POST /voice/card_create  [Clay (real), 209678 bytes] ==
+   200 card=clay-real-b553254d measured_ref_rate=213.4 error=
+== GET /voice/card_wav (raw audio lane) ==
+   200, 209678 bytes round-tripped: True
+== POST /voice/synthesize ==
+   200 ok=False error=no TTS engine registered (install NeuTTS Air)
+== engine/aligner status (honest, reported) ==
+   air: idle | aligner: None
+
+artifacts in /opt/wearos-out/`;
+document.getElementById('log').innerHTML = LOG
+  .split('\n').map(l => {
+    l = l.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    if (/^\s+(200|2\d\d)/.test(l) || /True|rev=/.test(l)) return `<span class="ok">${l}</span>`;
+    if (/^==/.test(l)) return `<b>${l}</b>`;
+    return l;
+  }).join('\n');
+</script></body></html>

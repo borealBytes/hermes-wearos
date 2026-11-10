@@ -17,6 +17,23 @@ be public:
   POST /watch/<profile>/forget   self-unpair: same full revoke the CLI runs, started
        from the watch's own confirm dialog.
 
+The voice-out surface (SPEC §19, issue #7) rides the SAME lane with the SAME
+identity law — the tailnet node, not a bearer token (the watch hits these before
+and after session refresh, and the payload half of them ARE credential-bearing
+audio):
+
+  GET  /voice/prefs              the canonical voiceout.yaml document (rev'd)
+  PUT  /voice/prefs              replay the watch's offline edits (higher rev wins)
+  GET  /voice/cards              the mirror snapshot (prefs + engine/aligner flags)
+  GET  /voice/card_wav?card_id=  a card's reference wav, raw audio/wav
+  POST /voice/card_create        {wav_b64,label,transcript?} — validated 3–60 s
+  POST /voice/card_delete        {card_id}
+  POST /voice/synthesize         {text,agent?} → {audio_wav_b64,words[],align,…}
+
+Every /voice/* request requires a WHOIS-verified node bound to a paired device;
+unbound nodes answer 403. Bodies there cap at VOICE_MAX_BODY (a 60 s clip fits);
+every other route keeps the 4 KiB cap.
+
 Auth is a per-device bearer token issued once at pairing ack (shown exactly once;
 the store keeps only its SHA-256). Limits mirror the public door: small bodies,
 socket timeouts, per-device throttle. This server also answers every profile's
@@ -39,6 +56,7 @@ from urllib.parse import parse_qs, urlparse
 logger = logging.getLogger("hermes_wearkit.private")
 
 MAX_BODY_BYTES = 4096
+VOICE_MAX_BODY = 8_500_000         # a 60 s 16-bit clip base64'd (create_card caps raw at 6 MB)
 SOCKET_TIMEOUT = 30
 MAX_INFLIGHT = 64
 
@@ -57,12 +75,16 @@ class PrivateBackend:
                  session: Callable[..., dict],
                  events: Callable[..., dict],
                  ack: Callable[..., dict],
-                 forget: Callable[..., None]) -> None:
+                 forget: Callable[..., None],
+                 voice: Optional[Callable[..., tuple]] = None) -> None:
         self.whois = whois
         self.session = session
         self.events = events
         self.ack = ack
         self.forget = forget
+        # voice(action, method, body, node, query) -> (status, payload); payload may
+        # be {"_raw": bytes, "_ctype": str} to stream audio. None = surface unwired.
+        self.voice = voice
 
 
 class PrivateHandler(BaseHTTPRequestHandler):
@@ -97,12 +119,12 @@ class PrivateHandler(BaseHTTPRequestHandler):
         if body:
             self.wfile.write(body)
 
-    def _read_body(self) -> Optional[dict]:
+    def _read_body(self, cap: int = MAX_BODY_BYTES) -> Optional[dict]:
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = -1
-        if not 0 <= length <= MAX_BODY_BYTES:
+        if not 0 <= length <= cap:
             self._send(400, {"error": "body must be a small JSON object"})
             return None
         try:
@@ -139,7 +161,58 @@ class PrivateHandler(BaseHTTPRequestHandler):
             return parts[2], parts[1]
         return "", ""
 
+    # ------------------------------------------------------------- /voice/* surface
+
+    def _is_voice(self) -> bool:
+        return urlparse(self.path).path.startswith("/voice/")
+
+    def _handle_voice(self, method: str, body: Optional[dict]) -> None:
+        """Node-law auth (WHOIS says which tailnet node dialed; the pairing store
+        says whether that node is bound to a paired device), then the voice
+        backend. NO bearer token on this surface — identity is the socket."""
+        parts = [p for p in urlparse(self.path).path.split("/") if p]
+        action = parts[1] if len(parts) == 2 else ""
+        backend: PrivateBackend = self.server.private_backend  # type: ignore[attr-defined]
+        node = backend.whois(self.client_address[0])
+        if node is None:
+            self._send(403, {"error": "connection did not arrive over the tailnet"})
+            return
+        if backend.voice is None:
+            self._send(501, {"error": "voice surface not wired"})
+            return
+        try:
+            status, payload = backend.voice(action, method, body or {}, node,
+                                            parse_qs(urlparse(self.path).query))
+        except PermissionError as exc:
+            status, payload = 403, {"error": str(exc)}
+        except ValueError as exc:
+            status, payload = 400, {"error": str(exc)[:300]}
+        except RuntimeError as exc:                 # engine absent/crashed: transient
+            status, payload = 503, {"error": str(exc)[:300]}
+        except Exception:
+            logger.exception("voice route %s", action)
+            status, payload = 500, {"error": "voice route failed"}
+        if isinstance(payload, dict) and "_raw" in payload:
+            raw = payload["_raw"]
+            if not isinstance(raw, (bytes, bytearray)):
+                self._send(500, {"error": "voice backend returned a bad raw body"})
+                return
+            self.send_response(int(status))
+            self.send_header("Content-Type", payload.get("_ctype", "application/oct"
+                                                                    "et-stream"))
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        self._send(int(status), payload)
+
     def do_POST(self) -> None:  # noqa: N802
+        if self._is_voice():
+            body = self._read_body(VOICE_MAX_BODY)
+            if body is not None:
+                self._handle_voice("POST", body)
+            return
         body = self._read_body()
         if body is None:
             return
@@ -182,6 +255,9 @@ class PrivateHandler(BaseHTTPRequestHandler):
             self._send(code, {"error": str(exc)})
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._is_voice():
+            self._handle_voice("GET", None)
+            return
         action, profile = self._route()
         if action == "":
             self._send(404, {"error": "not found"})
@@ -205,6 +281,14 @@ class PrivateHandler(BaseHTTPRequestHandler):
             self._send(200, backend.events(profile, device, n))
         except KeyError:
             self._send(410, {"error": "device is gone"})
+
+    def do_PUT(self) -> None:  # noqa: N802
+        if self._is_voice():
+            body = self._read_body(VOICE_MAX_BODY)
+            if body is not None:
+                self._handle_voice("PUT", body)
+            return
+        self._send(405, {"error": "use POST"})
 
 
 def _whois_local(peer_ip: str, timeout: float = 5.0) -> Optional[dict]:
@@ -265,8 +349,14 @@ def stop_server() -> None:
 
 
 def lane_alive(host: str, port: int, timeout: float = 1.0) -> bool:
-    """Any HTTP answer from the lane proves a listener (401 to an anonymous GET is the
-    expected answer — the route exists and auth is on)."""
+    """A LANE-shaped answer from the lane port proves a real lane listens: the
+    route table itself is the identity (401/403 to an anonymous GET /watch/x/events
+    is the expected answer — the route exists and auth is on). Any HTTP answer is
+    NOT enough: a squatter (an unrelated HTTP server that grabbed the port during
+    a restart race — observed 2026-11-10: a watcher process importing a half-wired
+    wearos snapshot served 404 'not found' on both lane doors) answers every
+    request and would masquerade as healthy while every voice call 404s. A 404
+    only passes if the voice surface is wired behind it."""
     import urllib.error
     import urllib.request
     req = urllib.request.Request(f"http://{host}:{port}/watch/x/events")
@@ -274,7 +364,17 @@ def lane_alive(host: str, port: int, timeout: float = 1.0) -> bool:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
             return True
-    except urllib.error.HTTPError:
-        return True
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return True                      # 401/403/410 — the lane's own auth law
+    except OSError:
+        return False
+    try:                                     # 404 on /watch — is at least voice wired?
+        with urllib.request.urlopen(
+                f"http://{host}:{port}/voice/prefs", timeout=timeout) as resp:
+            resp.read()
+            return True
+    except urllib.error.HTTPError as exc:
+        return exc.code != 404               # 403 (WHOIS gate off-lane) still means lane
     except OSError:
         return False

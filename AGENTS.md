@@ -207,6 +207,7 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | One agent works, others 401 on every call (Test still says ✅) | That profile has no `API_SERVER_KEY` in its `.env` — `setup.sh --agent-keys` (on a gateway box it also SEEDS missing profile keys from `~/.hermes/.env`, the one-login convention), or Settings ▸ Gateways ▸ Agent keys ▸ ⟳ learn (SPEC §12.2) |
 | 401 from watchkit but gateway fine | watchkit has its OWN bearer (`server/watchkit/config.json token`) — set `watchkitToken`/`set_watchkit` |
 | Ask times out but `phase=ACTIVE` | the tunnel is up but the leg to the gateway is not — dump `-e tailnet_status 1` and read `tailnet_log`: `socks dial …: connection was refused` = nothing listening (watchkit on **:42651** down? `scripts/watchkit.sh start`); `timed out`/no dial line = tailnet data path (from the gateway box: `tailscale status` — is the watch node online? `tailscale ping <it>`?) |
+| Voice-out ▸ gateway probe says `lane unreachable (SocketTimeout)` | the endpoint registry holds only LAN/loopback literals: the private lane binds the gateway's TAILNET address only, so `laneBase` from a LAN base opens a door ufw never did — put the gateway's `*.ts.net` FQDN in the registry (Settings ▸ Gateways) and make it the winner |
 | `phase=NEEDS_AUTH` | key spent/identity wiped — mint a fresh REUSABLE key, `-e set_tailnet_key` (Settings ▸ Gateways ▸ Tailnet works too, Re-enroll needs two taps) |
 | Watch node absent from `tailscale status` on the gateway box | node never enrolled (NEEDS_AUTH above) or enrolled under a different tailnet — compare `tailnet_status` self FQDN with the gateway's `tailscale status --json` |
 | `am broadcast -e text` only delivered the first word | quote trap (§6.3) — outer double quotes, inner single |
@@ -221,7 +222,16 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 ## 8. Where things live
 
 - `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints,
-  §11.4 the embedded tailnet node — the transport).
+  §11.4 the embedded tailnet node — the transport;
+  §19 the voice-out milestone + its amendment log).
+- `hermes-plugin/voiceout.py` — voice-out canonical prefs (`voiceout.yaml`, rev'd two-way merge), the
+  measured-`ref_rate` card store, and the tier-aware `synthesize()` contract (§19; stdlib-only tests).
+- `hermes-plugin/tts_air.py` — NeuTTS Air engine: pinned installer into a private venv (rule 17),
+  subprocess runner, size-gated gated-HF fetch, stdlib time-scale; registers into voiceout when
+  `register_if_ready()` finds it installed.
+- `hermes-plugin/align_parakeet.py` — karaoke word timestamps: re-blends the Parakeet/CTA TDT
+  alignment (the stt_install.py build) onto the synthesized script; estimated slots are flagged,
+  absent engine degrades to align:"none" (sentence-mode), never a silent lie (§19).
 - `.github/workflows/plugin-sync.yml` — publishes `borealBytes/hermes-wearos-plugin`, the
   catalog-pinned subtree mirror of `hermes-plugin/`. Zero human commits; plugin code is edited
   ONLY here. Needs the `MIRROR_PAT` secret (fine-grained, single-repo, contents RW) — without

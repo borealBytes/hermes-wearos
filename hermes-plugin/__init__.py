@@ -61,6 +61,24 @@ except ImportError:  # flat loader outside a package context (see tests/conftest
 
 logger = logging.getLogger("hermes_wearkit")
 
+
+def _singleton_alias(mod) -> None:
+    """Pin the bare module name to THIS package module object.
+
+    The plugin submodules import each other both `from . import x` and
+    `import x` (standalone fallback). Under a host that has the plugin dir on
+    sys.path BOTH resolve — as two module objects with independent globals,
+    i.e. TWO resident engine workers per gateway (measured 2026-11-10: the
+    restarted gateway carried a cuda twin and a cpu twin, ~7 GB). Aliasing
+    sys.modules after the package import makes every later bare import hit
+    the same object: one module, one worker, one queue."""
+    try:
+        short = str(getattr(mod, "__name__", "")).rsplit(".", 1)[-1]
+        if short:
+            sys.modules[short] = mod
+    except Exception:
+        pass
+
 PRIVATE_PORT = 42654             # tailnet-bound private lane (SPEC §11.4)
 WATCHKIT_PORT = 42651            # fixed by SPEC §11.4
 GATEWAY_PORT = 8642              # Hermes API (per-profile /p/<profile>)
@@ -76,6 +94,7 @@ APPROVAL_SURFACES = {"", "cli", "tui", "local", "desktop", "desktop-app", "webui
 _CTX: Any = None                 # module singleton for handlers wired at register()
 _secrets: Callable[[str], Optional[str]] | None = None
 _lane_state: dict = {"bound": None, "error": ""}   # private-lane status for the checklist
+_lane_retrying = False                              # one bind-retry thread at a time
 
 
 def _get_secret(name: str) -> Optional[str]:
@@ -137,8 +156,24 @@ def _profile_home(profile: str) -> Optional[Path]:
     refusing (same regex hermes_cli.profiles enforces)."""
     profile = str(profile or "default").strip().lower()
     try:
-        from hermes_constants import PROFILE_ID_RE, get_default_hermes_root
-        root = Path(get_default_hermes_root())
+        from hermes_constants import PROFILE_ID_RE
+        # HERMES_HOME wins first: it is THE active-profile root contract (pairing
+        # store, cards, prefs all resolve under it). get_default_hermes_root()
+        # ignores it when config-root detection finds a real ~/.hermes on disk —
+        # inside a sandbox or a relocated home that quietly points at the wrong
+        # root (measured 2026-11-09, the grant-law test caught it).
+        env_home = os.environ.get("HERMES_HOME", "").strip()
+        root = None
+        if env_home:
+            h = Path(env_home)
+            # HERMES_HOME is either the root (default profile) or a named
+            # profile home <root>/profiles/<name> — same layout test as
+            # _running_profile above.
+            root = h.parent.parent if (h.parent.name == "profiles" and
+                                       h.name != "default") else h
+        if root is None:
+            from hermes_constants import get_default_hermes_root
+            root = Path(get_default_hermes_root())
         if profile == "default":
             return root
         if PROFILE_ID_RE.fullmatch(profile):
@@ -359,7 +394,14 @@ def _read_profile_key(profile: str) -> str:
     ambient scope. Another profile (device on a granted agent): bind that profile's
     scope explicitly (pure filesystem read, thread-safe)."""
     if profile == _running_profile():
-        return _get_secret("API_SERVER_KEY") or ""
+        k = _get_secret("API_SERVER_KEY") or ""
+        if k:
+            return k
+        # A gateway process that IS the default profile can have an empty ambient
+        # secret scope (systemd EnvironmentFile-less boot, `-I` bootstrap — measured
+        # 2026-11-10: a default-paired watch's lane session died 'has no
+        # API_SERVER_KEY set' while every NAMED profile's file scope resolved fine).
+        # Fall through to the same canonical file route, not process env.
     home = _profile_home(profile)
     if home is None:
         return ""
@@ -451,6 +493,151 @@ def _lane_lookup(token: str) -> Optional[str]:
     return _engine().device_lookup(token)
 
 
+def _voiceout_register_engines() -> None:
+    """Best-effort engine/aligner registration at lane start: each adapter
+    self-probes and only registers when installed+verified (or honestly
+    size-verified-pending). Absent engines leave voiceout's refusal intact.
+
+    Idempotent and cheap (the probes are stat-level), so BOTH human doors —
+    the dashboard /voice route and the lane's voice surface — may call it
+    again lazily via `ensure_engines()` before an engine-backed action. One
+    swallowed startup probe must never strand the owner's Play button; the
+    first real click re-probes and registers (2026-11-10 owner report)."""
+    try:
+        from . import align_parakeet, tts_air
+    except ImportError:              # flat loader outside a package context
+        import align_parakeet        # type: ignore[no-redef]
+        import tts_air               # type: ignore[no-redef]
+    for mod in (tts_air, align_parakeet):
+        _singleton_alias(mod)
+        try:
+            mod.register_if_ready()
+        except Exception:            # engine problems never block the lane
+            logger.debug("voice engine %s not registered", mod.__name__,
+                         exc_info=True)
+    _voiceout_prewarm()
+
+
+_PREWARM_TEXT = "Hermes voice engine ready."
+_prewarm_done = threading.Event()
+
+
+def _voiceout_prewarm() -> None:
+    """Warm the synthesis cache in the background right after engine registration.
+
+    The Air engine reloads weights per call (cold first call: minutes on the
+    owner's box, 2026-11-10) — a human clicking Play in the pane must never pay
+    that. One daemon thread synthesizes a fixed seed sentence once per process
+    (voiceout's cache dedupes across restarts by key, so this costs nothing when
+    the entry is fresh and self-heals when it is not). Silent on failure: the
+    refusal path in voiceout.synthesize already tells the truth to the caller.
+    """
+    if _prewarm_done.is_set():
+        return
+    _prewarm_done.set()
+
+    def run() -> None:
+        try:
+            from . import voiceout
+            _singleton_alias(voiceout)
+            st = voiceout.status()
+            if not st.get("engine") or not st.get("cards"):
+                return                 # nothing to speak with yet; honest no-op
+            voiceout.synthesize(_PREWARM_TEXT, "default", want_words=False)
+            voiceout._warm_audition()  # also cache each card's OWN line — the picker's ▶
+        except Exception:
+            logger.debug("voice prewarm skipped", exc_info=True)
+
+    threading.Thread(target=run, name="wearos-voice-prewarm", daemon=True).start()
+
+
+def _lane_voice(action: str, method: str, body: dict, node: dict,
+                query: dict) -> tuple:
+    """The voice-out surface (SPEC §19). Node law first: the WHOIS-verified node
+    must be bound to a paired device — no token, but never just 'a tailnet peer'
+    either (a stranger's node on the same tailnet gets 403)."""
+    _voiceout_register_engines()   # lazy heal (same rationale as ensure_engines)
+    try:
+        from . import voiceout
+    except ImportError:
+        import voiceout  # type: ignore[no-redef]
+    _singleton_alias(voiceout)
+    eng = _engine()
+    nid = str(node.get("node_id") or "")
+    bound = next((name for name, d in eng.devices().items()
+                  if nid and str(d.get("node_id") or "") == nid), None)
+    if bound is None:
+        return 403, {"error": "tailnet node is not bound to a paired device"}
+    dev = eng.device(bound) or {}
+    if action == "prefs":
+        if method == "GET":
+            return 200, voiceout.read_prefs()
+        if method in ("PUT", "POST"):
+            remote = body.get("prefs")
+            if not isinstance(remote, dict):
+                remote = body
+            return 200, voiceout.merge_prefs(remote)
+        return 405, {"error": "GET or PUT"}
+    if action == "cards":
+        return 200, voiceout.status()
+    if action == "card_wav":
+        cid = re.sub(r"[^a-z0-9-]", "",
+                     str((query.get("card_id") or [""])[0]))[:64]
+        path = voiceout._root() / voiceout.CARDS_DIR / f"{cid}.wav"
+        if not cid or not path.is_file():
+            return 404, {"error": "no such card"}
+        return 200, {"_raw": path.read_bytes(), "_ctype": "audio/wav"}
+    if action == "card_create":
+        import base64
+        wav = base64.b64decode(str(body.get("wav_b64") or ""), validate=True)
+        card = voiceout.create_card(
+            wav, str(body.get("label") or "watch card")[:48],
+            source=str(body.get("source") or "watch-record")[:24],
+            transcript=body.get("transcript") if isinstance(
+                body.get("transcript"), str) else None)
+        return 200, card
+    if action == "card_delete":
+        return 200, voiceout.delete_card(
+            re.sub(r"[^a-z0-9-]", "", str(body.get("card_id") or ""))[:64])
+    if action == "synthesize":
+        import base64
+        r = voiceout.synthesize(str(body.get("text") or "")[:4000],
+                                str(body.get("agent") or dev.get("profile") or ""),
+                                want_words=bool(body.get("words", True)),
+                                card_id=str(body.get("card_id") or "") or None)
+        if isinstance(r.get("audio"), (bytes, bytearray)):
+            r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
+        return 200, r
+    if action.startswith("tts_") or action == "engines":
+        try:
+            from . import align_parakeet, tts_air
+        except ImportError:
+            import align_parakeet  # type: ignore[no-redef]
+            import tts_air         # type: ignore[no-redef]
+        _singleton_alias(tts_air)
+        _singleton_alias(align_parakeet)
+        if action == "engines":
+            return 200, {"air": tts_air.status(), "aligner": align_parakeet.status()}
+        if action == "tts_sources":
+            return 200, {"sources": tts_air.sources_menu(),
+                         "slots": tts_air._slots()}
+        if action == "tts_status":
+            return 200, tts_air.status()
+        if action == "tts_install" and method == "POST":
+            tok = str(body.get("token") or "").strip()
+            if tok:                                   # paste box: store 0600, never echo
+                tf = tts_air._root() / "hf_token"
+                tf.parent.mkdir(parents=True, exist_ok=True)
+                tf.write_text(tok)
+                os.chmod(tf, 0o600)
+            r = tts_air.start(interactive=True,
+                              source=str(body.get("source") or "") or None,
+                              for_slot=str(body.get("for") or "gateway"))
+            return 200, r
+        return 405, {"error": "GET tts_sources / GET tts_status / POST tts_install"}
+    return 404, {"error": "not found"}
+
+
 def ensure_private_lane() -> bool:
     """Bind the private lane to the gateway's FIRST tailnet IP (never 0.0.0.0 — the
     scanner and the doctrine agree). No tailscaled → no lane → pairing can't finish:
@@ -464,7 +651,9 @@ def ensure_private_lane() -> bool:
                                                "(tailscaled down or logged out)"}
         return False
     backend = private_api.PrivateBackend(private_api._whois_local, _lane_session,
-                                         _lane_events, _lane_ack, _lane_forget)
+                                         _lane_events, _lane_ack, _lane_forget,
+                                         voice=_lane_voice)
+    _voiceout_register_engines()
     for host in ips:
         try:
             private_api.start_server(host, _private_port(), backend, _lane_lookup)
@@ -475,8 +664,44 @@ def ensure_private_lane() -> bool:
                 _lane_state = {"bound": f"{host}:{_private_port()} (owned by another "
                                         "wearos process)", "error": ""}
                 return True
+            # Port busy with something that is NOT a lane (or a half-wired squatter
+            # answering 404 to everything — the 2026-11-10 webui incident). Never
+            # silent: the pane must show it, and the bind must retry, because a
+            # restart RACE for the port is normal on a busy box and losing it must
+            # not strand every voice call forever.
+            logger.warning("wearos: private lane could not bind %s:%s — port held by a "
+                           "non-lane listener; retrying every 5 s for 15 min",
+                           host, _private_port())
+            _lane_state = {"bound": None,
+                           "error": f"port {_private_port()} held by a non-lane listener "
+                                    "(restart race?) — retrying"}
+            _lane_retry_thread()
+            return False
     _lane_state = {"bound": None, "error": "could not bind the private lane"}
     return False
+
+
+def _lane_retry_thread() -> None:
+    """Retry the lane bind after a port race. Daemon thread; stops on success,
+    on tailscaled disappearing (no IPs), or after the budget. One thread at a
+    time (the bound check above makes re-entry cheap and correct)."""
+    global _lane_retrying
+    if _lane_retrying:
+        return
+    _lane_retrying = True
+
+    def _run():
+        global _lane_retrying
+        try:
+            import time as _t
+            for _ in range(180):                       # 15 min of 5 s tries
+                _t.sleep(5.0)
+                if ensure_private_lane():
+                    logger.info("wearos: private lane bound on retry")
+                    return
+        finally:
+            _lane_retrying = False
+    threading.Thread(target=_run, name="wearos-lane-retry", daemon=True).start()
 
 
 def _private_port() -> int:
@@ -657,8 +882,8 @@ def _profile_inventory(max_age: float = 10.0) -> list:
     if hit and now - hit[0] < max_age:
         return hit[1]
     hermes = shutil.which("hermes")
-    out = []
-    for name in _all_profile_names():
+
+    def _row(name: str) -> dict:
         row = {"name": name, "enabled": False, "visible": False, "version": "",
                "source": ""}
         if hermes:
@@ -678,9 +903,72 @@ def _profile_inventory(max_age: float = 10.0) -> list:
                         break
             except (subprocess.SubprocessError, OSError, ValueError):
                 pass
-        out.append(row)
+        return row
+
+    names = _all_profile_names()
+    if len(names) > 1:
+        # one cold CLI per profile is ~3 s; sequential on 27 profiles that was a
+        # 68–84 s /status (2026-11-10). Fan out, keep _all_profile_names() order.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            out = list(ex.map(_row, names))
+    else:
+        out = [_row(n) for n in names]
     _INVENTORY_CACHE["inv"] = (now, out)
     return out
+
+
+_INVENTORY_LOCK = threading.Lock()
+_INVENTORY_REFRESHING = False
+
+
+def _inventory_serving(max_age: float = 300.0) -> list:
+    """Status-path read: NEVER blocks on the CLI fan-out (measured 68–84 s on a
+    27-profile gateway — the pane's /status timed out and showed no watches/agents,
+    2026-11-10). Serve the newest scan whatever its age; if stale, refresh on one
+    background thread. First call per process seeds synchronously (unavoidable).
+    TTL 300 s: inventory only changes through THIS pane (enable/disable), which
+    refreshes eagerly — a short TTL re-ran 26 cold CLIs every poll while the pane
+    sat open and pinned cores (owner 'CPU noise', 2026-11-10 16:52)."""
+    global _INVENTORY_REFRESHING
+    hit = _INVENTORY_CACHE.get("inv")
+    if hit is None:
+        return _profile_inventory(max_age=0)
+    if time.monotonic() - hit[0] >= max_age:
+        with _INVENTORY_LOCK:
+            if not _INVENTORY_REFRESHING:
+                _INVENTORY_REFRESHING = True
+                threading.Thread(target=_inventory_refresh, daemon=True).start()
+    return hit[1]
+
+
+def _inventory_refresh() -> None:
+    global _INVENTORY_REFRESHING
+    try:
+        _profile_inventory(max_age=0)
+    finally:
+        with _INVENTORY_LOCK:
+            _INVENTORY_REFRESHING = False
+
+
+def invalidate_inventory() -> None:
+    """Post-mutation hook (enable/disable): mark the cache stale and refresh NOW
+    on the background thread, so the TTL exists only as a safety net, not as the
+    pane's staleness budget. Keep serving the previous snapshot meanwhile —
+    DROPPING it made the pane's own click-triggered refetch pay the full 26-CLI
+    fan-out synchronously (the owner's 'whole thing flashes, no status change',
+    2026-11-10 ~17:10: the disable HAD landed; the fetch timed out and the box
+    re-rendered from the error)."""
+    hit = _INVENTORY_CACHE.get("inv")
+    if hit is not None:
+        _INVENTORY_CACHE["inv"] = (0.0, hit[1])
+    else:
+        _INVENTORY_CACHE.pop("inv", None)
+    global _INVENTORY_REFRESHING
+    with _INVENTORY_LOCK:
+        if not _INVENTORY_REFRESHING:
+            _INVENTORY_REFRESHING = True
+            threading.Thread(target=_inventory_refresh, daemon=True).start()
 
 
 def _clean_env() -> dict:
@@ -690,10 +978,30 @@ def _clean_env() -> dict:
     return env
 
 
+def _install_source_ref() -> tuple[str, str]:
+    """(source, 40-hex revision) of THIS plugin per the install metadata at
+    <HERMES_HOME>/plugins/.install-metadata.json — the pin the pane itself runs
+    on. Empty strings when the plugin is a checkout/link without metadata."""
+    home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+    try:
+        meta = json.loads((home / "plugins" / ".install-metadata.json").read_text("utf-8"))
+        row = meta.get("wearos") or {}
+        return str(row.get("source") or ""), str(row.get("revision") or "")
+    except (OSError, ValueError):
+        return "", ""
+
+
 def delegate_enablement(profile: str, enable: bool) -> dict:
     """One checkbox = one fixed-argv `hermes -p <profile> plugins enable|disable
     wearos` (review fix: no hand-rolled YAML editor; the CLI's consent flow runs, we
-    NEVER pass --yes; the value lives in core's hands)."""
+    NEVER pass --yes; the value lives in core's hands).
+
+    Enable self-heals (owner ruling 2026-11-10 ~17:05, the 'Where Agent flashes'
+    report): a named profile that never INSTALLS wearos answers 'No plugin named',
+    which used to just flash the checkbox back. When that happens and the pane's
+    own install metadata names the repo+ref, we install from that exact pin (same
+    consent flags the pane's Enable-all uses — --yes rides the pinned community
+    source, --force matches how the owner re-pins) and retry the enable once."""
     profile = re.sub(r"[^a-z0-9_-]", "", str(profile or "").strip().lower())[:64]
     if not profile:
         return {"name": profile, "error": "profile name is required"}
@@ -701,14 +1009,38 @@ def delegate_enablement(profile: str, enable: bool) -> dict:
     if not hermes:
         return {"name": profile, "error": "hermes CLI not on PATH"}
     verb = "enable" if enable else "disable"
-    argv = ([hermes] if profile == "default" else [hermes, "-p", profile]
-            ) + ["plugins", verb, "wearos"]
+    prefix = [hermes] if profile == "default" else [hermes, "-p", profile]
+    argv = prefix + ["plugins", verb, "wearos"]
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=60,
                              stdin=subprocess.DEVNULL, env=_clean_env())
     except (subprocess.SubprocessError, OSError) as exc:
         return {"name": profile, "error": f"{verb} failed: {exc}"}
     text = ((out.stdout or "") + (out.stderr or "")).strip()
+    if verb == "enable" and out.returncode != 0 and "No plugin named" in text:
+        repo, ref = _install_source_ref()
+        if repo and re.fullmatch(r"[0-9a-f]{40}", ref or ""):
+            try:
+                inst = subprocess.run(
+                    prefix + ["plugins", "install", repo, "--force",
+                              "--ref", ref, "--yes"],
+                    capture_output=True, text=True, timeout=180,
+                    stdin=subprocess.DEVNULL, env=_clean_env())
+            except (subprocess.SubprocessError, OSError) as exc:
+                return {"name": profile, "ok": False, "verb": "install",
+                        "detail": f"auto-install failed: {exc}"}
+            if inst.returncode == 0:
+                try:
+                    out = subprocess.run(argv, capture_output=True, text=True,
+                                         timeout=60, stdin=subprocess.DEVNULL,
+                                         env=_clean_env())
+                except (subprocess.SubprocessError, OSError) as exc:
+                    return {"name": profile, "error": f"{verb} failed: {exc}"}
+                text = ((out.stdout or "") + (out.stderr or "")).strip()
+            else:
+                return {"name": profile, "ok": False, "verb": "install",
+                        "detail": ("auto-install failed: "
+                                   + ((inst.stdout or "") + (inst.stderr or "")).strip()[-400:])}
     return {"name": profile, "ok": out.returncode == 0, "verb": verb,
             "detail": text[-600:] or ("done" if out.returncode == 0 else "failed")}
 
@@ -962,7 +1294,7 @@ def _tool_watch_status(args: dict, **kw) -> str:
         "checks": local_checks(),
         "devices": _engine().devices(),
         "pairing": pairing_state(),
-        "profiles": _profile_inventory(),
+        "profiles": _inventory_serving(),
         "grants": _engine().grants(),
         "apk_release_url": str(_cfg("apk_release_url", RELEASES_LATEST) or RELEASES_LATEST),
     }
@@ -1242,13 +1574,53 @@ def register(ctx) -> None:
                          description="Pair a Wear OS watch: /pair <6-digit code from the watch>",
                          args_hint="<123456>")
     ctx.register_hook("on_session_end", _on_session_end)
+    # Settings ▸ Voice ▸ provider: 'wearkit-gateway' (owner ruling 2026-11-10 — one
+    # engine, one queue: desktop TTS rides the Wear Kit's warm worker via voiceout).
+    try:
+        try:
+            from . import tts_provider     # loaded as a package (gateway/dashboard)
+        except ImportError:
+            import tts_provider            # type: ignore[no-redef]
+        _singleton_alias(tts_provider)
+        tts_provider.register(ctx)
+    except Exception:
+        logger.warning("wearos: TTS provider registration skipped", exc_info=True)
     ctx.register_cli_command(
         name="watch", help="Hermes Wear Kit (pair, devices, status, setup, alerts)",
         setup_fn=_watch_cli_setup, handler_fn=_watch_cli_run,
         description="One-command Wear OS watch pairing over your own tailnet.",
     )
     ctx.on_unload(lambda: (claim_server.stop_server(), private_api.stop_server()))
+    # Rule 11: the voice-out engine reads its declared secret (config_schema
+    # hf_token → env HF_TOKEN) through the plugin's own route, profile-scoped.
+    from . import tts_air as _ta
+    _singleton_alias(_ta)
+    _ta._SECRETS = lambda key: _cfg(key) or _get_secret("HF_TOKEN")
+    # Register installed voice engines AT LOAD, not only at watch-lane bind:
+    # the dashboard soundtest and any host without tailscaled still get the
+    # engine the user installed (rig-measured gap 2026-11-09 — the lane call
+    # stays, it re-probes so mid-session installs activate without a restart).
+    _voiceout_register_engines()
     # Door + lane come up at LOAD on a daemon thread (0.23 has no gateway:startup hook;
     # a door that never comes up is a SILENT pairing failure). The pass is strictly
     # local: tailscale CLI probes only, never api.tailscale.com.
     threading.Thread(target=_startup_pass, daemon=True, name="wearos-readiness").start()
+
+
+def ensure_engines() -> None:
+    """Lazy re-registration hook for the human doors (dashboard + lane voice
+    routes). See _voiceout_register_engines — probes are stat-level, safe per
+    request; a cold-start miss heals on the first action that needs it. The
+    prewarm gate re-arms until an engine is actually visible, so an engine
+    installed AFTER boot still gets its seed sentence cached before any
+    human click pays the cold-load tax."""
+    global _prewarm_done
+    _voiceout_register_engines()
+    try:
+        from . import voiceout
+        _singleton_alias(voiceout)
+        if voiceout.status().get("engine") and _prewarm_done.is_set():
+            _prewarm_done = threading.Event()     # re-arm once: engine just appeared
+            _voiceout_prewarm()
+    except Exception:
+        pass

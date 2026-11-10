@@ -32,11 +32,60 @@ from typing import Optional
 REPO = "https://github.com/handy-computer/transcribe.cpp"
 COMMIT = "5700f127e38dd53c4735ea23ef743b4b538eacd4"   # pinned: what the owner's rig runs
 MODEL_REPO = "handy-computer/parakeet-unified-en-0.6b-gguf"
-MODEL_FILE = "parakeet-unified-en-0.6b-Q8_0.gguf"
-MODEL_URL = f"https://huggingface.co/{MODEL_REPO}/resolve/main/{MODEL_FILE}"
-MODEL_SHA256 = "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795"
-MODEL_BYTES = 731_000_000          # displayed estimate; the checksum is the truth
+# One engine (transcribe.cpp), every official quant selectable (owner ruling
+# 2026-11-09): the vendor repo publishes six; sizes are the repo's own bytes.
+VARIANTS = {
+    "q4_k_m": {"file": "parakeet-unified-en-0.6b-Q4_K_M.gguf", "bytes": 477_274_496,
+               "label": "Q4_K_M — smallest, fastest first-token; slightly more mishears"},
+    "q5_k_m": {"file": "parakeet-unified-en-0.6b-Q5_K_M.gguf", "bytes": 540_795_264,
+               "label": "Q5_K_M — near-Q8 accuracy at ~74% the size"},
+    "q6_k":   {"file": "parakeet-unified-en-0.6b-Q6_K.gguf", "bytes": 602_191_232,
+               "label": "Q6_K — visually-indistinguishable from Q8"},
+    "q8_0":   {"file": "parakeet-unified-en-0.6b-Q8_0.gguf", "bytes": 731_357_568,
+               "sha256": "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
+               "label": "Q8_0 — the shipped default, checksum-pinned since day one"},
+    "f16":    {"file": "parakeet-unified-en-0.6b-F16.gguf", "bytes": 1_239_114_240,
+               "label": "F16 — lossless half-precision"},
+    "f32":    {"file": "parakeet-unified-en-0.6b-F32.gguf", "bytes": 2_473_323_520,
+               "label": "F32 — full reference weights (disk-cheap boxes need not apply)"},
+}
+DEFAULT_VARIANT = "q8_0"
+MODEL_SHA256 = VARIANTS["q8_0"]["sha256"]      # the day-one pin, kept name-compatible
+MODEL_BYTES = 731_000_000                      # displayed estimate; the checksum is the truth
+
+
+def _selected_variant() -> str:
+    try:
+        v = json.loads((_root() / "model_variant").read_text()).get("selected")
+        return v if v in VARIANTS else DEFAULT_VARIANT
+    except (OSError, ValueError):
+        return DEFAULT_VARIANT
+
+
+def select_variant(vid: str) -> dict:
+    if vid not in VARIANTS:
+        return {"ok": False, "error": f"unknown variant {vid!r} — pick from the menu"}
+    _root().mkdir(parents=True, exist_ok=True)
+    (_root() / "model_variant").write_text(json.dumps({"selected": vid}))
+    return {"ok": True, "selected": vid}
+
+
+def variant_menu() -> list:
+    sel = _selected_variant()
+    return [{"id": k, "selected": k == sel, **{f: v[f] for f in ("file", "bytes", "label")},
+             "sha_pinned": "sha256" in v} for k, v in VARIANTS.items()]
+
+
+def model_path() -> Path:
+    """Where the CHOSEN quant lives — the karaoke aligner reads this too, so an
+    engine installed on Q4 aligns on Q4 (never a stale hardcode)."""
+    return _root() / "models" / VARIANTS[_selected_variant()]["file"]
 BUILD_TIMEOUT = 30 * 60            # whole-pipeline cap, minutes-scale machines included
+
+try:
+    from . import weight_cache as _wc          # package context (the plugin host)
+except ImportError:
+    _wc = None                                 # standalone CLI: lazy import on first use
 
 STATUS = threading.Lock()
 _state: dict = {"phase": "idle", "detail": "", "percent": 0, "log": [],
@@ -57,7 +106,7 @@ def _root() -> Path:
 def _probe() -> dict:
     root = _root()
     lib = root / "transcribe-src" / "build-shared" / "src" / "libtranscribe.so"
-    model = root / "models" / MODEL_FILE
+    model = model_path()
     venv_py = root / "venv" / "bin" / "python"
     have_lib = lib.is_file() and venv_py.is_file()
     have_model = model.is_file()
@@ -75,6 +124,8 @@ def status() -> dict:
         st = dict(_state)
         st["log"] = st["log"][-25:]
     st.update(_probe())
+    st["variant"] = _selected_variant()
+    st["variants"] = variant_menu()
     return st
 
 
@@ -87,6 +138,7 @@ def commands() -> list[str]:
     root = _root()
     src = "$D/transcribe-src"
     venv = "$D/venv"
+    v = VARIANTS[_selected_variant()]     # the quant the pane's menu selected
     return [
         f"D = {root}",
         f"git init -q {src} && git -C {src} remote add origin {REPO}",
@@ -97,8 +149,10 @@ def commands() -> list[str]:
         f"cmake --build {src}/build-shared -j {os.cpu_count() or 4}",
         f"{sys.executable} -m venv {venv}",
         f"{venv}/bin/python -m pip install -q {src}/bindings/python",
-        f"curl -L {MODEL_URL} -o $D/models/{MODEL_FILE}   # then SHA-256-verified: "
-        f"{MODEL_SHA256[:16]}…",
+        f"curl -L https://huggingface.co/{MODEL_REPO}/resolve/main/{v['file']} "
+        f"-o $D/models/{v['file']}"
+        + (f"   # then SHA-256-verified: {v['sha256'][:16]}…" if "sha256" in v
+           else f"   # size-checked resume; hash-pin {v['file']} to verify"),
     ]
 
 
@@ -109,8 +163,15 @@ def preview() -> dict:
         "steps": [
             f"Download {REPO} at commit {COMMIT[:12]} (git, fixed revision)",
             "Build the shared library (cmake + g++, a few minutes, CPU-only)",
-            f"Download {MODEL_FILE} (~{MODEL_BYTES // 1_000_000} MB) from huggingface.co",
-            f"Verify it against SHA-256 {MODEL_SHA256[:16]}… before use",
+            f"Download {VARIANTS[_selected_variant()]['file']} "
+            f"(~{VARIANTS[_selected_variant()]['bytes'] // 1_000_000} MB) from huggingface.co",
+            ("Verify it against SHA-256 "
+             + (VARIANTS[_selected_variant()].get("sha256") or MODEL_SHA256)[:16]
+             + "… before use") if VARIANTS[_selected_variant()].get("sha256") else
+            "Verify its exact repo size; the observed SHA-256 is recorded in the cache",
+            "Cache-first: bytes already on disk (any variant, any installer) are "
+            "hash-checked against the remote and hardlinked — never re-fetched; "
+            "a partial download resumes",
             f"Everything lands in {root} (private venv, nothing system-wide)",
         ],
         "hosts": ["github.com", "huggingface.co", "pypi.org (bindings)"],
@@ -133,12 +194,21 @@ def _set(phase: str, detail: str = "", percent: Optional[int] = None) -> None:
 
 
 def _verify(path: Path) -> bool:
+    """Pinned rows check their SHA; menu rows without a pin check the exact
+    repo size (and the cache records the observed SHA at fetch)."""
+    v = VARIANTS[_selected_variant()]
+    pin = v.get("sha256", "")
+    if not pin:
+        try:
+            return path.stat().st_size == v["bytes"]
+        except OSError:
+            return False
     try:
         digest = hashlib.sha256()
         with open(path, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 digest.update(chunk)
-        return digest.hexdigest() == MODEL_SHA256
+        return digest.hexdigest() == pin
     except OSError:
         return False
 
@@ -182,7 +252,7 @@ def _run() -> None:
         src = root / "transcribe-src"
         lib = src / "build-shared" / "src" / "libtranscribe.so"
         venv = root / "venv"
-        model = root / "models" / MODEL_FILE
+        model = model_path()
 
         if not lib.is_file():
             if not (src / ".git").is_dir():
@@ -200,8 +270,11 @@ def _run() -> None:
             _pip(venv, ["install", "-q", str(src / "bindings" / "python")])
 
         if not model.is_file() or not _verify(model):
-            _set("model", f"downloading {MODEL_FILE} (~731 MB)")
-            _download(MODEL_URL, model)
+            _set("model", f"downloading {variant['file']} "
+                          f"(~{variant['bytes'] // 1_000_000} MB)")
+            _download(f"https://huggingface.co/{MODEL_REPO}/resolve/main/"
+                      + variant["file"], model, variant["bytes"],
+                      variant.get("sha256", ""))
             if not _verify(model):
                 model.unlink(missing_ok=True)
                 raise RuntimeError("model failed its SHA-256 check — kept nothing")
@@ -250,18 +323,15 @@ def _run_proc(argv: list, phase: str) -> None:
                            f"{out[-300:]}")
 
 
-def _download(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent": "hermes-wearkit/0.2"})
-    with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as fh:
-        total = int(resp.headers.get("Content-Length") or MODEL_BYTES)
-        done = 0
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            fh.write(chunk)
-            done += len(chunk)
-            _set("model", f"{done // 1_048_576} MB", min(99, int(done * 100 / max(1, total))))
-    os.replace(tmp, dest)
+def _download(url: str, dest: Path, nbytes: int = 0,
+              expected_sha: str = "") -> None:
+    """Same cache-first discipline as voice-out (shared weight_cache): hash-match
+    skips the bytes, an interrupt resumes, and quant switches on this same engine
+    reuse whatever the cache already holds."""
+    if not _wc:
+        import weight_cache as _wc_mod
+        globals()["_wc"] = _wc_mod
+    return _wc.fetch(_root() / "cache", url, dest, nbytes, expected_sha,
+                     progress=lambda done, total: _set(
+                         "model", f"{done // 1_048_576} MB",
+                         min(99, int(done * 100 / max(1, total)))))

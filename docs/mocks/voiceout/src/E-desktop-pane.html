@@ -1,0 +1,59 @@
+<!doctype html><html><head><meta charset=utf-8><style>
+*{margin:0;box-sizing:border-box}
+body{width:380px;height:930px;background:#141519;color:#c9ccd4;font-family:Inter,'Roboto',system-ui,sans-serif;font-size:13px;padding:14px}
+.wm{font-size:13px;font-weight:600;letter-spacing:.26em;color:#8b8f99;margin:2px 0 10px}
+.card{border:1px solid #2a2c33;border-radius:6px;padding:9px 10px;margin-bottom:8px}
+.card .t{font-weight:500;color:#dfe2e8;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sub{font-size:11px;color:#6b707a;margin-top:3px;line-height:1.45}
+.btn{border:1px solid #3a3d45;border-radius:5px;padding:3px 9px;font-size:11px;color:#c9ccd4;background:transparent;white-space:nowrap}
+.btn.dis{opacity:.45}
+.row2{display:flex;gap:6px;margin-top:6px;align-items:center}
+input.code{width:96px;border:1px solid #3a3d45;border-radius:5px;background:transparent;color:#fff;padding:4px 7px;font-size:11px}
+.chk{display:inline-flex;align-items:center;gap:6px;margin:2px 10px 2px 0;color:#9aa0ab;font-size:12px}
+.ok{color:#79c08a;font-size:10.5px;font-weight:600;white-space:nowrap}
+.danger{color:#d76c6c}
+.new{background:#2b3b5e;color:#9db8e8;border-radius:999px;font-size:9px;font-weight:700;padding:2px 7px;letter-spacing:.5px;margin-left:6px;vertical-align:1px}
+.tip{position:relative;border:1px solid #3a3d45;background:#1d1f25;border-radius:6px;padding:6px 8px;font-size:10.5px;color:#9aa0ab;margin-top:6px;line-height:1.4}
+.tip .arr{position:absolute;top:-5px;left:30px;width:8px;height:8px;background:#1d1f25;border-left:1px solid #3a3d45;border-top:1px solid #3a3d45;transform:rotate(45deg)}
+table{width:100%;border-collapse:collapse;margin-top:5px}
+td{font-size:11.5px;color:#c9ccd4;padding:4px 3px;border-bottom:1px solid #22242a}
+td .m{color:#6b707a} .mode{color:#9db8e8}
+.mini{font-size:10px;color:#6b707a}
+.slider{flex:1;height:3px;background:#2a2c33;border-radius:2px;position:relative;margin:0 8px}
+.slider i{position:absolute;left:38%;top:-4px;width:11px;height:11px;border-radius:50%;background:#7A9CC6}
+.drop{border:1.5px dashed #34373f;border-radius:6px;padding:8px;font-size:10.5px;color:#6b707a;line-height:1.5;margin-top:6px}
+.bug2{font-size:9.5px;color:#4a4d55;text-align:center;margin-top:6px}
+</style></head><body>
+<div class=wm>HERMES WEAR KIT</div>
+<div class=card><div class=t>⌚ One watch. Your tailnet. No middleman.</div>
+<div class=sub>The watch app is <u>borealBytes/hermes-wearos</u> — this plugin is its pairing + provisioning half.</div></div>
+
+<div class=card><div class=t>Pair a watch <span class=btn>open window</span></div>
+<div class=row2><input class=code value="418265"><span class=btn>Approve</span><span class=ok>approved: wear → agent wear</span></div></div>
+
+<div class=card><div class=t><span>✓ <b>1.</b> Enable Wear Kit for your agents</span></div>
+<span class=chk>☑ wear</span><span class=chk>☑ wear-demo</span><span class=chk>☑ news-cron</span></div>
+
+<div class=card><div class=t>Paired watches</div>
+<div class=row2 style=justify-content:space-between><span>wear · wear · node ✓</span><span class=btn class=danger>Remove</span></div></div>
+
+<div class=card><div class=t>Voice in — Parakeet STT</div>
+<div class=sub>streaming · pinned <span class=mini>e3b0c4…1f9a</span> · ~600 MB · word timestamps</div>
+<div class=row2 style=justify-content:flex-end><span class=btn>install</span></div></div>
+
+<div class=card><div class=t><span>Voice out — NeuTTS Air<span class=new>NEW</span></span><span class="btn dis">install</span></div>
+<div class=sub>Apache-2.0 · ~0.5 GB GGUF · zero-shot cloning from a 3 s reference · sentence streaming</div>
+<div class=tip><span class=arr></span>🔒 install Parakeet first — its word timestamps are how karaoke works. The aligner rides the STT engine you already have.</div></div>
+
+<div class=card><div class=t>Agent voices</div>
+<table><tr><td>wear</td><td class=m>You · recorded 9 s</td><td class=mode>gateway ▾</td></tr>
+<tr><td>wear-demo</td><td class=m>Tide · default</td><td class=mode>on watch ▾</td></tr>
+<tr><td>news-cron</td><td class=m>Farmhands · file 22 s</td><td class=mode>gateway ▾</td></tr></table>
+<div class=row2><span class=mini style=white-space:nowrap>Playback speed</span><span class=slider><i></i></span><span class=mini>1.0×</span></div>
+<div class=mini style=margin-top:2px>one global dial — 1.0× = each clone's own pace (ref_rate)</div></div>
+
+<div class=card><div class=t>Voice cards</div>
+<div class=sub>You · recorded · 9 s · ref_rate 178 spm &nbsp;▸ audition&nbsp; · remove<br>Farmhands · file · 22 s &nbsp;▸ audition&nbsp; · remove<br>Juniper, Cedar, Tide … defaults (10 seeded)</div>
+<div class=drop>⬆ drop an audio file here — or tell the agent “make this a voice”. Gateway trims + normalizes to 24 kHz mono, records ref_rate, mirrors to every paired watch.</div></div>
+<div class=bug2>v0.9.0 · pairing v2 · mock</div>
+</body></html>

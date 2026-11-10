@@ -81,8 +81,20 @@ fun PromptEditorOverlay(
             // SHOW_EXPLICIT (==1) was removed from the public SDK: the literal bypasses the
             // "was this a user gesture?" heuristics some Wear IMEs apply and force the show.
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            // Retry ladder (owner Galaxy Watch Ultra, One UI Watch 6 / Android 16, 2026-11-10):
+            // the single 120 ms attempt lands BEFORE OneUI's IME session attaches to the new
+            // focused InputConnection, so GBoard silently never rises (caret blinks, no keyboard).
+            // Retry at 400/800 ms while the field is not accepting text, then a forced global
+            // toggle as last resort — isAcceptingText guards it from ever HIDING a live keyboard.
             @Suppress("DEPRECATION")
-            imm?.showSoftInput(view, 1)
+            for (d in longArrayOf(0L, 400L, 800L)) {
+                if (d > 0L) delay(d)
+                if (imm?.isAcceptingText != true) imm?.showSoftInput(view, 1) else break
+            }
+            if (imm?.isAcceptingText != true) {
+                @Suppress("DEPRECATION")
+                imm?.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
+            }
         } catch (e: Exception) { /* IME is whatever the watch runs; best effort */ }
     }
     val sendable = PromptEdit.rewrap(original, text)

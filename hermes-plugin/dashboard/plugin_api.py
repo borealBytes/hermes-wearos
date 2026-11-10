@@ -148,21 +148,122 @@ def enable(body: dict):
     profile = str(body.get("profile", "")).strip().lower()
     if not profile:
         return {"error": "profile is required (no silent all-profiles default)"}
-    return _p().delegate_enablement(profile, bool(body.get("enable", True)))
+    res = _p().delegate_enablement(profile, bool(body.get("enable", True)))
+    if res.get("ok"):
+        # owner ruling 2026-11-10: enabling IS the whole decision — the grant
+        # (watch may use this agent's key) rides with it; no second checkbox.
+        _p()._engine().set_grant(profile, bool(body.get("enable", True)))
+        _p().invalidate_inventory()   # the row just changed; don't make the pane
+                                      # wait on a TTL to see its own click land
+    return res
 
 
 # ── streaming-STT install (D16) ────────────────────────────────────────────────
+def _stt_mod():
+    # importlib, never the attribute: `_p()` may hand us the self-import identity
+    # (fresh mount / OOM-restart before the host bound the package), and a package
+    # attribute only exists once somebody imported the submodule — an
+    # import-ORDER lottery that broke the pane's STT card on the live box
+    # (AttributeError 2026-11-10). Same pattern as _voice_mods, same lesson.
+    import importlib
+    w = _p()
+    return importlib.import_module(w.__name__ + ".stt_install")
+
+
 @router.get("/stt")
 def stt():
-    stt_install = _p().stt_install
+    stt_install = _stt_mod()
     return stt_install.status() | {"preview": stt_install.preview()}
 
 
 @router.post("/stt")
 def stt_post(body: dict):
-    stt_install = _p().stt_install
+    stt_install = _stt_mod()
     action = str(body.get("action", "install")).lower()
     if action == "cancel":
         return stt_install.cancel()
+    if action == "select":
+        # quant menu choice (same engine, different weights) — persists, no install
+        return stt_install.select_variant(str(body.get("variant", "")))
     # The pane IS the interactive surface + the consent dialog (preview shown first).
     return stt_install.start(interactive=True)
+
+
+# ── voice-out (SPEC §19, slice 3) ───────────────────────────────────────────────
+# The pane's door to the same engine the watch lane drives. One surface, two
+# doors: the lane speaks for devices (node-law auth), these routes speak for the
+# logged-in human. Rule 13: consent links and token capture live HERE, in a
+# surface the owner can audit; rule 12: nothing installs without the button.
+
+def _voice_mods(ensure: bool = False):
+    import importlib
+    w = _p()
+    if ensure:
+        w.ensure_engines()       # lazy heal: a missed startup probe must not strand
+                                 # the button (owner report 2026-11-10)
+    return (importlib.import_module(w.__name__ + ".voiceout"),
+            importlib.import_module(w.__name__ + ".tts_air"),
+            importlib.import_module(w.__name__ + ".align_parakeet"))
+
+
+@router.get("/voice")
+def voice():
+    vo, ta, al = _voice_mods(ensure=True)
+    return {"voice": vo.status(),
+            "air": ta.status() | {"sources": ta.sources_menu(), "slots": ta._slots(),
+                                  "preview": ta.preview(), "engine": ta.engine_state(),
+                                  "devices": ta.devices()},
+            "aligner": al.status()}
+
+
+@router.post("/voice")
+def voice_post(body: dict):
+    import os
+    vo, ta, _al = _voice_mods(ensure=True)
+    action = str(body.get("action", "")).lower()
+    if action == "select":
+        return ta.select_source(str(body.get("source") or ""),
+                                str(body.get("for") or "both"))
+    if action == "install":
+        tok = str(body.get("token") or "").strip()
+        if tok:                                   # paste box: validated, 0600, never echo
+            v = ta.store_token(tok)
+            if not v.get("ok"):
+                return {"error": f"token {v.get('error', 'rejected')}"}
+        return ta.start(interactive=True, source=str(body.get("source") or "") or None,
+                        for_slot=str(body.get("for") or "gateway"))
+    if action == "cancel":
+        return ta.cancel()
+    if action == "soundtest":
+        import base64
+        try:
+            r = vo.synthesize(str(body.get("text") or "")[:4000],
+                              str(body.get("agent") or "default"), want_words=False)
+        except Exception as exc:
+            # A button never answers 500: the pane shows this string in its red
+            # note line (honesty rule; owner hit exactly this 2026-11-10).
+            r = {"ok": False, "error": str(exc)[:300]}
+        if isinstance(r.get("audio"), (bytes, bytearray)):
+            r["audio_wav_b64"] = base64.b64encode(r.pop("audio")).decode()
+        return r
+    if action == "engine_devices":
+        return {"ok": True, "devices": ta.devices()}
+    if action == "set_engine_device":
+        # The pick IS the consent (rule 12): a GPU choice starts the one-time
+        # CUDA variant build; the engine keeps speaking on CPU meanwhile and
+        # rebinds the worker the moment the build is done. SPEC 19.4(m).
+        return ta.set_device(str(body.get("device") or "cpu"))
+    if action == "speed":
+        return vo.set_speed(float(body.get("speed", 1.0)))
+    if action == "karaoke":
+        return vo.set_karaoke(bool(body.get("karaoke", True)))
+    if action == "voice":                       # per-agent default card
+        return vo.set_voice(str(body.get("agent") or "default"),
+                            str(body.get("card") or ""))
+    if action == "mode":
+        return vo.set_mode(str(body.get("agent") or "default"),
+                           str(body.get("mode") or "gateway"))
+    if action == "card_delete":
+        return vo.delete_card(str(body.get("card") or ""))
+    return {"error": f"unknown voice action {action!r} — select|install|cancel|"
+                     "soundtest|speed|karaoke|voice|mode|card_delete"}

@@ -52,4 +52,19 @@ object VoiceCatalog {
             else -> pkg
         }
     }
+
+    /**
+     * The private-lane door for a gateway API URL (SPEC §19, gateway voice-out): the lane is
+     * the SAME host on a fixed port — the watch already speaks to the api port over its own
+     * tailnet node, so the lane URL is the api endpoint's scheme+host with the lane port.
+     * Anything without a parseable scheme+host (or a bare host with no scheme) is "" — the
+     * caller says so honestly instead of dialing nothing.
+     */
+    fun laneBase(apiUrl: String, lanePort: Int = 42654): String {
+        val u = runCatching { java.net.URI(apiUrl.trim()) }.getOrNull() ?: return ""
+        val scheme = u.scheme?.lowercase() ?: return ""
+        if (scheme != "http" && scheme != "https") return ""
+        val host = u.host?.takeIf { it.isNotEmpty() } ?: return ""
+        return "$scheme://$host:$lanePort"
+    }
 }

@@ -15,6 +15,7 @@ import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +57,7 @@ import androidx.wear.compose.material.Button
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.wear.compose.material.ButtonDefaults
+import androidx.wear.compose.material.Checkbox
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Switch
 import androidx.wear.compose.material.Text
@@ -178,6 +180,9 @@ fun SettingsScreen(
     var voiceSrc by remember { mutableStateOf(dev.hermes.wearos.domain.VoiceCatalog.ANY) }
     var fbSrc by remember { mutableStateOf(dev.hermes.wearos.domain.VoiceCatalog.ANY) }
     val ttsEngine by settings.ttsEngine.collectAsState()
+    // issue #7: voice-out source — system cascade vs gateway (Wear Kit cloned voices)
+    val ttsSource by settings.ttsSource.collectAsState()
+    var gwProbe by remember { mutableStateOf(0) }
     val ttsFallback by settings.ttsFallback.collectAsState()
     val markdownOn by settings.markdownEnabled.collectAsState()
     val bodyTools by settings.bodyTools.collectAsState()
@@ -307,7 +312,10 @@ fun SettingsScreen(
         if (page == SettingsPage.Root) {
             val selGw = gateways.firstOrNull { it.id == selectedGwId }
             SettingNavRow("🌐", "Gateways", "${gateways.size} saved" + (if (selGw != null) " · ✓ ${selGw.label}" else "")) { page = SettingsPage.Gateways }
-            SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×") { page = SettingsPage.Voice }
+            SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×" + (if (ttsSource == "gateway") " · 🌐" else "")) {
+                page = SettingsPage.Voice
+                Thread { dev.hermes.wearos.voice.GatewayTts.refresh(); gwProbe++ }.start()
+            }
             // #13: voice-IN gets its own page (was buried in Voice out); subtitle names the
             // provider the orb will use, straight from the same in-memory truth the mic reads.
             SettingNavRow("🎤", "Voice in", SttProviders.navSummary(SttProviders.fromId(SttProviders.current))) { page = SettingsPage.VoiceIn }
@@ -1020,22 +1028,94 @@ fun SettingsScreen(
             Text("🔊 voice out", style = MaterialTheme.typography.body2)
             Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
         }
+        // VOICE SOURCE (issue #7, SPEC §19): speak with the OS cascade (Samsung/Google —
+        // the engine+voice rows below) or with the WEAR KIT's cloned gateway voices served
+        // by the private lane. The probe (GET /voice/cards) runs on entry to this page; the
+        // note states the truth — engine missing is a refusal, not a silent dead end, and
+        // a lane that fails mid-answer falls the sentence back to the system cascade.
+        FieldLabel("voice source")
+        val gw = dev.hermes.wearos.voice.GatewayTts
+        gwProbe  // the entry probe bumps this volatile counter-backed state → fresh note/cards
+        // Equal-size pills, STACKED: two 150dp+ buttons side by side overflow the inscribed
+        // square of the round dial and the longer label ellipsizes into looking smaller.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("system" to "system", "gateway" to "gateway 🌐").forEach { (id, label) ->
+                val chosen = ttsSource == id
+                Button(
+                    onClick = { speak.setVoiceSource(id); gwProbe++ },
+                    modifier = Modifier.size(width = 168.dp, height = 36.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = if (chosen) MaterialTheme.colors.primary.copy(alpha = 0.5f)
+                        else MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                ) { Text(label, style = MaterialTheme.typography.button, maxLines = 1) }
+            }
+        }
+        if (ttsSource == "gateway") {
+            StatusLine("lane", gw.note)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = { Thread { gw.refresh(); gwProbe++ }.start() },
+                    modifier = Modifier.size(width = 100.dp, height = 30.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                ) { Text("↻ probe", style = MaterialTheme.typography.button) }
+            }
+            if (gw.cards.isNotEmpty()) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                FieldLabel("voices · ✓ = default")
+                gw.cards.forEach { (cid, label) ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(label.take(14), style = MaterialTheme.typography.body2,
+                            modifier = Modifier.weight(1f))
+                        Button(
+                            onClick = { Thread { gw.previewCard(cid, agentNow) }.start() },
+                            modifier = Modifier.size(width = 48.dp, height = 34.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                        ) { Text("▶", style = MaterialTheme.typography.button) }
+                        // DEFAULT checkbox (owner 2026-11-10): the state lives in the canonical
+                        // prefs doc (voices.__default__, gateway-canonical, higher-rev-wins) —
+                        // the wrist mirrors it and edits it THROUGH the lane, never owns it.
+                        Checkbox(
+                            checked = gw.defaultCard == cid,
+                            onCheckedChange = { on ->
+                                if (on) Thread { gw.setAsDefault(cid); gwProbe++ }.start()
+                            },
+                        )
+                    }
+                }
+            }
+        }
         // SPEECH INPUT lives on its own nested page now (batch-4 #13: Settings ▸ Voice in) —
         // the owner asked for the orb's default engine to be settable the same way voice-out
         // is, not buried under it.
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.
+        // EAR-TEST (owner 2026-11-10, second ruling): the ▶ on a voice row is the ONLY
+        // preview — it plays through the real pipeline and respects both knobs (gain on
+        // the player, dial speed on the gateway). Sliders commit SILENTLY like they used
+        // to; dragging must not spam the engine.
+        val gwSource = ttsSource == "gateway"
+        var gwSpeed by remember { mutableStateOf(if (gw.laneSpeed > 0f) gw.laneSpeed else ttsRate) }
         VolumeSlider(
             volume = replyVolFor,
             agent = agentNow,
             commit = { speak.setReplyVolume(it) },
-            onDone = { if (voiceOut) speak.preview() },
+            onDone = { },
         )
         RateSlider(
-            rate = ttsRate,
-            onRate = { speak.setSpeechRate(it) },
-            onDone = { if (voiceOut) speak.preview() },
+            rate = if (gwSource) gwSpeed else ttsRate,
+            onRate = { v -> if (gwSource) gwSpeed = v else speak.setSpeechRate(v) },
+            onDone = {
+                if (gwSource) {
+                    val v = gwSpeed
+                    Thread { gw.setSpeed(v); gwSpeed = gw.laneSpeed.coerceAtLeast(v); gwProbe++ }.start()
+                }
+            },
         )
         // ENGINE row (owner: "choose google/samsung/(other if exists)") — switching packages
         // rebuilds the live engine; its voices load right after.

@@ -51,6 +51,7 @@ class AppSettings(private val context: Context) {
     private val KEY_STT_GATEWAY_ENGINE = stringPreferencesKey("stt_gateway_engine")
         private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
         private val KEY_TTS_ENGINE = stringPreferencesKey("tts_engine")
+        private val KEY_TTS_SOURCE = stringPreferencesKey("tts_source")
         private val KEY_TTS_FALLBACK = stringPreferencesKey("tts_fallback")
         private val KEY_TTS_RATE = floatPreferencesKey("tts_rate")
         private val KEY_TTS_VOLUME = floatPreferencesKey("tts_volume")
@@ -321,6 +322,19 @@ class AppSettings(private val context: Context) {
     suspend fun setTtsEngine(v: String) {
         context.dataStore.edit { it[KEY_TTS_ENGINE] = v.trim() }
         _ttsEngine.value = v.trim()
+    }
+
+    /** Voice-out SOURCE (issue #7): "system" = the OS TTS cascade; "gateway" = Wear Kit cloned
+     *  voices through the private lane. Unknown values ride "system" — never a silent mystery. */
+    private val _ttsSource = MutableStateFlow("system")
+    val ttsSource: StateFlow<String> = _ttsSource
+    suspend fun ttsSourceValue(): String =
+        context.dataStore.data.first()[KEY_TTS_SOURCE].orEmpty().ifEmpty { "system" }
+    suspend fun loadTtsSource() { _ttsSource.value = ttsSourceValue() }
+    suspend fun setTtsSource(v: String) {
+        val s = if (v.trim().lowercase() == "gateway") "gateway" else "system"
+        context.dataStore.edit { it[KEY_TTS_SOURCE] = s }
+        _ttsSource.value = s
     }
 
     private val _ttsFallback = MutableStateFlow("")

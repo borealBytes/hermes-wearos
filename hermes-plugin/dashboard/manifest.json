@@ -1,4 +1,12 @@
 {
   "name": "wearos",
+  "label": "Wear Kit",
+  "description": "Hermes on your Watch: pairing, grants, voice cards and the wear-demo test agent",
+  "icon": "Watch",
+  "version": "0.3.0",
+  "tab": {
+    "path": "/wearos",
+    "position": "after:bots"
+  },
   "api": "plugin_api.py"
 }
