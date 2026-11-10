@@ -50,9 +50,34 @@ const rest = (path, opts) => {
   return api.rest(path, opts)
 }
 
+// Rows the owner just clicked whose state /status hasn't caught up with yet
+// (the post-click refresh runs on a background thread; serving-stale answers
+// for a few seconds). Overlay keeps the box honest to the CLICK, not the race.
+const pendingEnable = {}
+function overlayPending (s) {
+  if (!s || !Array.isArray(s.profiles)) return s
+  s.profiles = s.profiles.map(p => {
+    if (!(p.name in pendingEnable)) return p
+    // once the server confirms the click, the overlay has done its job
+    if (p.enabled === pendingEnable[p.name]) { delete pendingEnable[p.name]; return p }
+    return { ...p, enabled: pendingEnable[p.name] }
+  })
+  return s
+}
+function markPending (out, profile, on) {
+  if (out && out.ok) {
+    pendingEnable[profile] = !!on
+    const cur = $status.get()
+    if (cur && Array.isArray(cur.profiles)) {
+      $status.set(overlayPending({ ...cur,
+        profiles: cur.profiles.map(p => p.name === profile ? { ...p, enabled: !!on } : p) }))
+    }
+  }
+}
+
 async function refresh () {
   try {
-    $status.set(await rest('/status'))
+    $status.set(overlayPending(await rest('/status')))
     $error.set('')
   } catch (error) {
     // Keep the last view, but SAY what's wrong. 404 ⇒ the backend half isn't mounted
@@ -202,6 +227,7 @@ async function toggle (profile, on) {
     if (out && out.ok === false) {
       host.notify({ kind: 'error', message: `wearos: ${out.detail || out.error}` })
     }
+    markPending(out, profile, on)
   })
 }
 
@@ -400,7 +426,11 @@ function WearKitPane () {
   const allEnabled = profiles.length > 0 && profiles.every(p => p.enabled)
   const enableAll = on => act(async () => {
     for (const p of profiles.filter(q => !!q.enabled !== on)) {
-      await rest('/enable', { method: 'POST', body: { profile: p.name, enable: on } })
+      const out = await rest('/enable', { method: 'POST', body: { profile: p.name, enable: on } })
+      if (out && out.ok === false) {
+        host.notify({ kind: 'error', message: `wearos ${p.name}: ${out.detail || out.error}` })
+      }
+      markPending(out, p.name, on)
     }
   })
   const setAgentVoice = (name, card) => voiceAct(() => rest('/voice', {

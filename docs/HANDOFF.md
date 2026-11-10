@@ -235,3 +235,4 @@ off-screen' is the honest no-chime law, not a bug.
 - enable self-heal (owner 17:05 Where
 Agent
 flashes): named profile without the plugin → auto-install from install-metadata source+revision, retry enable once. wear profile installed/enabled/granted live.
+- invalidate keeps serving stale (17:10 flash fix): pane refetch must never pay the fan-out sync; pane overlays the clicked state until server confirms; enable-all reports per-profile failures.

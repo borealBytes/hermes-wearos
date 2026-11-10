@@ -952,10 +952,18 @@ def _inventory_refresh() -> None:
 
 
 def invalidate_inventory() -> None:
-    """Post-mutation hook (enable/disable): drop the cache and refresh NOW on the
-    background thread, so the TTL exists only as a safety net, not as the pane's
-    staleness budget."""
-    _INVENTORY_CACHE.pop("inv", None)
+    """Post-mutation hook (enable/disable): mark the cache stale and refresh NOW
+    on the background thread, so the TTL exists only as a safety net, not as the
+    pane's staleness budget. Keep serving the previous snapshot meanwhile —
+    DROPPING it made the pane's own click-triggered refetch pay the full 26-CLI
+    fan-out synchronously (the owner's 'whole thing flashes, no status change',
+    2026-11-10 ~17:10: the disable HAD landed; the fetch timed out and the box
+    re-rendered from the error)."""
+    hit = _INVENTORY_CACHE.get("inv")
+    if hit is not None:
+        _INVENTORY_CACHE["inv"] = (0.0, hit[1])
+    else:
+        _INVENTORY_CACHE.pop("inv", None)
     global _INVENTORY_REFRESHING
     with _INVENTORY_LOCK:
         if not _INVENTORY_REFRESHING:
