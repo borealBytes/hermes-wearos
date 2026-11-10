@@ -129,6 +129,33 @@ def status() -> dict:
     return st
 
 
+def commands() -> list[str]:
+    """The EXACT argv lines _run() executes, in order — the pane shows these verbatim
+    (sudo law: the human approves the command they can read, not a paraphrase). The
+    model download is a fixed https GET shown as curl-equivalent; no shell is involved.
+    Paths are relative to the plugin data dir (first line) so the block stays readable.
+    """
+    root = _root()
+    src = "$D/transcribe-src"
+    venv = "$D/venv"
+    v = VARIANTS[_selected_variant()]     # the quant the pane's menu selected
+    return [
+        f"D = {root}",
+        f"git init -q {src} && git -C {src} remote add origin {REPO}",
+        f"git -C {src} fetch -q --depth 1 origin {COMMIT}",
+        f"git -C {src} checkout -q FETCH_HEAD     # verified: HEAD == {COMMIT}",
+        f"cmake -S {src} -B {src}/build-shared -DCMAKE_BUILD_TYPE=Release "
+        "-DTRANSCRIBE_BUILD_SHARED=ON -DTRANSCRIBE_BUILD_TESTS=OFF",
+        f"cmake --build {src}/build-shared -j {os.cpu_count() or 4}",
+        f"{sys.executable} -m venv {venv}",
+        f"{venv}/bin/python -m pip install -q {src}/bindings/python",
+        f"curl -L https://huggingface.co/{MODEL_REPO}/resolve/main/{v['file']} "
+        f"-o $D/models/{v['file']}"
+        + (f"   # then SHA-256-verified: {v['sha256'][:16]}…" if "sha256" in v
+           else f"   # size-checked resume; hash-pin {v['file']} to verify"),
+    ]
+
+
 def preview() -> dict:
     root = _root()
     return {
@@ -151,6 +178,8 @@ def preview() -> dict:
         "needs": ["git", "cmake", "g++"],
         "disk_mb": 1600,
         "toolchain_ok": _probe()["toolchain"],
+        "commands": commands(),
+        "cli": "hermes watch setup --fix stt",
     }
 
 
