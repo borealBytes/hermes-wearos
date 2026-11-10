@@ -26,6 +26,11 @@ import pytest
 
 _HERE = Path(__file__).resolve().parent
 _PKG = _HERE.parent  # hermes-plugin/
+# Plugin-root modules (tts_provider, voiceout, tts_air) import by bare name in tests;
+# `python -m pytest` only guarantees CWD on sys.path, so make the invocation directory
+# irrelevant (rootdir runs failed with ModuleNotFoundError before this line existed).
+if str(_PKG) not in sys.path:
+    sys.path.insert(0, str(_PKG))
 
 
 def _ensure_hermes_on_path() -> None:
