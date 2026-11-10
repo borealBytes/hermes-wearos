@@ -1677,6 +1677,32 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   early); `PromptEditor.kt`’s IME ladder retries showSoftInput at 400/800 ms —
   One UI Watch 6 drops the single 120 ms attempt, which is why GBoard never
   rose from the keyboard chip.
+- **2026-11-10 (weardev, lane-race postmortem)** — a restart window let a foreign
+  HTTP server take :42653/:42654 while `lane_alive()` accepted ANY HTTP answer as
+  proof, so the lane reported healthy and every `/voice/*` call 404'd (owner:
+  "click play, nothing plays" round two). Two rules: `lane_alive` recognizes the
+  lane by its ROUTE TABLE (401/403/410 auth-law answers pass; a bare 404 passes
+  only if `/voice/prefs` is wired behind it); and a bind lost to a non-lane
+  listener is loud (warning + pane lane row) and retried every 5 s for 15 min —
+  boot races self-heal. Upkeep note: sibling dirs in `~/.hermes/plugins/` poison
+  discovery (the `.bak-0.2.0` collision hid the plugin), and the install ledger
+  pins by revision — dev-syncing files without re-pinning marks the plugin
+  integrity-failed, which reads as "disabled".
+- **2026-11-10 (weardev, slice 5 client — voice-out on the wrist)** — the watch
+  Voice-out page gained a VOICE SOURCE choice: `system` (the OS cascade, the
+  2026-10-29 engine/voice rows) or `gateway` (the Wear Kit's cloned voices). The
+  client is `voice/GatewayTts.kt`: sentences queue to `POST /voice/synthesize`
+  on the lane (`VoiceCatalog.laneBase` = the api endpoint's host, port 42654 —
+  WHOIS identity, no bearer), decode to `MediaPlayerHolder.playBytes`, and play
+  SERIALLY — the worker blocks on a playback-ended latch (ExoPlayer is
+  main-thread-owned and now reports STATE_IDLE/ENDED, the same fix that closed
+  the `Expected thread main` throw). Honesty law: availability comes from
+  `GET /voice/cards` (engine flag + card count); no engine is a REFUSAL with a
+  reason on the page, never silence; a lane that fails mid-answer re-queues the
+  sentence on the local cascade in order; orb-STOP (`speak.stop()`) cuts the
+  gateway queue too — the 12.11 mute heritage unchanged. Rate rides the pane's
+  global speed dial (gateway side); the local rate/volume knobs shape only the
+  fallback voice — the page says so.
 
 ## Appendix A — Landed slices (build log, newest first)
 

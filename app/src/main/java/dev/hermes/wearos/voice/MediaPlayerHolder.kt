@@ -3,6 +3,7 @@ package dev.hermes.wearos.voice
 import android.content.Context
 import android.util.Log
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import dev.hermes.wearos.net.TailnetRoute
 import java.io.File
@@ -22,18 +23,34 @@ import okhttp3.Request
  * Absolute http(s) URLs AND gateway-relative paths both work: a relative "/voice/..." resolves
  * against the API endpoint, so the voice surface (private lane, WHOIS-gated) is addressable
  * without baking its host into payloads.
+ *
+ * THREADING (fixed 2026-11-10, same day as the lane race): media3 enforces the creating
+ * application thread (verifyApplicationThread) — the player is built and touched ONLY on the
+ * main Looper; downloads run on workers. Callers needing "this clip FINISHED" (the gateway
+ * voice queue, GatewayTts) pass onEnded — it fires once on natural end, on stop(), or on an
+ * error; a clip replaced by a foreign play never fires it (the caller's own timeout guards
+ * that rare crossing).
  */
 object MediaPlayerHolder {
     private const val TAG = "HermesWear"
-    // ExoPlayer enforces its home thread (media3 verifyApplicationThread): build it on main
-    // and touch it ONLY from main. The download runs on a worker; playback hops back.
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private var player: ExoPlayer? = null
+    @Volatile private var onEnded: (() -> Unit)? = null
     private val http by lazy {
         OkHttpClient.Builder().proxySelector(TailnetRoute.SELECTOR).build()
     }
 
-    fun play(context: Context, url: String) {
+    private val playbackListener = object : Player.Listener {
+        override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
+                val cb = onEnded; onEnded = null
+                cb?.let { main.post(it) }
+            }
+        }
+    }
+
+    /** Download (tailnet-routed) then play. [onEnded] optional — see class doc. */
+    fun play(context: Context, url: String, onEnded: (() -> Unit)? = null) {
         val app = context.applicationContext
         Thread {
             try {
@@ -42,29 +59,63 @@ object MediaPlayerHolder {
                 http.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         Log.e(TAG, "media fetch $abs -> ${resp.code}")
+                        onEnded?.let { main.post(it) }
                         return@use
                     }
-                    val dir = File(context.cacheDir, "media").apply { mkdirs() }
-                    dir.listFiles()?.forEach { if (it.name.startsWith("media-")) it.delete() }
-                    val tmp = File.createTempFile("media-",
-                        "-" + abs.substringAfterLast('/').take(24), dir)
-                    resp.body?.byteStream()?.use { input -> tmp.outputStream().use(input::copyTo) }
-                    if (tmp.length() == 0L) { tmp.delete(); error("empty body from $abs") }
-                    main.post {
-                        try {
-                            val p = player ?: ExoPlayer.Builder(app).build().also { player = it }
-                            p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
-                            p.prepare()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "player prepare failed", e)
-                        }
+                    val bytes = resp.body?.bytes() ?: ByteArray(0)
+                    if (bytes.isEmpty()) {
+                        onEnded?.let { main.post(it) }; error("empty body from $abs")
                     }
-                    Log.i(TAG, "media play $abs (${tmp.length()} bytes via ${if (TailnetRoute.socksPort > 0) "tailnet" else "direct"})")
+                    playBytes(app, bytes, resp.header("Content-Type") ?: "audio/wav", onEnded)
+                    Log.i(TAG, "media play $abs (${bytes.size} bytes via ${if (TailnetRoute.socksPort > 0) "tailnet" else "direct"})")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "media play failed: $url", e)
+                onEnded?.let { main.post(it) }
             }
         }.start()
+    }
+
+    /**
+     * Write decoded audio bytes to the app cache and play them on the main-thread player.
+     * [onEnded] (optional) fires once when the clip finishes, is stopped, or could not start.
+     */
+    fun playBytes(context: Context, bytes: ByteArray, contentType: String,
+                  onEnded: (() -> Unit)? = null) {
+        val app = context.applicationContext
+        val ext = when {
+            contentType.contains("ogg") || contentType.contains("opus") -> ".ogg"
+            contentType.contains("mp4") || contentType.contains("aac") ||
+                contentType.contains("mpeg") || contentType.contains("mp3") -> ".m4a"
+            else -> ".wav"
+        }
+        try {
+            val dir = File(app.cacheDir, "media").apply { mkdirs() }
+            // sweep clips older than 5 min — never the file a player may still be reading
+            dir.listFiles()?.forEach {
+                if (it.name.startsWith("media-") &&
+                    System.currentTimeMillis() - it.lastModified() > 300_000) it.delete()
+            }
+            val tmp = File.createTempFile("media-", ext, dir)
+            tmp.outputStream().use { it.write(bytes) }
+            main.post {
+                try {
+                    val p = player ?: ExoPlayer.Builder(app).build().also {
+                        it.addListener(playbackListener); player = it
+                    }
+                    this.onEnded = onEnded
+                    p.setMediaItem(MediaItem.fromUri(tmp.toURI().toString()))
+                    p.prepare()
+                } catch (e: Exception) {
+                    Log.e(TAG, "player prepare failed", e)
+                    this.onEnded = null
+                    onEnded?.let { main.post(it) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "media write failed", e)
+            onEnded?.let { main.post(it) }
+        }
     }
 
     /** Absolute URLs pass through; relative ones resolve against the DEFAULT api endpoint. */
@@ -76,7 +127,11 @@ object MediaPlayerHolder {
         return URI(if (base.endsWith("/")) base.dropLast(1) else base).resolve(url)?.toString()
     }
 
+    /** Cuts the live clip (its onEnded fires via the IDLE transition). */
     fun stop() { main.post { player?.stop() } }
 
-    fun release() { main.post { player?.release(); player = null } }
+    fun release() { main.post {
+        try { player?.removeListener(playbackListener); player?.release() } catch (_: Exception) { }
+        player = null; onEnded = null
+    } }
 }

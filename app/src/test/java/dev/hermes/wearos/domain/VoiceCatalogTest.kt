@@ -37,4 +37,18 @@ class VoiceCatalogTest {
         assertEquals("Samsung", VoiceCatalog.friendlyEngine("", "com.samsung.sr.universe"))
         assertEquals("Custom Engine", VoiceCatalog.friendlyEngine("Custom Engine", "com.acme.tts"))
     }
+
+    @Test fun laneDoors() {
+        // profile path and api port fall away; the lane is host+lane-port, always
+        assertEquals("http://tuxdesktop.tailb12aa5.ts.net:42654",
+            VoiceCatalog.laneBase("http://tuxdesktop.tailb12aa5.ts.net:8642/p/wear"))
+        assertEquals("https://gw.example:42654", VoiceCatalog.laneBase("https://gw.example"))
+        assertEquals("http://100.69.144.33:42654",
+            VoiceCatalog.laneBase("http://100.69.144.33:8642", lanePort = 42654))
+        // refusals: nothing to dial
+        assertEquals("", VoiceCatalog.laneBase(""))
+        assertEquals("", VoiceCatalog.laneBase("tuxdesktop.tailb12aa5.ts.net:8642"))
+        assertEquals("", VoiceCatalog.laneBase("ftp://gw.example"))
+        assertEquals("", VoiceCatalog.laneBase("not a url at all"))
+    }
 }
