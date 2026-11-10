@@ -57,7 +57,7 @@ MODEL_SHA256 = "PENDING"     # gated: auto — anonymous fetch 401s. Pinned on t
                              # skip). Same pattern voiceout.SEED_SHA256 uses.
 OUTPUT_RATE = 24_000                                   # neucodec is 50 Hz → 24 kHz audio
 BUILD_TIMEOUT = 60 * 60                                # torch wheel + llama-cpp build
-SYNTH_TIMEOUT = 180                                    # a whole paragraph on weak CPUs
+SYNTH_TIMEOUT = 600                                    # a whole paragraph on weak CPUs; a cold first run (model+mmap+codec warm) can exceed 180s after install
 CODEC_REPO = "neuphonic/neucodec"                      # PyTorch codec (encode+decode)
 
 # ---------------------------------------------------------------- source menu
