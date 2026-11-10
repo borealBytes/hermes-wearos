@@ -1766,6 +1766,24 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   The reference wav still plays FLAT (1.0x = the speaker's own pace). Retries widened
   to 3 with seed rotation (attempt tuple had silently capped at 2).
 
+- **2026-11-10 (i): WEARKIT GATEWAY — the provider entry in Settings ▸ Voice.** The
+  owner ruling: the TTS provider dropdown should carry ONE Wear Kit row that routes all
+  Hermes speech through our engine ("one TTS engine loaded on gateway… FIFO queue").
+  Hermes core already merges plugin-registered providers into the settings schema
+  (web_server_config reads agent.tts_registry per request), so the plugin now ships
+  tts_provider.py: WearKitGatewayProvider (name `wearkit-gateway`, display 'WearKit
+  Gateway'), synthesize routes through voiceout.synthesize — the SAME serve worker,
+  ticket gate, cache, and silence guard the watch uses; voices = the pane's cards; the
+  canonical dial is honoured on this file path by a stdlib time-compress (audioop died
+  in 3.13+; the watch keeps pitch-preserved ExoPlayer pacing and never passes here).
+  Import law learned the hard way: plugin submodules MUST be pulled `try: from .
+  import X / except ImportError: import X` — the loader imports the plugin as a
+  package, a bare `import X` throws ModuleNotFoundError in-host (silent unless the
+  warning carries exc_info). Dashboard (not just gateway) must restart to repopulate
+  its registry — the dropdown lives in the :9119 process. Proven live: options list
+  ends 'wearkit-gateway' after `systemctl --user restart hermes-dashboard
+  hermes-gateway`; 127 pytest green incl. tests/test_tts_provider_wearkit.py.
+
 - **2026-11-10 (h): CPU discipline for the engine worker (owner: htop load 24).** The
   retry design was secretly a reload storm: every refusal SIGKILLed the worker and a
   respawn pays a full llama.cpp load at ALL 32 threads. Measured root cause of the

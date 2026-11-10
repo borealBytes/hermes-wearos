@@ -1437,6 +1437,16 @@ def register(ctx) -> None:
                          description="Pair a Wear OS watch: /pair <6-digit code from the watch>",
                          args_hint="<123456>")
     ctx.register_hook("on_session_end", _on_session_end)
+    # Settings ▸ Voice ▸ provider: 'wearkit-gateway' (owner ruling 2026-11-10 — one
+    # engine, one queue: desktop TTS rides the Wear Kit's warm worker via voiceout).
+    try:
+        try:
+            from . import tts_provider     # loaded as a package (gateway/dashboard)
+        except ImportError:
+            import tts_provider            # type: ignore[no-redef]
+        tts_provider.register(ctx)
+    except Exception:
+        logger.warning("wearos: TTS provider registration skipped", exc_info=True)
     ctx.register_cli_command(
         name="watch", help="Hermes Wear Kit (pair, devices, status, setup, alerts)",
         setup_fn=_watch_cli_setup, handler_fn=_watch_cli_run,
