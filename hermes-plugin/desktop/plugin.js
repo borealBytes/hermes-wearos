@@ -26,6 +26,7 @@ const $voice = atom(null)
 const $voToken = atom('')
 const $voText = atom('Your cron digest is ready: three farm alerts, no incidents, sprayer window opens Thursday at six ten.')
 const $voNote = atom('')
+const $speedDraft = atom(null)   // mid-drag thumb position; wins over pollers until the commit lands
 const $sttAsk = atom(false)   // sudo-style approval card open (commands shown first)
 const $sttTyped = atom('')    // the sudo gate: Run stays disabled until this reads "install"
 const $sttErr = atom('')      // start-time refusal shown ON the card, not swallowed
@@ -138,14 +139,16 @@ async function voSoundTest () {
   }).finally(() => clearInterval(poll))
 }
 
-// PACING AT PLAYBACK + drag law (owner 2026-11-10): the dial moved one notch at a
-// time because every change POST went through voiceAct — busy=true disabled the
-// slider mid-gesture and the re-render snapped the thumb back. Speed now commits
-// DEBOUNCED with a local optimistic echo: drag freely, one silent POST when you
-// let go, no spinner, no preview (▶ owns previews).
+// PACING AT PLAYBACK + drag law (owner 2026-11-10, twice fixed): (1) the dial moved
+// one notch at a time because every change POST went through voiceAct — busy=true
+// disabled the slider mid-gesture; (2) it STILL snapped because the 2s/8s refreshVoice
+// pollers re-seed $voice with the SERVER speed mid-drag (commit is debounced). Law:
+// the thumb position lives in $speedDraft from the first move until the commit's
+// refresh lands — pollers can overwrite everything else, the draft wins the slider.
 let _speedT = null
 const voSpeed = e => {
   const v = Number(e.target.value)
+  $speedDraft.set(v)
   const cur = $voice.get()
   if (cur && cur.voice) {
     cur.voice.global = Object.assign({}, cur.voice.global, { speed: v })
@@ -156,6 +159,7 @@ const voSpeed = e => {
     rest('/voice', { method: 'POST', body: { action: 'speed', speed: v } })
       .then(refreshVoice)
       .catch(() => { $voNote.set('speed commit failed — check the gateway') })
+      .finally(() => { $speedDraft.set(null) })
   }, 250)
 }
 const voKaraoke = e => voiceAct(() => rest('/voice', {
@@ -327,6 +331,8 @@ function WearKitPane () {
   const status = useValue($status)
   const stt = useValue($stt)
   const voice = useValue($voice)
+  const speedDraft = useValue($speedDraft)
+  const shownSpeed = speedDraft == null ? (voice && voice.voice && voice.voice.global && voice.voice.global.speed) : speedDraft
   const voToken = useValue($voToken)
   const voText = useValue($voText)
   const voNote = useValue($voNote)
@@ -741,10 +747,10 @@ function WearKitPane () {
             children: [
               jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'speed · at playback' }),
               jsx('input', {
-                type: 'range', min: 0.5, max: 2, step: 0.05, value: voicing.speed,
+                type: 'range', min: 0.5, max: 2, step: 0.05, value: shownSpeed,
                 className: 'min-w-0 flex-1', onChange: voSpeed
               }),
-              jsx('span', { children: `${voicing.speed}×` }),
+              jsx('span', { children: `${Number(shownSpeed).toFixed(2)}×` }),
               jsxs('label', {
                 className: 'flex cursor-pointer items-center gap-1',
                 children: [
