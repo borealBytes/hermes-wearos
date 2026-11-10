@@ -151,7 +151,7 @@ const voSpeed = e => {
   $speedDraft.set(v)
   const cur = $voice.get()
   if (cur && cur.voice) {
-    cur.voice.global = Object.assign({}, cur.voice.global, { speed: v })
+    cur.voice = Object.assign({}, cur.voice, { speed: v })
     $voice.set(Object.assign({}, cur))
   }
   clearTimeout(_speedT)
@@ -332,7 +332,7 @@ function WearKitPane () {
   const stt = useValue($stt)
   const voice = useValue($voice)
   const speedDraft = useValue($speedDraft)
-  const shownSpeed = speedDraft == null ? (voice && voice.voice && voice.voice.global && voice.voice.global.speed) : speedDraft
+  const shownSpeed = speedDraft == null ? (voice && voice.voice && voice.voice.speed) : speedDraft
   const voToken = useValue($voToken)
   const voText = useValue($voText)
   const voNote = useValue($voNote)
