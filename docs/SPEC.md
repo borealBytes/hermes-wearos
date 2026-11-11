@@ -2428,3 +2428,16 @@ Two provable halves of one ruling, both hardware-driven same evening:
   note: the published pane half refreshes on INSTALL events — after a manual cp of
   the half, the desktop app must actually restart; a tab reopen reuses the loaded
   module. This is why the owner's 'flashes' persisted through two deploys.)
+- **(o) addendum 2, same hour — the body-key law.** The flashes' true culprit was
+  never the cache: desktop.log showed every owner click 403ing
+  `profile_scope_mismatch`. Core's dashboard native proxy
+  (`dashboard_auth/native_http._own_profile`) rejects ANY JSON body whose
+  `profile` key names a profile other than the session's scope — and a pane
+  that manages OTHER agents from the default session always trips it. LAW:
+  cross-agent bodies of this plugin's API key the target as `agent`
+  (`/enable`, `/grants`, `/alerts`; `profile` stays accepted for direct-curl
+  back-compat, never the documented spelling; `/devices/revoke` is `name`,
+  `/voice` is `for`). Pane error path fixed in the same pass (act() surfaces
+  failures — buttons never silent) and the `wearos.bak-0.2.0` duplicate-id
+  loader leftover removed. Locked by
+  `test_cross_agent_bodies_key_the_target_as_agent`.
