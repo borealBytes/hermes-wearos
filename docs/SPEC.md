@@ -1955,6 +1955,11 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   guard stays for genuine choices. The per-profile schema slice dropping runtime
   plugin providers remains a CORE bug — upstream PR separate from the catalog PR per
   contest law.
+- **2026-11-11 — SHIP LAW AMENDED (owner, same day as §19.4 v0.10.4):** the shipping
+  voice set is now TWO owner-licensed cards — `clay-synth` and `ricky-tpb` (fresh
+  pane-record, card_id ricky-f18cbd6c, wav hash-checked in the card store). bubbles,
+  politician, cartman remain owner TEST artifacts, never named in demos/README.
+  Seed-pack v2 cuts exactly these two.
 - **2026-11-11 — v0.10.4 SPLASH REWORK (#17, owner cold-start spec: *"a second or two
   of the icon, then go into video right away while the app loads; clicking hops you
   in"*).** Reproduced on the AVD: (a) first launch after data-wipe pops POST_NOTIFICATIONS
