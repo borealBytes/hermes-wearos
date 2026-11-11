@@ -1020,10 +1020,7 @@ fun SettingsScreen(
         )
 
         }
-        if (page == SettingsPage.Voice && enrolling) {
-            VoiceEnroll(onClose = { enrolling = false; gwProbe++ })
-        }
-        if (page == SettingsPage.Voice && !enrolling) {
+        if (page == SettingsPage.Voice) {
         // ─── VOICE-OUT CONFIG (owner 2026-10-29: "change voices… and change speed"; the chips
         // became a DRAG SLIDER the same day: "the buttons don't all fit… a slider would do me
         // better"). domain/TtsConfig owns the ↔ mapping; SpeakAloud applies mid-queue live and
@@ -1495,6 +1492,15 @@ fun SettingsScreen(
             StatusLine("author", "Clayton Young")
         }
     }
+        // ENROLLMENT OVERLAY (owner IME law): rendered in the ACTIVITY window as a
+        // full-screen sheet over the settings surface — the Wear floating keyboard
+        // rises here exactly as it does in chat; inside androidx Dialog windows on
+        // this watch it stays mute (proven twice, 2026-11-11).
+        if (enrolling && page == SettingsPage.Voice) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
+                VoiceEnroll(onClose = { enrolling = false; gwProbe++ })
+            }
+        }
     } // Box (batch-5 #18 edge-scroll host)
 }
 
