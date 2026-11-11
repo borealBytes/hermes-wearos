@@ -119,6 +119,27 @@ class DialSpinTest {
         // above? x goes 1 -> 0: no). Either way SOMETHING changed — the caller only ticks on this.
     }
 
+    @Test fun `#23 the owner's curved gear drag passes through the arc but never spins`() {
+        // Trace 2026-11-11: gear drags committed slot=3 (model). Finger launches up-right
+        // (knuckle curve), sweeping the top arc at TRANSIT radius before flattening east.
+        // The old gate counted that lateral transit: the ring stepped a detent mid-drag.
+        val s = DialSpin(1f)
+        listOf(Pair(30f, -60f), Pair(90f, -80f), Pair(150f, -50f), Pair(190f, -5f)).forEach {
+            s.move(it.first, it.second)
+        }
+        assertFalse("transit through 12:00's arc must not engage spin", s.spinning)
+        assertEquals(2, s.commit()) // the wedge he aimed: due east = slot 2 = settings
+    }
+
+    @Test fun `the batch-5 flow still spins — slide up deep, dwell, sweep lateral`() {
+        val s = DialSpin(1f)
+        s.move(0f, -120f)          // slide up, deep
+        s.move(0f, -121f)          // dwell
+        var x = 0f
+        while (!s.spinning && x < 200f) { x += 9f; s.move(x, -120f) } // sweep right
+        assertTrue("a deliberate top dwell + lateral sweep must engage", s.spinning)
+    }
+
     @Test fun `reset returns the whole state machine to rest`() {
         val s = spin()
         moveTo(s, 0f, -100f)

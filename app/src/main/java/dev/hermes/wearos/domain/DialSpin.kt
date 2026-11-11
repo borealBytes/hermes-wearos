@@ -74,9 +74,18 @@ class DialSpin(private val scale: Float) {
             val aim = OrbDial.slotAt(ang)
             if (aim != activeSlot) changed = true
             activeSlot = aim
-            // Accumulate lateral motion ONLY while the finger holds the top arc; leaving it means
-            // the drag is aiming somewhere and the unfinished travel is not owed to any spin.
-            if (OrbDial.wedgeDist(ang, 0f) <= OrbDial.SPIN_UP_ARC_DEG) accumPx += dxPx - lastDx
+            // Accumulate lateral motion ONLY while the finger DWELLS in the top arc — arc AND
+            // a real radius (#23, 2026-11-11 gear misfires: every one of the owner's ordinary
+            // wedge drags curved its first samples through the ±65° zone, the transit's lateral
+            // velocity crossed the step, and the ring engaged ±1 detent under a finger that was
+            // just dragging — gear committed model, sessions committed agents). The owner's
+            // spin flow is "slide UP, then go left or right": a deep-in-the-arc finger.
+            // Passing THROUGH the arc on the way to some other wedge (small radius, transient)
+            // is not owed any accumulation.
+            val r = kotlin.math.sqrt(dxPx * dxPx + dyPx * dyPx)
+            val dwelling = OrbDial.wedgeDist(ang, 0f) <= SPIN_ARM_ARC_DEG &&
+                r >= SPIN_ARM_R_REF * scale
+            if (dwelling) accumPx += dxPx - lastDx
             else accumPx = 0f
             lastDx = dxPx
             if (abs(accumPx) >= stepPx) {
@@ -120,8 +129,17 @@ class DialSpin(private val scale: Float) {
     fun commit(): Int? = if (spinning) activeSlot else activeSlot.takeIf { it >= 0 }
 
     /** Lateral-travel freeze radius while spinning (ref px): just outside the cancel gate —
-     *  inside it the finger is walking to the commit spot, not un-stepping. */
+     *  inside it the finger is walking to the commit spot, not un-step. */
     private val commitFreezeRef = 70f
+
+    /** SPIN ENTRY arc (deg) — the TOP WEDGE, not the wide ±65 fine-step arc. An ordinary wedge
+     *  drag curves through 40–65° on its way east/west; only a finger that actually slid UP
+     *  (deep in 12:00's own wedge) owes the ring lateral accumulation (#23 gear→model proof). */
+    private val SPIN_ARM_ARC_DEG = 35f
+
+    /** SPIN ENTRY radius (ref px) — past the activation gate and well under the icon ring:
+     *  "up and DWELL", the owner's batch-5 flow. Transit samples sit inside this. */
+    private val SPIN_ARM_R_REF = 88f
 
     private fun truncSteps(accum: Float, stepPx: Float): Int = (accum / stepPx).toInt()
 
