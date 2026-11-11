@@ -1193,12 +1193,14 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
 private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
     val slop = with(LocalDensity.current) { 40.dp.toPx() }
     val flickSlop = with(LocalDensity.current) { 14.dp.toPx() }
+    val systemEdge = with(LocalDensity.current) { 24.dp.toPx() }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(slop) {
                 awaitEachGesture {
                     val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                    val nearLeftEdge = down.position.x < systemEdge
                     var taken = false
                     while (true) {
                         val ev = awaitPointerEvent()
@@ -1209,12 +1211,18 @@ private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit)
                         val dx = ch.position.x - down.position.x
                         val elapsed = ch.uptimeMillis - down.uptimeMillis
                         if (!taken) {
-                            // Far enough (slow drag) OR far+fast (short thumb flick —
-                            // 220 ms covers the ~50 ms a finger takes past the slop
-                            // race; the injected-swipe 140 ms gate lost real thumbs).
-                            if (dx <= -slop || (dx <= -flickSlop && elapsed <= 220L)) {
+                            // MIRROR-IMAGE LAW (owner 2026-11-10 ~22:2x: "both
+                            // directions advance, back only via the ring"): EITHER
+                            // horizontal direction, far enough (slow drag) or
+                            // far+fast (thumb flick, 220 ms window), advances the
+                            // ring one step. Only yield: a rightward flick begun in
+                            // the 24 dp system-edge strip stays the OS back gesture.
+                            val flick = dx <= -flickSlop || dx >= flickSlop
+                            val drag = dx <= -slop || dx >= slop
+                            val edgeBack = nearLeftEdge && dx >= flickSlop
+                            if (!edgeBack && (drag || (flick && elapsed <= 220L))) {
                                 taken = true
-                            } else if (dx >= slop) break // rightward: belongs to edge-back
+                            }
                         }
                         if (taken) ev.changes.forEach { it.consume() }
                         if (ev.changes.none { it.pressed }) break
