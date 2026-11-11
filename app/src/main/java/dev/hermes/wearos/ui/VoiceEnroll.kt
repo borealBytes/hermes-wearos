@@ -170,6 +170,7 @@ fun VoiceEnroll(onClose: () -> Unit) {
                     onValueChange = { name = it.take(24) },
                     placeholder = "voice name",
                     onSend = { step = Step.READY },
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
                     showKeyboardHint = false,
                 )
                 Button(onClick = { ime?.hide(); step = Step.READY },
