@@ -1033,13 +1033,18 @@ import atexit as _atexit            # noqa: E402  (next to the lifecycle state)
 _atexit.register(_shutdown_worker)
 
 
-def _reap_stray_workers() -> None:
-    """One resident worker per process, and NO orphans (measured 2026-11-10: the
-    gateway's SIGKILL during a stuck drain left air_runner children reparented to
-    init — each holding ~3.4 GB of model weight that nobody will ever speak with).
-    Before every fresh spawn, kill air_runner processes whose parent is init: they
-    are, by construction, not owned by the live gateway or dashboard. Cheap /proc
-    scan, stdlib only (rule 10)."""
+def _reap_stray_workers(keep: "set | None" = None) -> None:
+    """ONE air_runner on the machine, full stop (owner law 2026-11-11: the 4070
+    cannot afford a second ~4.4 GB copy — VRAM hit 97% with two twins and a
+    third spawn could not load). Not per-process, not per-gateway-parent —
+    SYSTEM-WIDE: every `air_runner.py --serve` that is not explicitly kept is
+    an exit. Covers every twin ever measured: init-parented orphans from killed
+    gates, sibling children of this gateway (two module instances, or a
+    lockless double-spawn race — live-proven 23:12), and a dashboard that
+    warmed its own while the gateway warmed another. The killed owner lazily
+    respawns on its NEXT speak; the survivor pays the model load once. Cheap
+    /proc scan, stdlib only (rule 10)."""
+    keep = keep or set()
     try:
         pids = [int(p) for p in os.listdir("/proc") if p.isdigit()]
     except OSError:
@@ -1048,17 +1053,53 @@ def _reap_stray_workers() -> None:
         try:
             with open("/proc/%d/cmdline" % pid, "rb") as f:
                 cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
-            if "air_runner.py" not in cmd:
+            if "air_runner.py" not in cmd or "--serve" not in cmd:
                 continue
-            with open("/proc/%d/stat" % pid) as f:
-                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
-            if ppid == 1 and pid != os.getpid():
-                os.kill(pid, signal.SIGKILL)
-        except (OSError, ValueError, IndexError):
+            if pid in keep or pid == os.getpid():
+                continue
+            os.kill(pid, signal.SIGKILL)
+        except (OSError, ValueError):
             continue                 # raced/permission — best effort
 
 
 _WORKERS_ALL: list = []              # every worker this process ever spawned
+_SPAWN_LOCK = threading.RLock()      # check-then-spawn is ONE step (twin law)
+
+
+def _spawn_guard(w, want: str, seed):
+    """Check-then-spawn as ONE step (owner law 2026-11-11: never two TTS
+    workers — VRAM cannot afford it). Boot prewarm and the first watch request
+    once both read _WORKER=None a quarter-second apart and each loaded a full
+    ~4.4 GB model; the lock plus the system-wide reaper below makes that
+    structurally impossible: inside the lock the keep-set is the only thing
+    that survives, and a same-device live worker is adopted, never doubled."""
+    global _WORKER, _WORKER_DEV
+    with _SPAWN_LOCK:
+        w = _WORKER if _WORKER is not None else w   # re-read under the lock
+        if w is not None and _WORKER_DEV != want and w.poll() is None:
+            try:                           # lazy rebind: the pane flipped
+                w.terminate()              # cpu->gpu; next speak boots there
+                w.wait(timeout=5)
+            except Exception:
+                w.kill()
+            w = _WORKER = None
+        if w is not None and w.poll() is None and _WORKER_DEV == want:
+            _reap_stray_workers({w.pid})   # adopt the live one; sweep every twin
+            return w
+        if w is None or w.poll() is not None:
+            write_runner()
+            _reap_stray_workers()          # system-wide: no twins, no orphans
+            _WORKER = w = subprocess.Popen(
+                _serve_argv(seed), stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, env=_runner_env(),
+                # background class: the engine must never outrank the
+                # gateway, sglang, or the owner's foreground work
+                preexec_fn=(lambda: os.nice(10) if os.name != "nt" else None))
+            _WORKER_DEV = want
+            _WORKERS_ALL.append(w)
+            _reap_extra_tracked(w)         # one worker per process, full stop
+        return w
 
 
 def _reap_extra_tracked(keep) -> None:
@@ -1184,26 +1225,7 @@ def _worker_request(req: dict) -> None:
                     raise RuntimeError(
                         "GPU selected but its engine build is not ready — "
                         "Voice-out ▸ GPU row shows build progress")
-                if w is not None and _WORKER_DEV != want and w.poll() is None:
-                    try:                           # lazy rebind: the pane flipped
-                        w.terminate()              # cpu->gpu; next speak boots there
-                        w.wait(timeout=5)
-                    except Exception:
-                        w.kill()
-                    w = _WORKER = None
-                if w is None or w.poll() is not None:
-                    write_runner()
-                    _reap_stray_workers()          # init-parented leftovers from killed gates
-                    _WORKER = w = subprocess.Popen(
-                        _serve_argv(req.get("seed")), stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL, text=True, env=_runner_env(),
-                        # background class: the engine must never outrank the
-                        # gateway, sglang, or the owner's foreground work
-                        preexec_fn=(lambda: os.nice(10) if os.name != "nt" else None))
-                    _WORKER_DEV = want
-                    _WORKERS_ALL.append(w)
-                    _reap_extra_tracked(w)         # one worker per process, full stop
+                w = _spawn_guard(w, want, req.get("seed"))
                 try:
                     w.stdin.write(json.dumps(req) + "\n")
                     w.stdin.flush()
