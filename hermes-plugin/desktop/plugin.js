@@ -337,16 +337,25 @@ async function voRecConfirm () {
     $voNote.set('too short — talk for 3–12 seconds'); return
   }
   $recPhase.set('send')
+  // A ✕ never answers with silence (doctrine): every failure mode of the
+  // upload lands as a note line under the play button, not a dead row.
   await voiceAct(async () => {
     const out = await rest('/voice', {
       method: 'POST',
       body: { action: 'card_create', label, transcript: '', wav_b64: _b64(_recBlob) } })
-    if (out && out.error) { $voNote.set(out.error); throw new Error(out.error) }
-    if (out && out.card_id)
+    if (out && out.error) { $voNote.set('gateway refused: ' + out.error); throw new Error(out.error) }
+    if (out && out.card_id) {
       $voNote.set('voice added' + (out.transcript ? ' — heard: "' +
         String(out.transcript).slice(0, 60) + '"' : ' (words arrive when the engine is up)'))
-  }).catch(() => {})
-  if ($recPhase.get() === 'send') voRecRetry()
+      voRecRetry()
+    } else {
+      $voNote.set('gateway answer made no sense: ' + JSON.stringify(out).slice(0, 120))
+      voRecRetry()
+    }
+  }).catch(e => {
+    $voNote.set('enroll upload failed: ' + String((e && e.message) || e).slice(0, 200))
+    voRecRetry()
+  })
 }
 
 async function act (fn) {
