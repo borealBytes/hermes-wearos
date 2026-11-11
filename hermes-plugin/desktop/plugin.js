@@ -246,6 +246,7 @@ const $enrolling = atom(false)
 const $recPhase = atom('idle')          // idle | rec | ready | send
 const $recSecs = atom(0)
 let _recEnd = null, _recT = null, _recBlob = null, _recUrl = '', _recName = ''
+const $recFrames = atom(0)
 function _f32ToWav16k (mono, srcRate) {   // Float32 mic capture -> 16k mono PCM16 WAV
   const rate = 16000, n = Math.round(mono.length * rate / srcRate)
   const f = new Float32Array(n)
@@ -298,8 +299,10 @@ async function voRecStart () {
   const proc = ctx.createScriptProcessor(4096, 1, 1)
   const parts = []
   proc.onaudioprocess = (ev) => {
-    if ($recPhase.get() === 'rec')
+    if ($recPhase.get() === 'rec') {
       parts.push(new Float32Array(ev.inputBuffer.getChannelData(0)))
+      $recFrames.set($recFrames.get() + ev.inputBuffer.length)
+    }
   }
   src.connect(proc); proc.connect(mute); mute.connect(ctx.destination)
   _recEnd = () => {
@@ -327,7 +330,13 @@ async function voRecStart () {
   _recT = setInterval(() => {
     const v = Number($recSecs.get() || 0) + 0.5
     $recSecs.set(v)
-    if (v >= 12.5) voRecStop()          // 3–12 s law client-side; the gateway re-proves it
+    if ($recFrames.get() > 0 && v >= 12.5) voRecStop()   // 3–12 s law; the gateway re-proves it
+    else if (v >= 14) {                                   // 14 s with ZERO frames: dead pipe
+      voRecStop()
+      $voNote.set('the microphone stream carried no audio at all (0 samples in ' +
+                  Math.floor(v) + ' s) — another app owns the device, or the OS ' +
+                  'mic permission was revoked for this app')
+    }
   }, 500)
 }
 function voRecStop () {
@@ -344,7 +353,7 @@ function voRecPlay () {
 function voRecRetry () {
   _recBlob = null
   if (_recUrl) { URL.revokeObjectURL(_recUrl); _recUrl = '' }
-  $recPhase.set('idle'); $recSecs.set(0)
+  $recPhase.set('idle'); $recSecs.set(0); $recFrames.set(0)
 }
 function voRecClose () { voRecStop(); voRecRetry(); $enrolling.set(false) }
 async function voRecConfirm () {
@@ -1240,6 +1249,9 @@ function WearKitPane () {
                         className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)',
                         children: [String(_recName || ''),
                                    ' · ', ($recSecs.get() || 0).toFixed(1), 's',
+                                   $recPhase.get() === 'rec'
+                                     ? ` · ${$recFrames.get()} samples`
+                                     : '',
                                    _recBlob ? ` · ${Math.round(_recBlob.length / 1024)} KB` : '']
                       }),
                   $recPhase.get() === 'rec'
