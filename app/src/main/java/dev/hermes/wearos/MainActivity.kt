@@ -256,7 +256,13 @@ class MainActivity : ComponentActivity() {
                 // the ring handler below disables and SettingsScreen's own BackHandler (composed
                 // inside the screen) wins the dispatcher.
                 val settingsCanUnwind = remember { mutableStateOf(false) }
-                LaunchedEffect(screen) { if (screen != Screen.Settings) settingsManual = false }
+                LaunchedEffect(screen) {
+                    // #24 FINAL WITNESS: "settings committed but nothing happened" needs the
+                    // screen ledger, not just the commit line — log every navigation with the
+                    // manual flag as it stood at that instant.
+                    android.util.Log.i("HermesWear", "screen=$screen manual=$settingsManual")
+                    if (screen != Screen.Settings) settingsManual = false
+                }
                 // FIRST-RUN / NEEDS_AUTH PAIR GATE (SPEC §4, "tailnet only, always"): an empty
                 // registry or any engine edge into NEEDS_AUTH routes the wrist to Settings —
                 // whose own collector lands the Pair page — instead of a chat with nothing to
