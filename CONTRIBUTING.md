@@ -31,7 +31,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://<host>:8642/p/wear-demo/v1/healt
 ```bash
 scripts/setup.sh --api http://<host>:8642/p/wear-demo --token <wear-demo key>
 # or on-device: Settings ▸ Gateways (add endpoint + token); seed every profile's key map with
-scripts/setup.sh --agent-keys   # watchkit then serves GET /agent_keys to the watch too
+scripts/setup.sh --agent-keys   # the whole per-profile key map rides set_agent_key (lane re-learns per D17)
 ```
 
 The app itself is agent-agnostic — the profile lives in the endpoint path (`/p/wear-demo`) and
@@ -132,3 +132,26 @@ and don't force-push `@rc` by hand.
 - Re-apply dev hardening after every reconnect: `svc power stayon true` + `dumpsys deviceidle disable`.
 - Installs ride the 14-chunk push recipe (one-shot pushes EOF on the BT-tethered link) —
   `setup.sh` already does this.
+
+## The spec-and-sync discipline (owner rule, 2026-11-09)
+
+`docs/SPEC.md` is the single design record — it lives **with the code, updated with the code**: a slice that
+ships without its SPEC section (and, where surfaces or files moved, its AGENTS.md §8 line) is not shipped.
+Append and amend; dated entries only, never rewrite history — *"we're never losing information from this
+because you make a mistake on the diffing."*
+
+Before touching any shared file (`desktop/plugin.js`, `private_api.py`, `pairing.py`, `media.py`, the
+watch media lane, SPEC itself): `git fetch` and merge the live PR base (`fix/nous-review-151546`) and the
+integration branch (`feat/hermes-plugin`) — other jobs (OpenCode on the owner's rig) move those daily.
+
+When a merge conflicts, **classify the conflict before resolving it** — every resolution names its cause:
+
+| Verdict | Meaning | Action |
+|---|---|---|
+| **(a) upstream invalidated my assumption** | their change makes my code wrong *for a reason* | adapt to them; SPEC amendment records what died and why — the old rationale stays in the log |
+| **(b) genuine shared-surface change** | both sides legitimately changed the same region | interleave deliberately, hunk by hunk; never blind `--ours`/`--theirs`; re-run BOTH sides' tests |
+| **(c) my edit no longer applies cleanly** | my mistake (edited without pulling first) | take theirs, replay mine on top; feature branches rebase, PR-base branches never force-push |
+
+Anti-loss rules: conflict resolutions get a `git diff <merged-ancestor>` review before commit; a dropped
+hunk from *either* side is a bug, not a merge success; SPEC/AGENTS/CONTRIBUTING edits are additive
+(sections appended, claims amended with dates) so an information-losing rewrite is visible at a glance.

@@ -40,6 +40,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -234,6 +236,7 @@ class MainActivity : ComponentActivity() {
                 val agentsRefreshing by agents.refreshing.collectAsState()
                 val gatewaySessions by session.gatewaySessions.collectAsState()
                 val archivedSessions by session.archivedSessions.collectAsState()
+                val cronSessions by session.cronSessions.collectAsState()
                 val sessionsMeta by session.sessionsMeta.collectAsState()
                 val devPtt by WearApp.Graph.devPtt.collectAsState()
                 val devEditor by WearApp.Graph.devEditor.collectAsState()
@@ -258,9 +261,11 @@ class MainActivity : ComponentActivity() {
                 var approvalsOpen by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
                 // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
-                // the user on an empty list they can see is empty).
-                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty()) {
-                    if (archivedSessions.isEmpty() && sessionFilter == GatewaySessions.FILTER_ARCHIVED)
+                // the user on an empty list they can see is empty). ⏰ shares the rule.
+                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty(), cronSessions.isEmpty()) {
+                    if (sessionFilter == GatewaySessions.FILTER_ARCHIVED && archivedSessions.isEmpty())
+                        sessionFilter = GatewaySessions.FILTER_ALL
+                    if (sessionFilter == GatewaySessions.FILTER_CRON && cronSessions.isEmpty())
                         sessionFilter = GatewaySessions.FILTER_ALL
                 }
                 // OWNER BATCH 2 (asks #5/#6): long-pressed prompt → sheet → full-screen editor.
@@ -675,6 +680,22 @@ class MainActivity : ComponentActivity() {
                     introSource = introSource,
                 ) {
                     VoiceHost(session, speak)
+                    // SWIPE-ADVANCE (owner 2026-11-10: "i also used to be able to hw back OR
+                    // SWIPE between chat, sessions, agents" — batch 6 gave the ring a back
+                    // button leg but the forward swipe got lost). A horizontal drag leftward
+                    // anywhere in the body advances the SAME ring physical back walks; a
+                    // rightward drag is yielded untouched — that is the edge-back gesture's
+                    // job and stealing it would break "just get me back to the chat".
+                    SwipeForward(onForward = {
+                        when (BackRing.action(screen)) {
+                            BackRing.Action.ToSessions -> screen = Screen.Sessions
+                            BackRing.Action.ToAgents -> {
+                                showAgents = true
+                                uiScope.launch { agents.refresh() }
+                            }
+                            BackRing.Action.ToChat -> screen = Screen.Chat
+                        }
+                    }) {
                     when (screen) {
                         Screen.Chat -> ChatBody(
                             state = state, voiceOut = voiceOut, voiceStatus = voiceStatus,
@@ -827,6 +848,7 @@ class MainActivity : ComponentActivity() {
                                 agent = profile,
                                 sessions = gatewaySessions,
                                 archived = archivedSessions,
+                                cron = cronSessions,
                                 meta = sessionsMeta,
                                 filter = sessionFilter,
                                 onFilter = { sessionFilter = it },
@@ -866,6 +888,7 @@ class MainActivity : ComponentActivity() {
                         Screen.Settings -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
                             SettingsScreen(context = context, settings = settings, speak = speak)
                         }
+                    }
                     }
                 }
 
@@ -1156,6 +1179,58 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
             content()
         }
     }
+}
+
+/** Forward leg of the ring under a FINGER (owner 2026-11-10): a horizontal drag leftward past
+ *  [slop] anywhere in the body calls [onForward] once on release — and so does a LEFTWARD
+ *  FLING that never travels far (owner 2026-11-10, real finger on real glass: short thumb
+ *  flicks fell under the displacement threshold and the ring never advanced; injected
+ *  full-screen swipes had masked it). A rightward drag CANCELLATES
+ *  early so the system edge-back keeps its gesture. Vertical lists are untouched — a scrolling
+ *  child consumes the stream and this detector bows out with it. Pure gesture, no state: the
+ *  where-to logic stays in BackRing (unit-tested) beside the physical-back handler. */
+@Composable
+private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
+    val slop = with(LocalDensity.current) { 40.dp.toPx() }
+    val flickSlop = with(LocalDensity.current) { 14.dp.toPx() }
+    val systemEdge = with(LocalDensity.current) { 24.dp.toPx() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(slop) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                    val nearLeftEdge = down.position.x < systemEdge
+                    var taken = false
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.last()
+                        // displacement from the DOWN POINT, not accumulated deltas:
+                        // a parent scroller that consumes vertical (real thumbs arc)
+                        // zeroes the per-event pan, and curved flicks wobble the sum.
+                        val dx = ch.position.x - down.position.x
+                        val elapsed = ch.uptimeMillis - down.uptimeMillis
+                        if (!taken) {
+                            // MIRROR-IMAGE LAW (owner 2026-11-10 ~22:2x: "both
+                            // directions advance, back only via the ring"): EITHER
+                            // horizontal direction, far enough (slow drag) or
+                            // far+fast (thumb flick, 220 ms window), advances the
+                            // ring one step. Only yield: a rightward flick begun in
+                            // the 24 dp system-edge strip stays the OS back gesture.
+                            val flick = dx <= -flickSlop || dx >= flickSlop
+                            val drag = dx <= -slop || dx >= slop
+                            val edgeBack = nearLeftEdge && dx >= flickSlop
+                            if (!edgeBack && (drag || (flick && elapsed <= 220L))) {
+                                taken = true
+                            }
+                        }
+                        if (taken) ev.changes.forEach { it.consume() }
+                        if (ev.changes.none { it.pressed }) break
+                    }
+                    if (taken) onForward()
+                }
+            },
+    ) { content() }
 }
 
 @Composable

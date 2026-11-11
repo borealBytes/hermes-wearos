@@ -20,6 +20,7 @@ import dev.hermes.wearos.notify.Notifs
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.EndpointResolver
 import dev.hermes.wearos.net.NetworkMonitor
+import dev.hermes.wearos.net.PrivateLane
 import dev.hermes.wearos.net.TailnetEngine
 import dev.hermes.wearos.domain.TailnetLogic
 import dev.hermes.wearos.domain.TailnetPhase
@@ -322,6 +323,11 @@ class WearApp : Application() {
                     override fun onActivityDestroyed(activity: android.app.Activity) {}
                 })
                 settings = AppSettings(app)
+                // D18: a RELEASE watch never sends outside the tunnel — with the node down the
+                // route selector returns NO route instead of falling back to plain sockets.
+                // (Debug keeps the fallback; `-e tailnet_on off` must keep working.)
+                dev.hermes.wearos.net.TailnetRoute.failClosed =
+                    (app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0
                 store = ChatStore(settings, app, scope + SupervisorJob())
                 session = ChatSession(settings, store, scope + SupervisorJob(), app)
                 // W8 body tools: Health Services probe/collection + watchkit snapshot cadence.
@@ -361,6 +367,16 @@ class WearApp : Application() {
                 scope.launch { settings.loadSlashCatalog() } // pushed command catalog, if any
                 scope.launch { settings.loadBodyTools() } // W1-W4: body switches (all default OFF)
                 scope.launch { Watchkit.setConfig(settings.mermaidBaseUrl(), settings.watchkitToken()) } // F4/watchkit
+                // PAIRING v2: the lane address + device token survive reboots in DataStore (D15
+                // sealed); restore the client config so the outbox + key refresh ride the FIRST
+                // tunnel up, and re-seal any legacy plaintext secrets exactly once per install.
+                scope.launch {
+                    settings.migrateSecrets()
+                    PrivateLane.setConfig(
+                        settings.laneBase(), settings.deviceToken(),
+                        settings.profileSync().ifBlank { "default" },
+                    )
+                }
                 agents = AgentsRepo(settings)
                 // GATEWAY SYSTEM (owner epic, SPEC §11): registry seed/migration from the legacy
                 // keys, then endpoint failover for the selected gateway. The winner callback
@@ -447,12 +463,21 @@ class WearApp : Application() {
                         // yank the wearer out of Settings every status poll.
                         if (phase == TailnetPhase.NEEDS_AUTH && last != null && last != TailnetPhase.NEEDS_AUTH)
                             _pairRequested.value = true
-                        if (phase != last && (phase == TailnetPhase.ACTIVE || last == TailnetPhase.ACTIVE)) {
+                        if (phase != last && (phase == TailnetPhase.ACTIVE || phase == TailnetPhase.DEGRADED ||
+                                last == TailnetPhase.ACTIVE || last == TailnetPhase.DEGRADED)) {
                             last = phase
-                            if (hasEndpoints()) {
+                            val tunnelUp = phase == TailnetPhase.ACTIVE || phase == TailnetPhase.DEGRADED
+                            if (tunnelUp && hasEndpoints()) {
                                 val api = endpoints.ensure(force = true)
                                 Log.i(TAG, "tailnet ${phase.name.lowercase()} — endpoints re-picked: ${api.ifEmpty { "none" }}")
                             }
+                            // PAIRING v2 (D8/D13): the tunnel is REACHABLE — DEGRADED counts too
+                            // (it means the NODE is up; only the probe host lags right after a
+                            // pair). This is where a fresh pickup's keys land: the first session
+                            // carries the pairing secret and the gateway binds our node by
+                            // whois. Held idempotently: afterwards the call just refreshes
+                            // (rotate/revoke heal themselves).
+                            if (tunnelUp) pairFinishSession()
                         } else {
                             last = phase
                         }
@@ -470,6 +495,10 @@ class WearApp : Application() {
          */
         suspend fun awaySweep() {
             if (!::store.isInitialized) return
+            // PAIRING v2 (D14): the private-lane OUTBOX rides this same 20 s beat — cron alerts
+            // for every agent, the wearer's own queue, cursor-deduped server-side. BEFORE the
+            // watchkit fetch: a watchkit miss must never stall the alert lane (and vice versa).
+            runCatching { outboxSweep() }.onFailure { Log.w(TAG, "outbox sweep: ${it.message}") }
             val body = Watchkit.approvalsWaiting() ?: return
             // #31 follow-up: keys MUST be gateway session ids (AwayWatch.watchSilence)
             // — local shortIds never matched watchkit's session-keyed pulses, so the
@@ -701,33 +730,47 @@ class WearApp : Application() {
         }
 
         /**
-         * APPLY A PAIRING PACKET (S5, SPEC §4): the EXACT write sequence of the Settings ▸ Tailnet
-         * Done-handler (setTailnetKey → tailnetStart), extended for everything the plugin's claim
-         * packet carries — node name (per-profile `<profile>-watch` suffix, AGENTS.md §2), the
-         * profile's api_key as the gateway token, the gateway record (selected, so the failover
-         * machine + mirror pick it up), and watchkit URL/token when present. Authkeys are never
-         * logged — only lengths.
+         * APPLY A PAIRING v2 PICKUP (SPEC §4): the write sequence of the Settings ▸ Tailnet
+         * Done-handler (setTailnetKey → tailnetStart), extended for what the gateway's pickup
+         * carries — node name (per-profile `<profile>-watch` suffix, AGENTS.md §2), the gateway
+         * record (selected, so the failover machine + mirror pick it up), the watchkit URL, and
+         * the lane address. THE KEYS ARE NOT HERE (D13): `api_key` + the watchkit bearer arrive
+         * over the PRIVATE LANE the moment this watch's node joins ([pairFinishSession], wired to
+         * the ACTIVE edge + the away loop). Authkeys are never logged — only lengths.
          */
-        fun pairApplyPacket(p: dev.hermes.wearos.net.PairPacket) = scope.launch {
+        fun pairApplyPickup(p: dev.hermes.wearos.net.PickupPacket, secretHex: String, deviceToken: String) = scope.launch {
+            val priorKey = settings.tailnetKey()
             settings.setTailnetKey(p.authKey)
-            if (p.profile.isNotBlank()) settings.setTailnetHostname("${p.profile.trim()}-watch")
-            if (p.apiKey.isNotBlank()) settings.setToken(p.apiKey)
+            settings.setPairingSecret(secretHex)      // lives exactly until the first lane session
+            settings.setDeviceToken(deviceToken)
+            if (p.profile.isNotBlank()) {
+                settings.setTailnetHostname("${p.profile.trim()}-watch")
+                settings.notePairedAgent(p.profile) // boot lane restore dials THIS agent's route
+            }
             val api = "http://${p.gatewayFqdn.trim()}:${if (p.gatewayPort > 0) p.gatewayPort else 8642}"
             val wk = if (p.watchkitPort > 0) "http://${p.gatewayFqdn.trim()}:${p.watchkitPort}" else ""
+            val lane = if (p.privatePort > 0) "http://${p.gatewayFqdn.trim()}:${p.privatePort}" else ""
             val id = dev.hermes.wearos.domain.GatewayModel.hostId(api)
             val gw = dev.hermes.wearos.domain.Gateway(
                 id = id,
-                label = p.tailnet.trim().ifBlank { id },
+                label = settings.tailnetHandle().ifBlank { id },
                 apiEndpoints = listOf(api),
                 watchkitEndpoints = if (wk.isEmpty()) emptyList() else listOf(wk),
-                token = p.apiKey.trim(),
+                token = settings.token(), // the OLD token until the lane delivers the new one
             )
             settings.saveGateway(gw, select = true)
+            // THE MIRROR MOVES NOW, not "whenever a winner gets picked": the tailnet phase
+            // probe reads the legacy base_url host, and leaving the placeholder there means
+            // a freshly enrolled node forever probes `hermes.tailnet.ts.net` → DEGRADED →
+            // the ACTIVE edge (where the lane keys land) never fires (live, wear-demo
+            // 2026-11-09). foldRegistry=false: the registry already carries this endpoint.
+            settings.setBaseUrl(api, foldRegistry = false)
+            settings.setLaneBase(lane)
             if (wk.isNotEmpty()) {
                 settings.setMermaidBaseUrl(wk)
-                p.watchkitToken?.takeIf { it.isNotBlank() }?.let { settings.setWatchkitToken(it) }
                 Watchkit.setConfig(wk, settings.watchkitToken())
             }
+            PrivateLane.setConfig(lane, deviceToken, p.profile.ifBlank { "default" })
             endpoints.rebind(gw)
             runCatching { endpoints.ensure(force = true) } // all-dead pre-enroll is fine; ACTIVE edge re-probes
             settings.loadProfile()
@@ -738,14 +781,108 @@ class WearApp : Application() {
             // running), so the plain start below would be a NO-OP and the watch would sit
             // at NEEDS_AUTH holding a perfectly good key — measured on the first real-watch
             // drill 2026-11-06. An engine idling at NEEDS_AUTH must be force-REENROLLED.
+            // AND a RE-PAIR over a live engine must too: the claim always carries a NEW
+            // authkey, tsnet ignores keys once enrolled, and the old identity is usually
+            // the revoked one — a plain start no-ops at "already running" and the fresh
+            // key dies unused until process death (measured live 2026-11-09, three claims).
+            // A wipe + forceLogin is right either way: the ceremony expects a NEW node row.
             val idle = TailnetLogic.phase(
                 TailnetEngine.status.value, enabled = true, gatewayHost = "") == TailnetPhase.NEEDS_AUTH
-            if (idle) tailnetReenroll() else tailnetStart()
+            val repaid = priorKey.isNotBlank() && priorKey != p.authKey
+            if (idle || repaid) tailnetReenroll() else tailnetStart()
             _pairRequested.value = false
             Log.i(
-                TAG, "pair applied: gw=$api wk=${wk.ifEmpty { "(none)" }} profile=${p.profile.ifBlank { "(default)" }} " +
-                    "auth.len=${p.authKey.length} key.len=${p.apiKey.length} wkToken.len=${p.watchkitToken?.length ?: 0}",
+                TAG, "pair applied (v2): gw=$api wk=${wk.ifEmpty { "(none)" }} lane=$lane " +
+                    "profile=${p.profile.ifBlank { "(default)" }} auth.len=${p.authKey.length} " +
+                    "keyId=${p.keyId} token deferred to lane",
             )
+        }
+
+        /**
+         * THE LANE SESSION (D8/D13): collect `api_key` + the watchkit bearer over the PRIVATE
+         * lane — the FIRST call carries the pairing secret (whois-on-socket binds our node),
+         * later calls prove identity by that binding alone. Runs on every ACTIVE edge, the away
+         * tick while the token is still missing, and the Pair screen's finish step; safe to call
+         * repeatedly (idempotent afterwards). A 401/410 means revoked — [unpairLocal] cleans up.
+         */
+        fun pairFinishSession() = scope.launch {
+            if (!PrivateLane.configured) return@launch
+            val secret = settings.pairingSecret()
+            when (val out = PrivateLane.session(secret)) {
+                is PrivateLane.Outcome.Session -> {
+                    val s = out.session
+                    if (s.apiKey.isNotBlank()) {
+                        settings.setToken(s.apiKey)
+                        settings.setPairingSecret("") // secret spent: the node binding IS the identity now
+                        val wk = if (s.watchkitPort > 0) "http://${s.gatewayFqdn.trim()}:${s.watchkitPort}" else ""
+                        if (wk.isNotEmpty()) settings.setMermaidBaseUrl(wk)
+                        s.watchkitToken?.takeIf { it.isNotBlank() }?.let { settings.setWatchkitToken(it) }
+                        Watchkit.setConfig(settings.mermaidBaseUrl(), settings.watchkitToken())
+                        refreshGatewayMirror()
+                        agents.loadCache()
+                        runCatching { settings.refreshAgentKeys() } // D17: granted siblings land in one pass
+                        Log.i(TAG, "lane session ok: key.len=${s.apiKey.length} wkToken.len=${s.watchkitToken?.length ?: 0}")
+                    } else Log.i(TAG, "lane session ok but keyless — agent has no API_SERVER_KEY yet")
+                }
+                is PrivateLane.Outcome.Refused ->
+                    Log.w(TAG, "lane session refused: ${out.why}") // node rebind / no grant / closed
+                PrivateLane.Outcome.Unpaired, PrivateLane.Outcome.Gone -> {
+                    Log.w(TAG, "lane says this watch is not paired — clearing credentials")
+                    unpairLocal()
+                }
+                is PrivateLane.Outcome.Failed -> Log.i(TAG, "lane session deferred: ${out.why}")
+                else -> Unit
+            }
+        }
+
+        /** Outbox sweep (D14): cron alerts + agent messages, newest delivery buzzes once. */
+        suspend fun outboxSweep() {
+            if (!PrivateLane.configured) return
+            // Belt path for the lane keys (D13): if a pickup's secret is still unspent, the
+            // ACTIVE/DEGRADED edge hasn't landed them (missed edge, tunnel was briefly down)
+            // — the 20 s beat retries until the first session binds our node. Idempotent.
+            if (settings.pairingSecret().isNotEmpty()) pairFinishSession()
+            val since = settings.outboxCursor()
+            when (val out = PrivateLane.events(since)) {
+                is PrivateLane.Outcome.Events -> {
+                    val page = out.events
+                    val ev = page.events
+                    if (ev.isNotEmpty()) {
+                        for (e in ev) {
+                            val label = if (e.title.isNotBlank()) e.title else if (e.agent.isNotBlank()) e.agent else "Hermes"
+                            val fold = if (e.fold > 0) " · +${e.fold} more" else ""
+                            val text = e.text.replace('\n', ' ').take(160) + fold
+                            val head = when (e.kind) {
+                                "cron" -> "\u23f0 " + label
+                                else -> label
+                            }
+                            Log.i(TAG, "outbox ${e.kind} id=${e.id} agent=${e.agent} len=${e.text.length}")
+                            Notifs.settle(app, "outbox-${e.id}", head, text, false, e.agent)
+                        }
+                        settings.setOutboxCursor(maxOf(page.since, ev.maxOf { it.id }))
+                        PrivateLane.ack(page.since)
+                    } else if (page.since > since) settings.setOutboxCursor(page.since)
+                }
+                PrivateLane.Outcome.Unpaired, PrivateLane.Outcome.Gone -> unpairLocal()
+                is PrivateLane.Outcome.Refused -> Log.w(TAG, "outbox refused: ${out.why}")
+                is PrivateLane.Outcome.Failed -> Unit // tunnel down / lane napping: next tick retries
+                else -> Unit
+            }
+        }
+
+        /** UNPAIR from the watch (D12 parity with the CLI): ask the lane to revoke, then clean home. */
+        fun unpair() = scope.launch {
+            val out = if (PrivateLane.configured) PrivateLane.forget() else PrivateLane.Outcome.Forgotten
+            Log.i(TAG, "unpair requested — lane said: ${out::class.simpleName}")
+            unpairLocal()
+        }
+
+        /** Clear EVERY pairing gave us (the revoke itself may already have happened server-side). */
+        suspend fun unpairLocal() {
+            settings.wipePairingSecrets()
+            PrivateLane.clearConfig()
+            settings.setToken("")
+            Log.i(TAG, "unpaired locally: credentials cleared")
         }
 
         /** Dev-only (adb `-e tailnet_on on|off`): the escape hatch — off = plain sockets (dev). */
@@ -754,6 +891,34 @@ class WearApp : Application() {
 
         /** Dev-only (adb `-e tailnet_reenroll`). */
         fun devTailnetReenroll() = tailnetReenroll()
+
+        /**
+         * Dev-only (adb `-e pair_knock <handle>`): the WHOLE pairing v2 ceremony from a script —
+         * same code path the Pair screen's Knock runs (begin → code → poll → ack → pickup).
+         * The code lands in logcat (`pair code …`) so setup.sh/verify scripts can read it back
+         * and type it to the CLI; the rest (lane session, keys) rides the ACTIVE edge by itself.
+         */
+        fun devPairKnock(rawHandle: String) = scope.launch {
+            val h = dev.hermes.wearos.domain.PairingCode.normalizeHandle(rawHandle)
+            if (h.isEmpty()) { Log.w(TAG, "pair_knock: bad handle"); return@launch }
+            settings.setTailnetHandle(h)
+            val client = dev.hermes.wearos.net.PairingClient()
+            val secret = client.newSecret()
+            val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                client.pair(h, secret, android.os.Build.MODEL,
+                    onCode = { code -> Log.i(TAG, "pair code $code — type it: hermes watch pair $code") })
+            }
+            when (out) {
+                is dev.hermes.wearos.net.PairingClient.Outcome.Completed -> {
+                    Log.i(TAG, "pair_knock done — pickup + token in hand")
+                    pairApplyPickup(out.packet, secret, out.deviceToken)
+                }
+                else -> Log.w(TAG, "pair_knock ended: $out")
+            }
+        }
+
+        /** Dev-only (adb `-e unpair 1`): the watch-side revoke (lane forget + local wipe). */
+        fun devUnpair() = unpair()
 
         fun setWatchkitBase(url: String) {
             scope.launch {

@@ -4,13 +4,19 @@
  * the watch can't do on-device, behind one bearer token, tailnet-only:
  *
  *   GET  /health          → {status:"ok", version, uptime_s}                (public probe)
- *   GET  /agents          → {agents:["default", …profiles/<name>/ with config.yaml]}  (bearer)
+ *   GET  /agents          → {agents:[ … ]}  (bearer) — the plugin's GRANT MAP filters the
+ *                                     profile scan: the watch switcher shows exactly the agents
+ *                                     ticked in the Wear Kit pane (enable law, §pairing v2);
+ *                                     no pairing store ⇒ the full scan (standalone watchkit).
  *   GET  /sessions        → gateway-shaped session list for a profile (bearer)
- *        ?profile=<name>&limit=<n≤30> → {object:"list", data:[{id,title,last_active,message_count,profile}]}
+ *        ?profile=<name>&limit=<n≤30>[&source=cron][&archived=1]
+ *        → {object:"list", data:[{id,title,last_active,message_count,profile,source}]}
  *        Reads the profile's SQLite state.db DIRECTLY (same store the dashboard's GET /api/sessions
  *        reads) — dashboard auth is scrypt basic-auth with no recoverable plaintext, and watchkit
- *        is on the same box, so reading beats proxying. Hidden/archived/cron/tool/subagent rows and
- *        compression-continuation children are filtered out (desktop-sidebar semantics, newest-first).
+ *        is on the same box, so reading beats proxying. Default view = desktop-sidebar semantics
+ *        (hidden/archived + cron/tool/subagent noise + compression children out, newest-first).
+ *        ?source=cron INVERTS to the ⏰ view: cron run rows only (the watch opens an alert from
+ *        the plugin's outbox straight into its run). Every row carries `source`.
  *   GET  /session_messages → transcript backfill for an adopted session (bearer)
  *        ?profile=<name>&session_id=<id>&limit=<n≤120> → {messages:[{role,content,ts}],session_id,profile,count}
  *        Same state.db, `messages` table: user/assistant + active + non-empty content, compression
@@ -45,6 +51,12 @@
  *        Engine default from config.json `stt_stream_engine`: "whisper" (buffered — final only)
  *        | "parakeet" (transcribe.cpp GGUF — partials WHILE talking). The watch may override per
  *        session via ?engine=<id>; GET /health reports stt:{engine,ready,missing,engines[]}.
+ *        v2 (D16): parakeet is probed in TWO homes — watchkit's own .venv AND the Wear Kit
+ *        plugin's pane-installed engine (<HERMES_HOME>/plugin-data/wearos/stt, pinned commit
+ *        + SHA-256 verified); the engine runs on the python that reported it ready. Override
+ *        the plugin path with cfg.stt_dir / WATCHKIT_STT_DIR.
+ *   GET  /agent_keys      → 410 RETIRED (pairing v2 / D17): per-agent API keys now reach the
+ *        watch over the plugin's PRIVATE tailnet lane, gated by explicit grants in the pane.
  *
  * Zero framework: node:http + node:crypto only. Everything folder-local under
  * server/watchkit/ (.cache for renders+npx+puppeteer, .models for whisper weights).
@@ -140,7 +152,33 @@ function listAgents() {
       if (fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, 'config.yaml'))) agents.push(name);
     } catch { /* vanished mid-scan / unreadable — skip */ }
   }
-  return agents;
+  // PAIRING v2 ENABLE LAW (owner 2026-11-10: "on the watch it should only show me the
+  // agents that are enabled from our Wear Kit pane"). The plugin's grant map IS the
+  // enable state (pane checkbox: enable⇒grant, uncheck⇒revoke), and the lane key
+  // delivery already honors it — the switcher list must match, or the watch offers
+  // agents whose asks will 401. Store missing (standalone watchkit, pre-pairing):
+  // fall back to the full scan.
+  const g = grantedSet();
+  return g ? agents.filter(a => g.has(a)) : agents;
+}
+
+// The plugin keeps its pairing/grant store at <gateway-home>/plugin-data/wearos/
+// pairing.json; re-read only when the file's mtime moves (grant writes are rare —
+// every pane mutation rewrites it, so a click is visible to the watch on next poll).
+// HERMES_HOME is deliberately NOT consulted: watchkit may be launched from any
+// profile's shell, and the store lives under the GATEWAY's home (the default
+// profile). Pin it per box with WATCHKIT_PAIRING or config.pairing_store.
+const PAIRING_STORE = process.env.WATCHKIT_PAIRING || cfg.pairing_store ||
+  path.join(os.homedir(), '.hermes', 'plugin-data', 'wearos', 'pairing.json');
+let _grantsCache = { stamp: -1, set: null };
+function grantedSet() {
+  try {
+    const st = fs.statSync(PAIRING_STORE);
+    if (_grantsCache.set && st.mtimeMs === _grantsCache.stamp) return _grantsCache.set;
+    const doc = JSON.parse(fs.readFileSync(PAIRING_STORE, 'utf8'));
+    _grantsCache = { stamp: st.mtimeMs, set: new Set(Object.keys(doc.grants || {})) };
+  } catch { return null; /* no store ⇒ no filter */ }
+  return _grantsCache.set;
 }
 
 // ── command catalog (the watch's ⌘ / 6:00 dial overlay) ────────────────────
@@ -222,83 +260,22 @@ async function handleCatalog(req, res, ip, params) {
   return done(res, send(res, 200, body), Date.now(), ip, 'catalog', 200, undefined, rows.length);
 }
 
-// ── agent keys (the multi-agent 401 fix, SPEC §12.2) ──────────────────────
-// A multiplexed Hermes gateway resolves API_SERVER_KEY PER PROFILE from the URL and fails CLOSED
-// for a named profile that has none: the wear token is a 401 on /p/research while /v1/health
-// (unauthenticated) keeps answering 200 — so the watch's Test button and endpoint failover both
-// look healthy for an agent that can do nothing. watchkit is the only component that can see the
-// truth, because it runs on the gateway box and reads the profile dotfiles:
-//   profiles/<p>/.env   → API_SERVER_KEY for <p>       (absent ⇒ that agent needs a key typed)
-//   ~/.env (or the home profile) → API_SERVER_KEY for `default`
-// Response (bearer-protected, tailnet/LAN-only port like every other route):
-//   {"agents":[{"profile":"wear","has_key":true,"key":"…"},{"profile":"research","has_key":false}],
-//    "source":{"default":"home-env"}}
-// Returning the KEYS is deliberate: this port is not public, the watch needs them to sign requests
-// per profile, and "switch agent, get a 401, type 64 hex chars on a watch" is not a workflow.
-// `has_key:false` is the honest answer the UI shows instead of a mystery error.
-function readEnvKey(file) {
-  try {
-    const txt = fs.readFileSync(file, 'utf8');
-    const m = /^API_SERVER_KEY=["']?([^"'\n]+)["']?$/m.exec(txt);
-    return m ? m[1].trim() : '';
-  } catch { return ''; }
-}
-
-function agentKeys() {
-  const out = [];
-  // The `default` profile's env is the HERMES_HOME one (~/.hermes/.env) — same rule openStore
-  // uses for its state.db. `~/.env` was a wrong guess: it made the biggest store report no key.
-  const homeKey = readEnvKey(path.join(HERMES_HOME, '.env'));
-  for (const profile of listAgents()) {
-    const key = profile === 'default'
-      ? (readEnvKey(path.join(PROFILES_DIR, 'default', '.env')) || homeKey)
-      : readEnvKey(path.join(PROFILES_DIR, profile, '.env'));
-    out.push({ profile, has_key: !!key, key });
-  }
-  return out;
-}
-
+// ── agent keys: RETIRED in protocol v2 (SPEC §12.2 / D17) ───────────────────
+// v1 exported EVERY profile's API_SERVER_KEY over this port and auto-APPENDED the
+// default profile's key to keyless profiles (seedProfileKeys). v2 moves both halves
+// into the plugin: keys are delivered per-device on the PRIVATE tailnet lane
+// (hermes-plugin/private_api.py), gated by explicit per-agent GRANTS the user ticks
+// in the Wear Kit pane, and the one-login seeding rides `hermes -p X config set`
+// (plugin: _ensure_profile_key) — a route the gateway itself owns. watchkit keeps
+// NONE of that surface: readEnvKey/listAgents stay (they answer /agents), the key
+// map is gone. Old watches calling /agent_keys get a 410 that says exactly this.
 async function handleAgentKeys(req, res, ip) {
-  seedProfileKeys(true); // a LEARN is the moment new agents should join the map (owner below)
-  const agents = agentKeys();
-  const withKey = agents.filter((a) => a.has_key).length;
-  const body = JSON.stringify({ agents, source: 'profiles-env' });
-  return done(res, send(res, 200, body), Date.now(), ip, 'agent_keys', 200, undefined, withKey);
-}
-
-/**
- * AUTO-KEY NEW AGENTS (owner 2026-11-02: "two new agents had no keys and Learn said none —
- * watchkit should look for new agents and get that key in there"). Agents created AFTER first
- * setup carry no `API_SERVER_KEY` in their profile .env, and the gateway fails CLOSED for a
- * keyless named profile (SPEC §12.2) — while the one-login convention says the default profile's
- * key (read from ~/.hermes/.env) is THE key on this box. So: append it to every keyless profile,
- * exactly the `scripts/setup.sh --agent-keys` recipe, but automatic. `force` = a Learn request
- * always sweeps; otherwise the away-sweep poll (every 20 s) throttles this to once a minute —
- * new agents are keyed within a minute of appearing, with no human step. Never logs key values;
- * append-only, and a missing .env is created (0600 like its siblings).
- */
-let lastKeySeedMs = 0;
-function seedProfileKeys(force = false) {
-  const now = Date.now();
-  if (!force && now - lastKeySeedMs < 60_000) return [];
-  lastKeySeedMs = now;
-  const homeKey = readEnvKey(path.join(HERMES_HOME, '.env'));
-  if (!homeKey) return [];
-  const seeded = [];
-  for (const profile of listAgents()) {
-    if (profile === 'default') continue; // default resolves ~/.hermes/.env directly in agentKeys()
-    const envPath = path.join(PROFILES_DIR, profile, '.env');
-    try {
-      if (readEnvKey(envPath)) continue;
-      let body = '';
-      try { body = fs.readFileSync(envPath, 'utf8'); } catch { /* no .env yet — one gets made */ }
-      const glue = body && !body.endsWith('\n') ? '\n' : ''; // never glue onto a newline-less tail
-      fs.appendFileSync(envPath, `${glue}API_SERVER_KEY=${homeKey}\n`, { mode: 0o600 });
-      seeded.push(profile);
-    } catch { /* vanished profile / read-only fs — that agent just stays keyless this round */ }
-  }
-  if (seeded.length) logLine({ ev: 'agent_keys_seeded', profiles: seeded });
-  return seeded;
+  const t0 = Date.now();
+  const body = JSON.stringify({
+    error: 'agent_keys retired in pairing v2 — the watch learns per-agent keys over '
+         + 'its private tailnet lane (Wear Kit pane ▸ Gateways ▸ Agent keys)',
+  });
+  return done(res, send(res, 410, body), t0, ip, 'agent_keys', 410);
 }
 
 // ── /search (session search over the profile's FTS index, SPEC §12.4) ───────
@@ -335,6 +312,14 @@ async function handleSearch(req, res, ip, params) {
   const limit = Math.min(SEARCH_LIMIT_MAX, Math.max(1, Number(params.limit) || 8));
   if (!SESSIONS_PROFILE_RE.test(profile))
     return done(res, sendErr(res, 400, 'bad profile name'), t0, ip, 'search', 400);
+  // ⏰ view shares its filter with /sessions (one truth): ?source=cron searches INSIDE
+  // cron run sessions (title match finds the job by name); default keeps the sidebar set.
+  const source = String(params.source ?? 'chat').trim().toLowerCase();
+  if (!['chat', 'cron'].includes(source))
+    return done(res, sendErr(res, 400, "source must be 'chat' or 'cron'"), t0, ip, 'search', 400);
+  const visibility = source === 'cron'
+    ? "s.source = 'cron'"
+    : "COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')";
   const empty = JSON.stringify({ object: 'list', profile, query: q, data: [] });
   const dbPath = sessionDbPath(profile);
   if (!q || !dbPath || !fs.existsSync(dbPath))
@@ -349,6 +334,7 @@ async function handleSearch(req, res, ip, params) {
     // snippet on it. LIKE over titles adds sessions whose NAME matches even when no message does.
     const rows = db.prepare(`
       SELECT s.id AS id, s.title AS title, s.message_count AS message_count,
+             COALESCE(s.source, '') AS source,
              COALESCE(s.last_activity_at, s.started_at) AS last_active,
              m.role AS role,
              snippet(messages_fts, 0, '[', ']', ' · ', 20) AS snippet,
@@ -358,7 +344,7 @@ async function handleSearch(req, res, ip, params) {
       JOIN sessions s ON s.id = m.session_id
       WHERE messages_fts MATCH ?
         AND s.hidden = 0 AND s.archived = 0
-        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+        AND ${visibility}
         AND m.role IN ('user', 'assistant')
       ORDER BY rank ASC
       LIMIT 120
@@ -367,7 +353,7 @@ async function handleSearch(req, res, ip, params) {
     const titled = db.prepare(`
       SELECT s.id AS id, 1 AS title_hit FROM sessions s
       WHERE s.title LIKE ? AND s.hidden = 0 AND s.archived = 0
-        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+        AND ${visibility}
       LIMIT 40
     `).all(likeLike);
     const titleHits = new Set(titled.map((r) => String(r.id)));
@@ -382,6 +368,7 @@ async function handleSearch(req, res, ip, params) {
         last_active: saneEpochSec(r.last_active),
         message_count: Number(r.message_count) || 0,
         profile,
+        source: String(r.source || 'unknown'),
         hits: 1,
         snippet: String(r.snippet ?? '').slice(0, 240),
         snippet_role: String(r.role ?? ''),
@@ -393,6 +380,7 @@ async function handleSearch(req, res, ip, params) {
       if (bySession.has(id)) continue;
       const r = db.prepare(`
         SELECT s.title AS title, s.message_count AS message_count,
+               COALESCE(s.source, '') AS source,
                COALESCE(s.last_activity_at, s.started_at) AS last_active
         FROM sessions s WHERE s.id = ? LIMIT 1
       `).get(id);
@@ -400,6 +388,7 @@ async function handleSearch(req, res, ip, params) {
       bySession.set(id, {
         id, title: String(r.title ?? ''), last_active: saneEpochSec(r.last_active),
         message_count: Number(r.message_count) || 0, profile, hits: 0, snippet: '',
+        source: String(r.source || 'unknown'),
         snippet_role: '', title_match: true,
       });
     }
@@ -1197,6 +1186,23 @@ async function handleStt(req, res, ip) {
 // _session_db_path_for_profile + hermes_state_sessions.list_sessions_rich). Response mirrors the
 // gateway's `/api/sessions` shape so the app's GatewaySessions.parse handles both sources.
 const HERMES_HOME = process.env.WATCHKIT_HERMES_HOME || path.dirname(PROFILES_DIR);
+
+// ── D16: a SECOND engine home ────────────────────────────────────────────────
+// The Wear Kit pane can install the pinned Parakeet (commit 5700f12, model sha256 4b50b6dd…)
+// into the PLUGIN's own data dir — private venv, built .so, verified GGUF. watchkit probes
+// that python too and runs the engine wherever it was found ready (stt_stream_ws.mjs merge
+// rules). Override for odd layouts: cfg.stt_dir / WATCHKIT_STT_DIR.
+const STT_PLUGIN_DIR = process.env.WATCHKIT_STT_DIR || cfg.stt_dir
+  || path.join(HERMES_HOME, 'plugin-data', 'wearos', 'stt');
+const STT_PROBES = [{
+  python: path.join(STT_PLUGIN_DIR, 'venv', 'bin', 'python'),
+  script: path.join(WK_DIR, 'stt_stream.py'),   // the ADAPTER stays ours; only the env differs
+  cwd: WK_DIR,
+  env: {
+    PARAKEET_GGUF: path.join(STT_PLUGIN_DIR, 'models', 'parakeet-unified-en-0.6b-Q8_0.gguf'),
+    TRANSCRIBE_LIBRARY: path.join(STT_PLUGIN_DIR, 'transcribe-src', 'build-shared', 'src', 'libtranscribe.so'),
+  },
+}];
 const SESSIONS_PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/; // same grammar as the app's ProfileLogic
 const SESSIONS_LIMIT_MAX = 30;
 // Epoch-seconds sanity window: a garbage double salvaged from a damaged page must not pin
@@ -1217,6 +1223,12 @@ async function handleSessions(req, res, ip, params) {
   if (!SESSIONS_PROFILE_RE.test(profile))
     return done(res, sendErr(res, 400, 'bad profile name'), t0, ip, 'sessions', 400);
   const limit = Math.min(SESSIONS_LIMIT_MAX, Math.max(1, Number(params.limit) || 20));
+  // v2 (D14): the watch's ⏰ view asks ?source=cron for the runs themselves (the plugin's
+  // private lane carries the alert; the alert must be OPENABLE, so the row has to be
+  // listable too). Absent/`chat` keeps the desktop-sidebar view exactly as it was.
+  const source = String(params.source ?? 'chat').trim().toLowerCase();
+  if (!['chat', 'cron'].includes(source))
+    return done(res, sendErr(res, 400, "source must be 'chat' or 'cron'"), t0, ip, 'sessions', 400);
   const dbPath = sessionDbPath(profile);
   if (!dbPath || !fs.existsSync(dbPath)) {
     // Fresh/never-used profile: an empty list beats an error — the chip still renders.
@@ -1234,13 +1246,17 @@ async function handleSessions(req, res, ip, params) {
     // own recency is chain-maxed via message timestamps below). `?archived=1` INVERTS the archived
     // term — the watch's 🗃 chip lists what the sidebar hides (same noise rules, same profile).
     const wantArchived = String(params.archived ?? '0') === '1';
+    const visibility = source === 'cron'
+      ? 's.source = \'cron\''
+      : 'COALESCE(s.source, \'\') NOT IN (\'cron\', \'tool\', \'subagent\')';
     const rows = db.prepare(`
       SELECT s.id AS id, s.title AS title, s.message_count AS message_count,
+             COALESCE(s.source, '') AS source,
              s.started_at AS started_at, s.last_activity_at AS last_activity_at,
              (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS msg_ts
       FROM sessions s
       WHERE s.hidden = 0 AND s.archived = ?
-        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+        AND ${visibility}
         AND NOT (s.parent_session_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM sessions p WHERE p.id = s.parent_session_id AND p.end_reason = 'compression'
             AND json_extract(COALESCE(s.model_config, '{}'), '$._branched_from') IS NULL
@@ -1254,6 +1270,7 @@ async function handleSessions(req, res, ip, params) {
       last_active: Math.max(saneEpochSec(r.msg_ts), saneEpochSec(r.last_activity_at), saneEpochSec(r.started_at)),
       message_count: Number(r.message_count) || 0,
       profile,
+      source: String(r.source || 'unknown'),
       ...(wantArchived ? { archived: true } : {}),
     })).sort((a, b) => b.last_active - a.last_active);
     const body = JSON.stringify({ object: 'list', data, profile, limit, offset: 0, has_more: false });
@@ -1306,8 +1323,8 @@ function parseToolCallNames(toolCallsJson) {
 
 async function handleApprovalsWaiting(req, res, ip) {
   const t0 = Date.now();
-  seedProfileKeys(false); // throttled auto-key sweep: brand-new agents join the key map within a
-  // minute of appearing, driven by the watch's own 20 s away-poll — no human step (owner 2026-11-02).
+  // (v1 ran a throttled auto-key sweep here; v2 moved key delivery to the plugin's
+  // private lane with per-agent grants — watchkit no longer touches profile secrets.)
   const waiting = [];
   const pulses = [];
   let names = [];
@@ -1452,7 +1469,7 @@ const server = http.createServer(async (req, res) => {
       // BATCH-4 #9: the watch's Settings shows WHICH engine would answer a streamed ask.
       return send(res, 200, JSON.stringify({
         status: 'ok', version: VERSION, uptime_s: Math.round((Date.now() - START_MS) / 1000),
-        stt: { ...sttEngineStatus(cfg, VENV_PY, WK_DIR), vosk_model: voskModelStatus() },
+        stt: { ...sttEngineStatus(cfg, VENV_PY, WK_DIR, STT_PROBES), vosk_model: voskModelStatus() },
       }));
     }
     const auth = req.headers.authorization || '';
@@ -1506,7 +1523,8 @@ const server = http.createServer(async (req, res) => {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleSearch(req, res, ip, q);
     }
-    // Per-profile gateway keys so the watch can sign requests for ANY agent (SPEC §12.2).
+    // RETIRED v1 route (SPEC §12.2 → D17): per-agent keys now ride the plugin's private
+    // tailnet lane with explicit grants; this answer tells old watches exactly that.
     if (req.method === 'GET' && url === '/agent_keys') return await handleAgentKeys(req, res, ip);
     // Slash-command catalog for the watch's ⌘ overlay (SPEC §12.3). Bearer like every endpoint.
     if (req.method === 'GET' && url === '/catalog') {
@@ -1645,14 +1663,12 @@ if (MCP_MODE) {
   // BATCH-4 #9: streamed mic sessions ride the same socket authority as every endpoint.
   attachSttStream(server, {
     cfg, venvPy: VENV_PY, wkDir: WK_DIR, TOKEN, CHILD_ENV, logLine,
+    sttProbes: STT_PROBES, // D16: the plugin-installed Parakeet venv joins the probe
     ffmpeg: FFMPEG, // mic lanes arrive as Ogg/Opus or ADTS AAC → ffmpeg demuxes to engine PCM
     timingSafe: (a, b) => timingSafeEqual(a, b),
   });
   server.listen(PORT, HOST, () => {
     logLine({ ev: 'start', version: VERSION, host: HOST, port: PORT, pid: process.pid });
-    // AUTO-KEY NEW AGENTS without waiting for any watch poll (owner 2026-11-02): own timer, same
-    // throttled sweep the away-poll drives. unref() so it never keeps the process alive on its own.
-    setInterval(() => { try { seedProfileKeys(false); } catch { /* next round */ } }, 60_000).unref();
   });
   for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => {
     logLine({ ev: 'stop', sig: s });

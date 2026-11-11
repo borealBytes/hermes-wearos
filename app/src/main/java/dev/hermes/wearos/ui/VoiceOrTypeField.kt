@@ -62,6 +62,7 @@ fun VoiceOrTypeField(
     onVoiceStart: () -> Unit = {},
     onVoiceStop: () -> Unit = {},
     showKeyboardHint: Boolean = true,
+    imeAction: androidx.compose.ui.text.input.ImeAction = androidx.compose.ui.text.input.ImeAction.Search,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -119,8 +120,15 @@ fun VoiceOrTypeField(
                 // hands the action key back to onSearch. It also DISMISSES the keyboard, landing
                 // the wearer on the passive field with the term in it — the owner's expectation.
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {
+                keyboardOptions = KeyboardOptions(imeAction = imeAction),
+                keyboardActions = KeyboardActions(
+                onDone = {                                   // naming fields ask for DONE, not the search glass
+                    @Suppress("DEPRECATION") imeCtl?.hide()
+                    onSend(typed)
+                    focused = false
+                    focusManager.clearFocus(force = true)
+                },
+                onSearch = {
                     @Suppress("DEPRECATION") imeCtl?.hide() // IME-DONE GUARANTEE (PromptEditor's rule)
                     // FIELD-vs-COMPOSING REALITY: some Wear IMEs deliver the word only at the
                     // action moment (composing lives IME-side); if this logs empty, the field is

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from conftest import load_plugin
 
 tailscale = load_plugin().tailscale
@@ -54,6 +56,64 @@ def client_returning(payload: bytes | None = None, raise_status: int | None = No
 def test_funnel_attr_present_is_detected():
     ok, detail = client_returning(ACL_WITH_FUNNEL).funnel_attr_present()
     assert ok is True and "funnel" in detail
+
+
+def test_delete_device_resolves_odd_ref_via_device_list():
+    # Measured live 2026-11-09: the device-scoped route is the SINGULAR /device/{id}
+    # (the nested /tailnet/{t}/devices/{id} the v1 line used 404s for everything).
+    # The captured ref usually IS the API id; when it isn't (a hostname, a nodeId),
+    # the bare 404 resolves through GET devices and retries once on the right route.
+    client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
+                                     tailnet="example.ts.example")
+    calls: list = []
+    devices = {"devices": [
+        {"id": "6528413509656018", "nodeId": "nwd6MTMjys11CNTRL",
+         "name": "wear-demo-watch-2.tailb12aa5.ts.net", "hostname": "wear-demo-watch"},
+    ]}
+
+    def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
+                     auth=True, if_match=None, accept=None, want_headers=False):
+        calls.append((method, path))
+        if path == "/device/wear-demo-watch-2.tailb12aa5.ts.net":
+            raise tailscale.TailnetAPIError(404, "404 page not found")
+        return b"null"
+
+    client._request = fake_request
+    client._get = lambda path: (calls.append(("GETLIST", path)), devices)[1]
+
+    out = client.delete_device("wear-demo-watch-2.tailb12aa5.ts.net")
+    assert out == {"deleted": "6528413509656018", "resolved_from": "wear-demo-watch-2.tailb12aa5.ts.net"}
+    assert ("DELETE", "/device/6528413509656018") in calls
+
+
+def test_delete_device_object_id_skips_resolver():
+    client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
+                                     tailnet="example.ts.example")
+    calls: list = []
+
+    def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
+                     auth=True, if_match=None, accept=None, want_headers=False):
+        calls.append((method, path))
+        return b"null"  # the measured happy-path response
+
+    client._request = fake_request
+    client._get = lambda path: pytest.fail("resolver must not run when the id matches")
+    assert client.delete_device("6528413509656018") == {"deleted": "6528413509656018"}
+    assert calls == [("DELETE", "/device/6528413509656018")]
+
+
+def test_delete_device_unknown_ref_keeps_the_404():
+    client = tailscale.TailnetClient(tailscale.Credential(api_token="tskey-api-test"),
+                                     tailnet="example.ts.example")
+
+    def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
+                     auth=True, if_match=None, accept=None, want_headers=False):
+        raise tailscale.TailnetAPIError(404, "404 page not found")
+
+    client._request = fake_request
+    client._get = lambda path: {"devices": [{"id": "1", "nodeId": "nOther", "name": "elsewhere"}]}
+    with pytest.raises(tailscale.TailnetAPIError):
+        client.delete_device("999999999")
 
 
 def test_bare_funnel_attr_is_detected():
@@ -137,3 +197,36 @@ def test_legacy_map_nodeattrs_refused_on_write():
         assert "console" in str(exc)
     else:
         raise AssertionError("legacy-map nodeAttrs must be refused")
+
+
+# ── review fix v0.2: the funnel grant belongs on the GATEWAY node, not the tag ──
+ACL_GATEWAY_FUNNEL = json.dumps({"grants": [], "nodeAttrs": [
+    {"src": ["autogroup:member"], "hosts": ["100.64.0.9"], "prop": ["funnel"]},
+    {"src": ["autogroup:member"], "hosts": ["tag:hermes-watch"], "prop": ["tagread"]}]})
+
+
+def test_want_target_only_passes_when_the_GATEWAY_has_the_attr():
+    ok, detail = client_returning(ACL_GATEWAY_FUNNEL.encode()
+                                  ).funnel_attr_present("100.64.0.9")
+    assert ok is True and "this gateway" in detail
+    ok, detail = client_returning(ACL_GATEWAY_FUNNEL.encode()
+                                  ).funnel_attr_present("100.64.9.9")
+    assert ok is False and "100.64.9.9" in detail
+
+
+def test_tag_only_funnel_does_not_satisfy_a_gateway_target_check():
+    """v0.1 shipped funnel-on-the-watch-tag: detection must now FAIL that shape when
+    asked "does this gateway node have funnel" — the exact review point."""
+    ok, detail = client_returning(ACL_BARE_FUNNEL).funnel_attr_present("100.64.0.9")
+    assert ok is False and "100.64.0.9" in detail
+
+
+def test_add_funnel_attr_targets_the_gateway_ip_also_defining_the_tag():
+    """The wizard grants the gateway IP but MUST also keep the watch tag defined, or
+    enrollment mints start 400ing (measured lesson stays)."""
+    posted: list = []
+    client_returning(ACL_ARRAY_WRITE_TARGET, posted=posted).add_funnel_attr(
+        "100.64.0.9", also_tag="tag:hermes-watch")
+    acl = json.loads(posted[0][0])
+    assert {"target": ["100.64.0.9"], "attr": ["funnel"]} in acl["nodeAttrs"]
+    assert acl["tagOwners"]["tag:hermes-watch"] == ["autogroup:member"]

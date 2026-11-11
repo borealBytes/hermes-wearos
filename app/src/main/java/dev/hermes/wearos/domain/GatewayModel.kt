@@ -102,13 +102,31 @@ object GatewayModel {
     fun seed(token: String = ""): Gateway =
         Gateway(SEED_ID, SEED_LABEL, DEFAULT_API_ENDPOINTS, DEFAULT_WATCHKIT_ENDPOINTS, token.trim())
 
-    /** Trim + drop trailing slash + strip a `/p/<agent>` suffix (endpoints are host:port-level). */
+    /** Trim + drop trailing slash + strip a `/p/<agent>` suffix (endpoints are host:port-level).
+     *  MINIMAL-INPUT LAW (owner 2026-11-10): typing a bare hostname — exactly what the
+     *  Wear Kit pane shows under Pair a watch — is complete: the app adds http:// and the
+     *  gateway port. An explicitly typed scheme is honoured untouched (port included). */
     fun normalizeEndpoint(url: String): String {
         val u = url.trim().trimEnd('/')
         if (u.isEmpty()) return ""
         val scheme = u.indexOf("://")
-        if (scheme < 0) return u
-        val from = u.indexOf('/', scheme + 3)
+        if (scheme < 0) {
+            val authority = u.substringBefore('/')
+            // complete ONLY host-looking input (dot-qualified or has a port); a
+            // lone word stays input-verbatim so the UI's junk handling (and the
+            // old derivedWatchkit("") contract) keeps working unchanged.
+            if (authority.contains('.') || authority.contains(':')) {
+                val hostish = if (authority.contains(":")) authority else "$authority:8642"
+                val rest = if (u.contains('/')) u.substring(u.indexOf('/')) else ""
+                return completePStitch("http://$hostish$rest")
+            }
+            return u
+        }
+        return completePStitch(u)
+    }
+
+    private fun completePStitch(u: String): String {
+        val from = u.indexOf('/', u.indexOf("://") + 3)
         if (from < 0) return u
         val idx = u.indexOf("/p/", from)
         return if (idx < 0) u else u.substring(0, idx).trimEnd('/')

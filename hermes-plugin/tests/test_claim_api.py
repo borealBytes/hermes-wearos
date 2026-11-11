@@ -1,5 +1,5 @@
-"""The claim door end-to-end over real HTTP (server on 127.0.0.1 ephemeral port,
-FAKE Tailscale client injected via conftest — no network leaves the process)."""
+"""The claim door (v2) end-to-end over real HTTP (server on 127.0.0.1 ephemeral
+port, FAKE Tailscale client via conftest — no network leaves the process)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import urllib.request
 
 import pytest
 
-from conftest import FAKE_AUTHKEY
+from conftest import FAKE_AUTHKEY, SECRET_A, SECRET_B
 
 
 def http(base: str, method: str, path: str, body=None) -> tuple[int, dict | None]:
@@ -25,104 +25,119 @@ def http(base: str, method: str, path: str, body=None) -> tuple[int, dict | None
         return exc.code, (json.loads(raw) if raw else None)
 
 
-CONTRACT_KEYS = {"authkey", "tailnet", "gateway_fqdn", "gateway_port",
-                 "watchkit_port", "profile", "api_key", "watchkit_token"}
+def begin(base, secret=SECRET_A, label="pixel-watch-6"):
+    return http(base, "POST", "/pair/begin",
+                {"v": 2, "secret": secret, "label": label, "tailnet": "example.ts.example"})
+
+
+def poll(base, secret):
+    return http(base, "GET", f"/pair/poll?secret={secret}")
+
+
+def ack(base, secret):
+    return http(base, "POST", "/pair/ack", {"v": 2, "secret": secret})
 
 
 @pytest.fixture
-def door(wearos, tmp_path):
+def door(wearos):
     """Spin the claim server on an ephemeral port against the sandboxed pairing core."""
-    backend = wearos.claim_server.ClaimBackend(wearos.queue_claim, wearos.poll_packet)
+    backend = wearos.claim_server.ClaimBackend(wearos.door_begin, wearos.door_poll,
+                                               wearos.door_ack)
     wearos.claim_server.start_server(0, backend)
     yield f"http://127.0.0.1:{wearos.claim_server.actual_port()}"
     wearos.claim_server.stop_server()
 
 
-def knock(base, pin, tailnet="example.ts.example", hostname="pixel-watch-6"):
-    return http(base, "POST", "/pair/claim", {"pin": pin, "tailnet": tailnet, "hostname": hostname})
+# ── v1 retirement ───────────────────────────────────────────────────────────────
+def test_v1_routes_answer_426_upgrade_required(wearos, door):
+    assert http(door, "POST", "/pair/claim", {"pin": "123456", "hostname": "w"}) == (
+        426, {"error": "pairing protocol v1 retired — update the watch app",
+              "upgrade": "v2"})
+    assert http(door, "GET", "/pair/claim?pin=123456")[0] == 426
+    assert http(door, "POST", "/pair/begin", {"secret": SECRET_A, "label": "w"})[0] == 426
+    # the door_alive probe itself:
+    assert http(door, "POST", "/pair/claim", {})[0] == 426
 
 
-def poll(base, pin):
-    return http(base, "GET", f"/pair/claim?pin={pin}")
+# ── the window gate + happy path ────────────────────────────────────────────────
+def test_begin_refuses_closed_door_of_a_closed_window(wearos, door):
+    status, body = begin(door)
+    assert status == 403 and "open it at the gateway" in body["error"]
 
 
-def test_full_202_204_200_once_410_sequence(wearos, door):
-    pin = "429183"
-    assert knock(door, pin) == (202, {"queued": True})
-    assert poll(door, pin) == (204, None)          # knocked, user hasn't claimed yet
-    device = wearos.claim_pin(pin)                 # the user's verb, wherever it runs
-    status, packet = poll(door, pin)
-    assert status == 200
-    assert set(packet) == CONTRACT_KEYS            # contract-exact, no key drift
-    assert packet["authkey"] == FAKE_AUTHKEY
-    assert packet["tailnet"] == "example.ts.example"
-    assert packet["gateway_fqdn"] == "gw.example.ts.net"
-    assert packet["gateway_port"] == 8642
-    assert packet["watchkit_port"] == 42651
-    assert packet["profile"] == "wear"
-    assert packet["watchkit_token"] is None        # nullable by contract
-    assert device["hostname"] == "pixel-watch-6"   # the hostname THE WATCH SENT
-    assert poll(door, pin)[0] == 410               # once means ONCE
-    assert knock(door, pin)[0] == 410              # and the door stays closed after it
+def test_full_201_204_200_200_sequence(wearos, door):
+    wearos.open_pairing()
+    status, body = begin(door)
+    assert status == 201 and body["expires_in"] == 300
+    code = body["code"]
+    assert poll(door, SECRET_A) == (204, None)          # awaiting the human's claim
+    wearos.approve_pair(code)
+    status, payload = poll(door, SECRET_A)
+    assert status == 200 and payload["state"] == "ready"
+    assert set(payload) == {"state", "authkey", "key_id", "profile", "gateway_fqdn",
+                            "gateway_port", "watchkit_port", "private_port"}
+    assert payload["authkey"] == FAKE_AUTHKEY
+    assert payload["gateway_fqdn"] == "gw.example.ts.net"
+    assert payload["gateway_port"] == 8642
+    # THE review fix, contract shape: no api_key, no watchkit_token, and NO PIN on
+    # any public response — credentials wait for the private lane (D13).
+    assert "api_key" not in payload and "watchkit_token" not in payload
+    status, body = ack(door, SECRET_A)
+    assert status == 200 and body["token"].startswith("wtk-")
+    assert poll(door, SECRET_A)[0] == 410               # once means ONCE
+    assert ack(door, SECRET_A)[0] == 410                # re-ack: gone, no second token
 
 
-def test_authkey_zeroed_in_ledger_after_delivery(wearos, door):
-    pin = "314159"
-    knock(door, pin)
-    wearos.claim_pin(pin)
-    state_text = wearos._CTX.state.path.read_text(encoding="utf-8")
-    assert FAKE_AUTHKEY in state_text              # queued between claim and pickup...
-    assert poll(door, pin)[0] == 200
-    state_text = wearos._CTX.state.path.read_text(encoding="utf-8")
-    assert FAKE_AUTHKEY not in state_text          # ...zeroed the moment it's handed over
-    devices = wearos._CTX.state.get("devices")
-    assert all(FAKE_AUTHKEY not in json.dumps(rec) for rec in devices.values())
+def test_the_code_never_rides_a_url(wearos, door):
+    wearos.open_pairing()
+    code = begin(door)[1]["code"]
+    wearos.approve_pair(code)
+    # the door's own access-log line would carry query strings — prove the ONLY
+    # public GET param in the protocol is the 256-bit secret, never the code:
+    assert code not in f"/pair/poll?secret={SECRET_A}"
+    status, payload = poll(door, SECRET_A)
+    assert status == 200 and code not in json.dumps(payload)
 
 
-def test_api_key_reads_gateway_profile_scope(wearos, door, tmp_path):
-    profile_env = tmp_path / "profiles" / "wear" / ".env"
-    profile_env.parent.mkdir(parents=True)
-    profile_env.write_text("API_SERVER_KEY=profile-scoped-key\n", encoding="utf-8")
-    knock(door, "271828")
-    wearos.claim_pin("271828")
-    _, packet = poll(door, "271828")
-    assert packet["api_key"] == "profile-scoped-key"   # tier 1: the wear profile's own .env
+# ── flood/abuse behavior ────────────────────────────────────────────────────────
+def test_malformed_begin_bodies(wearos, door):
+    wearos.open_pairing()
+    assert http(door, "POST", "/pair/begin",
+                {"v": 2, "secret": "nothex", "label": "w"})[0] == 400
+    assert http(door, "POST", "/pair/begin", {"v": 2, "secret": "zz" * 32})[0] == 400
+    assert http(door, "POST", "/pair/begin",
+                {"v": 2, "secret": 12345, "label": None})[0] == 400
+    assert http(door, "POST", "/pair/begin", ["array"])[0] == 400
 
 
-def test_api_key_falls_back_to_declared_secret(wearos, door, monkeypatch):
-    monkeypatch.setenv("gateway_api_key", "declared-fallback")   # no profile .env, no env key
-    knock(door, "161803")
-    wearos.claim_pin("161803")
-    _, packet = poll(door, "161803")
-    assert packet["api_key"] == "declared-fallback"
+def test_giant_body_refused(door):
+    big = {"v": 2, "secret": SECRET_A, "label": "x" * 8000}
+    status, body = http(door, "POST", "/pair/begin", big)
+    assert status == 400 and "small JSON" in body["error"]
 
 
-def test_429_on_per_pin_cap(wearos, door):
-    for _ in range(wearos.CLAIM_RATE_LIMIT):
-        assert knock(door, "777777")[0] == 202
-    status, body = knock(door, "777777")
-    assert status == 429 and "error" in body
+def test_pending_polls_are_throttled_but_approval_breaks_through(wearos, door, monkeypatch):
+    wearos.open_pairing()
+    _, knock = begin(door)
+    assert poll(door, SECRET_A)[0] == 204
+    assert poll(door, SECRET_A)[0] == 429          # per-secret floor (POLL_MIN_INTERVAL)
+    # THE v1 bug inverted: an APPROVED pickup is never throttled, even mid-429:
+    wearos.approve_pair(knock["code"])             # code via the watch's own knock only
+    status, payload = poll(door, SECRET_A)
+    assert status == 200 and payload["state"] == "ready"
 
 
-def test_400_for_malformed_bodies(wearos, door):
-    assert knock(door, "0123456")[0] == 400          # leading zero is NOT a valid PIN
-    assert knock(door, "12ab56")[0] == 400
-    assert knock(door, 12345)[0] == 400              # wrong JSON type/length coerces short
-    assert http(door, "POST", "/pair/claim", ["not", "an", "object"])[0] == 400
-    assert http(door, "POST", "/pair/claim", {})[0] == 400  # probe body is no state-op
+def test_wrong_secret_gets_410_not_a_lockout(wearos, door):
+    wearos.open_pairing()
+    begin(door)
+    assert poll(door, SECRET_B)[0] == 410
+    assert ack(door, SECRET_B)[0] == 410
+    assert not wearos._engine().claim_locked()["locked"]  # (v1: misses froze everyone)
 
 
-def test_unaired_paths_are_blank_404_and_wrong_method_405(wearos, door):
+def test_blank_404_and_method_guards(wearos, door):
     assert http(door, "GET", "/")[0] == 404
     assert http(door, "GET", "/p/wear/v1/health")[0] == 404
-    assert http(door, "GET", "/pair/anything")[0] == 404
-    assert http(door, "PUT", "/pair/claim", {})[0] == 405
-    assert http(door, "DELETE", "/pair/claim")[0] == 405
-
-
-def test_unknown_pin_poll_is_gone_and_counts_a_miss(wearos, door):
-    for i in range(wearos.CLAIM_RATE_LIMIT):
-        status, body = poll(door, f"{600_000 + i}")
-        assert status == 410 and "error" in body
-    status, body = poll(door, "654321")              # streak tripped → global cooldown
-    assert status == 429 and "error" in body
+    assert http(door, "GET", "/pair/begin")[0] == 404
+    assert http(door, "PUT", "/pair/begin", {})[0] == 405
+    assert http(door, "DELETE", "/pair/poll")[0] == 405

@@ -117,6 +117,11 @@ class DevAskReceiver : BroadcastReceiver() {
         // node identity and re-enrolls with the stored key.
         intent?.getStringExtra("set_tailnet_key")?.let { WearApp.Graph.devSetTailnetKey(it); return }
         intent?.getStringExtra("set_pair_handle")?.let { WearApp.Graph.devSetPairHandle(it); return }
+        // PAIRING v2 ceremony from a script: `-e pair_knock <handle>` runs the WHOLE flow
+        // (begin → code in logcat → poll → ack → pickup applied); `-e unpair 1` self-revokes
+        // over the private lane. setup.sh/verify scripts read the code line back from logcat.
+        intent?.getStringExtra("pair_knock")?.let { WearApp.Graph.devPairKnock(it); return }
+        if (intent?.hasExtra("unpair") == true) { WearApp.Graph.devUnpair(); return }
         if (intent?.hasExtra("tailnet_status") == true) { WearApp.Graph.devTailnetStatus(); return }
         intent?.getStringExtra("tailnet_on")?.let { WearApp.Graph.devTailnetOn(it); return }
         if (intent?.hasExtra("tailnet_reenroll") == true) { WearApp.Graph.devTailnetReenroll(); return }

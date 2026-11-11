@@ -65,7 +65,7 @@ split -n l/14 -d app/build/outputs/apk/debug/app-debug.apk /tmp/hw/part-
 for p in /tmp/hw/part-*; do
   for i in 1 2 3; do adb -s "$SERIAL" push "$p" "/data/local/tmp/$(basename "$p")" && break || sleep 2; done
 done
-adb -s "$SERIAL" shell 'cat /data/local/tmp/part_* > /data/local/tmp/app.apk'
+adb -s "$SERIAL" shell 'cat /data/local/tmp/part-* > /data/local/tmp/app.apk'
 [ "$(adb -s "$SERIAL" shell md5sum /data/local/tmp/app.apk | cut -d' ' -f1 | tr -d '\r')" \
   = "$(md5sum app/build/outputs/apk/debug/app-debug.apk | cut -d' ' -f1)" ] \
   && adb -s "$SERIAL" shell pm install -r /data/local/tmp/app.apk
@@ -106,15 +106,16 @@ every profile on one port, but `API_SERVER_KEY` resolves **per profile** and fai
 named profile that has none — while `/v1/health` (unauthenticated) keeps answering 200, so the
 in-app Test and the failover probe look fine before every real call 401s. If the gateway is on this
 box, `scripts/setup.sh --agent-keys` reads every `profiles/<p>/.env` and pushes the whole map
-(`set_agent_key`); otherwise the watch learns it from watchkit `GET /agent_keys`, and Settings ▸
+(`set_agent_key`); otherwise the watch learns each agent's key **over its private lane** (pairing
+v2 / D17 — watchkit's old `GET /agent_keys` answers 410), gated by the grant law: the paired
+agent's key always flows, a sibling agent needs a grant on the Wear Kit pane. Settings ▸
 Gateways ▸ Agent keys shows ✓/— per agent. Agents with no key are NOT broken forever — watchkit
 reads `state.db` key-free, so their sessions still list — but asks need a key.
 
 On the owner's box every profile shares **one login**: the same `API_SERVER_KEY` (the `default`
-profile's, in `~/.hermes/.env`) sits in every `profiles/<p>/.env`, and watchkit's `GET /agent_keys`
-serves the whole map (including `default`, read from `~/.hermes/.env`). Per-profile keys still work
+profile's, in `~/.hermes/.env`) sits in every `profiles/<p>/.env`. Per-profile keys still work
 everywhere else — the watch resolves agent key → gateway token → mirror token and re-learns at
-Settings ▸ Gateways ▸ Agent keys ▸ ⟳.
+Settings ▸ Gateways ▸ Agent keys ▸ ⟳ (over the lane).
 
 Every value is also a `setup.sh` flag (`--api`/`--token`/`--serial`… see `--help`). The app
 itself edits the same values at runtime: Settings ▸ Gateways (all in-app, nothing baked).
@@ -144,7 +145,8 @@ the Gradle tests; admission re-check: `hermes plugins validate hermes-plugin/ --
 
 Setup pushes config via the **debug-only** `DevAskReceiver` (extras: `set_token`, `set_base`,
 `set_watchkit_base`, `set_watchkit`, `set_tailnet_key`, `tailnet_status`, `tailnet_on`,
-`tailnet_reenroll`) — chain `set_base` LAST-endpoint-first so the DEFAULT entry
+`tailnet_reenroll`, plus the pairing-v2 ceremony hooks: `pair_knock <handle>` (runs the exact
+UI knock; the code lands in logcat), `approve 1`, `unpair 1`). Chain `set_base` LAST-endpoint-first so the DEFAULT entry
 lands first (URL edits fold into the registry by prepending). Re-runnable: every step is
 overwrite-or-skip. Tests: `gradle :app:testDebugUnitTest` (must stay green, JVM-only, no device).
 
@@ -205,6 +207,7 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | One agent works, others 401 on every call (Test still says ✅) | That profile has no `API_SERVER_KEY` in its `.env` — `setup.sh --agent-keys` (on a gateway box it also SEEDS missing profile keys from `~/.hermes/.env`, the one-login convention), or Settings ▸ Gateways ▸ Agent keys ▸ ⟳ learn (SPEC §12.2) |
 | 401 from watchkit but gateway fine | watchkit has its OWN bearer (`server/watchkit/config.json token`) — set `watchkitToken`/`set_watchkit` |
 | Ask times out but `phase=ACTIVE` | the tunnel is up but the leg to the gateway is not — dump `-e tailnet_status 1` and read `tailnet_log`: `socks dial …: connection was refused` = nothing listening (watchkit on **:42651** down? `scripts/watchkit.sh start`); `timed out`/no dial line = tailnet data path (from the gateway box: `tailscale status` — is the watch node online? `tailscale ping <it>`?) |
+| Voice-out ▸ gateway probe says `lane unreachable (SocketTimeout)` | the endpoint registry holds only LAN/loopback literals: the private lane binds the gateway's TAILNET address only, so `laneBase` from a LAN base opens a door ufw never did — put the gateway's `*.ts.net` FQDN in the registry (Settings ▸ Gateways) and make it the winner |
 | `phase=NEEDS_AUTH` | key spent/identity wiped — mint a fresh REUSABLE key, `-e set_tailnet_key` (Settings ▸ Gateways ▸ Tailnet works too, Re-enroll needs two taps) |
 | Watch node absent from `tailscale status` on the gateway box | node never enrolled (NEEDS_AUTH above) or enrolled under a different tailnet — compare `tailnet_status` self FQDN with the gateway's `tailscale status --json` |
 | `am broadcast -e text` only delivered the first word | quote trap (§6.3) — outer double quotes, inner single |
@@ -219,7 +222,16 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 ## 8. Where things live
 
 - `docs/SPEC.md` — full architecture + decisions (the ONLY design doc; §11 explains endpoints,
-  §11.4 the embedded tailnet node — the transport).
+  §11.4 the embedded tailnet node — the transport;
+  §19 the voice-out milestone + its amendment log).
+- `hermes-plugin/voiceout.py` — voice-out canonical prefs (`voiceout.yaml`, rev'd two-way merge), the
+  measured-`ref_rate` card store, and the tier-aware `synthesize()` contract (§19; stdlib-only tests).
+- `hermes-plugin/tts_air.py` — NeuTTS Air engine: pinned installer into a private venv (rule 17),
+  subprocess runner, size-gated gated-HF fetch, stdlib time-scale; registers into voiceout when
+  `register_if_ready()` finds it installed.
+- `hermes-plugin/align_parakeet.py` — karaoke word timestamps: re-blends the Parakeet/CTA TDT
+  alignment (the stt_install.py build) onto the synthesized script; estimated slots are flagged,
+  absent engine degrades to align:"none" (sentence-mode), never a silent lie (§19).
 - `.github/workflows/plugin-sync.yml` — publishes `borealBytes/hermes-wearos-plugin`, the
   catalog-pinned subtree mirror of `hermes-plugin/`. Zero human commits; plugin code is edited
   ONLY here. Needs the `MIRROR_PAT` secret (fine-grained, single-repo, contents RW) — without

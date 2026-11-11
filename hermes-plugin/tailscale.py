@@ -4,6 +4,10 @@ Endpoints verified LIVE against the API surface and the official client
 `tailscale/tailscale-client-go-v2` (probe 2026-11-06, /tmp/opencode/tsprobe/REPORT.md):
   OAuth   POST /api/v2/oauth/token            grant_type=client_credentials
   Devices GET  /api/v2/tailnet/-/devices      credential validation (any readable tailnet)
+  Device  DELETE /api/v2/device/{id}          remove one node (full-revoke, D12). Measured
+            2026-11-09: the NESTED /tailnet/{t}/devices/{id} route answers 404 "404 page
+            not found" for GET/DELETE/logout alike — the device-scoped surface is the
+            SINGULAR /device/{id} without a tailnet segment. 200 + body null = accepted.
   Keys    POST /api/v2/tailnet/{t}/keys       one-use, pre-authorized, tagged enrollment keys
             body: capabilities.devices.create{reusable:false, ephemeral:false,
                   preauthorized:true, tags:["tag:x"]} + TOP-LEVEL expirySeconds
@@ -172,10 +176,13 @@ class TailnetClient:
         return json.loads(self._request("POST", f"/tailnet/{self._tn()}/acl",
                                         raw_body=text.encode(), if_match=etag))
 
-    def funnel_attr_present(self) -> tuple[bool, str]:
-        """Funnel needs BOTH the tailnet toggle (funnel_pref) and a `funnel` node
-        attribute in the ACL (KB 1223). We DETECT here; the fix verb (full-file replace
-        behind preview→approve, or a printed console diff) is the wizard's call."""
+    def funnel_attr_present(self, want_target: str = "") -> tuple[bool, str]:
+        """Funnel needs BOTH the tailnet enable (the per-node link — discovered live by
+        --fix serve) and a `funnel` node attribute in the ACL (KB 1223). We DETECT
+        here; with ``want_target`` the answer is per-node ("does the GATEWAY have it"),
+        which is what pairing actually requires (review fix: the grant belongs on the
+        gateway node, not the watch tag). The fix verb (full-file replace behind
+        preview→approve, or a printed console diff) is the wizard's call."""
         try:
             text, _ = self.acl_full()
         except TailnetAPIError as exc:
@@ -191,21 +198,32 @@ class TailnetClient:
         # our write returns — measured) and legacy map {name:{attr,hosts}} (old files).
         groups = attrs.values() if isinstance(attrs, dict) else (attrs if isinstance(attrs, list) else [])
         for what in groups:
-            if isinstance(what, dict) and any(
-                str(a) == "funnel" or str(a).startswith("funnel:")
-                for a in (what.get("prop") or what.get("attr") or [])
-            ):
+            if not isinstance(what, dict):
+                continue
+            if not any(str(a) == "funnel" or str(a).startswith("funnel:")
+                       for a in (what.get("prop") or what.get("attr") or [])):
+                continue
+            if not want_target:
                 return True, "funnel attribute present on at least one node"
+            targets = [str(t) for t in (what.get("hosts") or what.get("target") or [])]
+            if want_target in targets:
+                return True, f"funnel attribute granted to {want_target} (this gateway)"
+        if want_target:
+            return False, (f"no funnel attribute for THIS gateway node ({want_target}) "
+                           "— hermes watch setup --fix funnel")
         return False, "ACL lacks a funnel node attribute (hermes watch setup --fix funnel)"
 
-    def add_funnel_attr(self, tag: str) -> Any:
-        """Minimal pairing grant, measured-complete: (a) the tag must EXIST before any
-        key can carry it (mint 400s 'tags ... invalid or not permitted' otherwise), so
-        we add a tagOwners rule defining it for tailnet members; (b) a bare 'funnel'
-        attr scoped to hosts [tag] lets exactly those nodes funnel. Conflicts surface
-        as TailnetAPIError; the wizard then prints the console diff instead of guessing.
-        CAVEAT (measured): replacing a commented legacy policy with this render loses
-        the comments — the file becomes clean JSON. Functionally equivalent."""
+    def add_funnel_attr(self, target: str, also_tag: str = "") -> Any:
+        """Grant the funnel node attribute to ONE node — the GATEWAY itself (review
+        fix: v0.1 pointed this at the watch tag, which was the wrong node entirely:
+        Funnel terminates on whoever fronts the door). ``target`` is a policy-spellable
+        node id: the gateway's tailscale IP (100.x) is the stable spelling the wizard
+        uses. The tag rule is kept only so tag-carrying watch keys still validate:
+        (a) the tag must EXIST before any key can carry it (mint 400s 'tags ... invalid
+        or not permitted' otherwise), so a tagOwners rule defines it for members.
+        Conflicts surface as TailnetAPIError; the wizard then prints the console diff
+        instead of guessing. CAVEAT (measured): replacing a commented legacy policy
+        with this render loses the comments — the file becomes clean JSON."""
         try:
             text, etag = self.acl_full()
             acl = json.loads(text)
@@ -213,23 +231,54 @@ class TailnetClient:
             raise TailnetAPIError(0, f"cannot replace a non-JSON/default ACL ({exc}); use the console") from exc
         if not isinstance(acl, dict):
             raise TailnetAPIError(0, "ACL policy is not a JSON object; use the console")
-        full_tag = tag if tag.startswith("tag:") else "tag:" + tag
+        target = str(target or "").strip()
+        if not target:
+            raise TailnetAPIError(0, "empty funnel target")
         # Shapes measured live (each 400 taught one): tagOwners = LEGACY MAP form
         # ({tag: [owners]}); nodeAttrs = ARRAY of {target, attr} grants — NOT prop,
         # NOT hosts, NOT src (all rejected); the legacy map-of-{attr,hosts} spelling
         # is refused on write.
         owners = acl.setdefault("tagOwners", {})
-        if not owners.get(full_tag):
-            owners[full_tag] = ["autogroup:member"]
+        for tag in (t for t in (target, also_tag) if t.startswith("tag:")):
+            if not owners.get(tag):
+                owners[tag] = ["autogroup:member"]
         attrs = acl.setdefault("nodeAttrs", [])
         if not isinstance(attrs, list):
             raise TailnetAPIError(0, "nodeAttrs is legacy-map form; convert to grants-array in the console first")
-        if not any(isinstance(g, dict) and full_tag in (g.get("target") or g.get("hosts") or [])
+        if not any(isinstance(g, dict) and target in (g.get("target") or g.get("hosts") or [])
                    and any(str(a) == "funnel" or str(a).startswith("funnel:")
                            for a in (g.get("attr") or g.get("prop") or []))
                    for g in attrs):
-            attrs.append({"target": [full_tag], "attr": ["funnel"]})
+            attrs.append({"target": [target], "attr": ["funnel"]})
         return self.patch_acl(json.dumps(acl, indent=2), etag)
+
+    def delete_device(self, node_id: str) -> Any:
+        """Remove a node from the tailnet (full-revoke, D12). 404 afterwards is the
+        proof of removal.
+
+        Measured on the first REAL-WATCH revoke (2026-11-09): the device-scoped
+        surface is SINGULAR and tailnet-less — DELETE /device/{id} (200, body null).
+        The nested /tailnet/{t}/devices/{id} route this first used answers 404 for
+        GET/DELETE/logout alike (a MUX 404, not a scope denial — the same token
+        deletes fine on the right route). The API's device `id` IS the numeric the
+        engine self-reports, so a captured ref is usually the right one; a bare 404
+        resolves it through the device list (id, nodeId, hostname) and retries once
+        on the correct route, which also accepts a hostname or nodeId from any future
+        capture. Unknown refs keep the original 404, which revoke reports as a step."""
+        try:
+            self._request("DELETE", f"/device/{urllib.parse.quote(node_id)}")
+        except TailnetAPIError as exc:
+            if exc.status != 404:
+                raise
+            want = str(node_id)
+            for d in (self._get("/tailnet/-/devices") or {}).get("devices", []):
+                if want in (str(d.get("id", "")), str(d.get("nodeId", "")),
+                            str(d.get("name", "")), str(d.get("hostname", ""))):
+                    self._request("DELETE",
+                                  f"/device/{urllib.parse.quote(str(d['id']))}")
+                    return {"deleted": str(d["id"]), "resolved_from": want}
+            raise
+        return {"deleted": node_id}
 
     # -- enrollment keys (the pairing heart) ------------------------------------
     _EXPIRY_RE = re.compile(r"^(\d+)\s*([hd])$", re.IGNORECASE)

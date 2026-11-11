@@ -73,12 +73,19 @@ fun SessionsScreen(
     // ARCHIVED rows (owner batch 5: "archive instead of delete"): their own fetch, their own chip
     // — the chip only exists while there is something to bring back.
     archived: List<GatewaySessions.Info> = emptyList(),
+    // CRON RUNS (pairing v2 / D14): every outbox alert opens INTO its run; the ⏰ chip lists
+    // those runs (watchkit ?source=cron) — same own-fetch/fail-soft rule as 🗃.
+    cron: List<GatewaySessions.Info> = emptyList(),
 ) {
-    val shown = if (filter == GatewaySessions.FILTER_ARCHIVED) archived
-        else GatewaySessions.filterProfile(sessions, filter)
+    val shown = when (filter) {
+        GatewaySessions.FILTER_ARCHIVED -> archived
+        GatewaySessions.FILTER_CRON -> cron
+        else -> GatewaySessions.filterProfile(sessions, filter)
+    }
     val chips = buildList {
         add(GatewaySessions.FILTER_ALL)
         addAll(GatewaySessions.profilesIn(sessions))
+        if (cron.isNotEmpty()) add(GatewaySessions.FILTER_CRON)
         if (archived.isNotEmpty()) add(GatewaySessions.FILTER_ARCHIVED)
     }
     val edgeSessionState = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
@@ -171,6 +178,7 @@ fun SessionsScreen(
                             when (c) {
                                 GatewaySessions.FILTER_ALL -> "all"
                                 GatewaySessions.FILTER_ARCHIVED -> "🗃 archived"
+                                GatewaySessions.FILTER_CRON -> "⏰ cron"
                                 else -> ProfileLogic.chipLabel(c)
                             },
                             style = MaterialTheme.typography.caption3,
@@ -204,6 +212,7 @@ fun SessionsScreen(
                 Text(
                     when {
                         filter == GatewaySessions.FILTER_ARCHIVED -> "nothing archived 🗃"
+                        filter == GatewaySessions.FILTER_CRON -> "no cron runs yet ⏰"
                         meta.stale -> "no cached list yet — refresh once online"
                         else -> "no sessions yet"
                     },

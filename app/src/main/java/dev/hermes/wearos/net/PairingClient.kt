@@ -1,6 +1,7 @@
 package dev.hermes.wearos.net
 
 import dev.hermes.wearos.domain.PairingCode
+import dev.hermes.wearos.net.HermesApi.Companion.str
 import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -9,51 +10,43 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.security.SecureRandom
 import java.net.ProxySelector
 import java.util.concurrent.TimeUnit
 
 /**
- * The claim packet the plugin serves ONCE at `GET /pair/claim?pin=` (200). Everything the watch
- * needs to enroll + point itself at the gateway in one shot. THE AUTHKEY IS THE SECRET: it never
- * appears in a log line — [redacted] is the only way this leaves into logcat.
+ * THE BOOTSTRAP DOOR — PAIRING v2 (SPEC §4, review 2026-11-09). Still the ONE OkHttp client
+ * with no TailnetRoute (pairing happens BEFORE a tunnel exists), but the protocol flipped:
+ *
+ *   POST /pair/begin {"v":2,"secret":"<64 hex>","label":"<watch>","tailnet":"…"}
+ *                    → 201 {"code":"429183","expires_in":300}   — the GATEWAY issues the code
+ *   GET  /pair/poll?secret=<hex>
+ *        → 204 still waiting · 200 {"state":"ready","authkey":…} ONCE · 410 gone · 429 slow down
+ *   POST /pair/ack   {"v":2,"secret":"<hex>"} → 200 {"token":"wtk-…"} (device token, once)
+ *   *  /pair/claim   → 426 "update the watch app" (v1 PIN protocol retired)
+ *
+ * The code NEVER rides a URL (pickup speaks the device secret) and the public packet carries
+ * NO keys: `api_key` + the watchkit bearer arrive later, over the PRIVATE lane, after this
+ * watch's node joined the tailnet (see net/PrivateLane + WearApp.pairFinishSession).
+ * [Http] is the JVM-test seam; the pure companion (URLs, bodies, status→outcome) is what the
+ * tests pin, mirroring the GatewaySessions style.
  */
 @Serializable
-data class PairPacket(
+data class PickupPacket(
     @SerialName("authkey") val authKey: String = "",
-    @SerialName("tailnet") val tailnet: String = "",
+    @SerialName("key_id") val keyId: String = "",
+    @SerialName("profile") val profile: String = "",
     @SerialName("gateway_fqdn") val gatewayFqdn: String = "",
     @SerialName("gateway_port") val gatewayPort: Int = 0,
     @SerialName("watchkit_port") val watchkitPort: Int = 0,
-    @SerialName("profile") val profile: String = "",
-    @SerialName("api_key") val apiKey: String = "",
-    // NULLABLE per the claim contract (plugin serves an explicit null when no watchkit
-    // bearer is configured — proven live 2026-11-06; a non-null type deserialized that
-    // null, threw, and the retry loop reported a happily-consumed PIN as "spent").
-    @SerialName("watchkit_token") val watchkitToken: String? = null,
+    @SerialName("private_port") val privatePort: Int = 0,
 ) {
     /** One safe line for logcat: identities + LENGTHS, never a key value. */
     fun redacted(): String =
-        "tailnet=$tailnet gateway=$gatewayFqdn:$gatewayPort wk_port=$watchkitPort profile=$profile " +
-            "auth.len=${authKey.length} key.len=${apiKey.length} wkToken.len=${watchkitToken?.length ?: 0}"
+        "key_id=$keyId gateway=$gatewayFqdn:$gatewayPort wk_port=$watchkitPort lane=$privatePort " +
+            "profile=$profile auth.len=${authKey.length}"
 }
 
-/**
- * THE BOOTSTRAP DOOR (SPEC §4/§11.4): the ONE OkHttp client in the app with NO TailnetRoute
- * selector — during pairing there IS no tunnel yet, so the claim API is dialed over plain HTTPS
- * to the plugin's funnel host `<handle>.ts.net`. Measured reality (2026-11-06): a Funnel answers
- * on the NODE's MagicDNS name — the wizard prints the exact line to type (e.g.
- * `tuxdesktop.tailb12aa5`); there is no `pair.` prefix on any hostname Tailscale mints. Everything else stays the tunnel's; this client is used
- * for nothing else and is disposable ("destroy when done").
- *
- * Protocol (server side: hermes-plugin pair endpoints):
- *   POST /pair/claim {"pin","tailnet","hostname"} → 202 queued
- *   GET  /pair/claim?pin=…                        → 204 pending | 200 packet | 410 spent/expired
- *   429 = rate-limited: back off and KEEP THE PIN UP.
- *
- * [Http] is the seam the JVM tests inject; [LiveHttp] is the real one. All pure pieces
- * (URL building, body encoding, status → outcome, packet parsing) sit in the companion so the
- * protocol is tested without a socket, mirroring the GatewaySessions test style.
- */
 class PairingClient(private val http: Http = LiveHttp()) {
 
     /** Blocking one-shot exchange; bodyJson null = GET. Runs on the caller's IO context. */
@@ -63,52 +56,76 @@ class PairingClient(private val http: Http = LiveHttp()) {
 
     data class Res(val code: Int, val body: String)
 
-    /** One step of the flow, honest about what the funnel said. */
+    /** One step of the flow, honest about what the door said. */
     sealed class Outcome {
-        /** data object needs Kotlin 1.9+; this module is on 2.0 — fine. */
-        data object Queued : Outcome()          // POST accepted, claim is parked
-        data object Pending : Outcome()         // 204 — nothing claimed yet
-        data class Claimed(val packet: PairPacket) : Outcome() // 200 — the one-shot payload
-        data object Gone : Outcome()            // 410 — spent or expired; re-mint the PIN
-        data object RateLimited : Outcome()     // 429 — back off, the PIN stays good
-        /** 200 arrived but the body was unreadable — the packet is CONSUMED; retrying
-         *  only trades the truth for a misleading "spent". Terminal, never re-polls. */
+        /** begin accepted: SHOW THE CODE (the gateway issued it — the watch never chooses). */
+        data class Begun(val code: String, val expiresInSec: Int) : Outcome()
+        data object Pending : Outcome()          // 204 — a human still must type the code
+        data class Ready(val packet: PickupPacket) : Outcome()  // approved — collect it
+        data class Tokened(val deviceToken: String) : Outcome() // acked — the device token, once
+        /** pair() terminal success: the pickup AND the device token, in one hand. */
+        data class Completed(val packet: PickupPacket, val deviceToken: String) : Outcome()
+        data object Gone : Outcome()             // 410 — expired/unknown/already collected
+        data object RateLimited : Outcome()      // 429 — back off; the flow stays alive
+        /** 403 with a message the human should read (window closed / claim locked / too fast). */
+        data class Refused(val why: String) : Outcome()
+        /** 426 — a v1 door: the gateway's plugin is older than this app. */
+        data object ServerTooOld : Outcome()
+        /** 200 arrived but the body was unreadable — the pickup is CONSUMED; terminal. */
         data object Malformed : Outcome()
         data class Failed(val why: String) : Outcome()
     }
 
-    suspend fun knock(handle: String, pin: String, hostname: String): Outcome =
-        exchange { http.exchange("POST", claimUrl(handle), claimBody(pin, handle, hostname)) }
+    /** A fresh 256-bit device secret (hex, 64 chars) — generated ONCE per pairing flow. */
+    fun newSecret(): String {
+        val b = ByteArray(32)
+        SecureRandom().nextBytes(b)
+        return b.joinToString("") { "%02x".format(it) }
+    }
 
-    suspend fun poll(handle: String, pin: String): Outcome =
-        exchange { http.exchange("GET", pollUrl(handle, pin), null) }
+    suspend fun begin(handle: String, secret: String, label: String): Outcome =
+        exchange { http.exchange("POST", doorUrl(handle, "begin"), beginBody(secret, handle, label)) }
+
+    suspend fun poll(handle: String, secret: String): Outcome =
+        exchange { http.exchange("GET", pollUrl(handle, secret), null) }
+
+    suspend fun ack(handle: String, secret: String): Outcome =
+        exchange { http.exchange("POST", doorUrl(handle, "ack"), ackBody(secret)) }
 
     /**
-     * KNOCK, then POLL with exponential backoff until the packet lands (or [maxWaitMs] runs
-     * out — default 170 s, comfortably inside the PIN's 5-min TTL, so the wearer can always
-     * knock again with the SAME PIN). 429/transport blips back off harder and NEVER burn the
-     * PIN: only a 200 or 410 ends the wait early.
+     * KNOCK (begin) → POLL with backoff until the code is approved → ACK for the device token.
+     * [onCode] fires the moment the gateway's code lands (the UI shows it; it is NOT ours).
+     * 429/transport blips back off harder and never burn the flow: only 410 (or the caller's
+     * deadline) ends the wait. [maxWaitMs] defaults inside the code's 5-min TTL.
      */
-    suspend fun claim(
+    suspend fun pair(
         handle: String,
-        pin: String,
-        hostname: String,
+        secret: String,
+        label: String,
         maxWaitMs: Long = 170_000L,
         sleep: suspend (Long) -> Unit = { delay(it) },
         now: () -> Long = { System.currentTimeMillis() },
+        onCode: (String) -> Unit = {},
     ): Outcome {
-        val first = knock(handle, pin, hostname)
-        if (first !is Outcome.Queued) return first
+        val begun = begin(handle, secret, label)
+        if (begun !is Outcome.Begun) return begun
+        onCode(begun.code)
         val until = now() + maxWaitMs
-        var backoff = 1_500L
-        var last: Outcome = first
+        var backoff = 2_000L
+        var last: Outcome = Outcome.Pending
         while (now() < until) {
             sleep(backoff)
             backoff = (backoff * 2).coerceAtMost(8_000L)
-            when (val o = poll(handle, pin)) {
-                is Outcome.Claimed, Outcome.Gone, Outcome.Malformed -> return o
+            when (val o = poll(handle, secret)) {
+                is Outcome.Ready -> {
+                    val a = ack(handle, secret)
+                    if (a is Outcome.Tokened) return Outcome.Completed(o.packet, a.deviceToken)
+                    last = a
+                    if (a is Outcome.Malformed) return a // pickup consumed; ack unreadable is terminal
+                }
+                Outcome.Gone, Outcome.Malformed, Outcome.ServerTooOld -> return o
                 Outcome.Pending -> last = o
-                // RateLimited / Failed: keep the PIN up, back off harder, keep waiting.
+                // RateLimited / Refused / Failed: keep the code up, back off harder, keep waiting.
                 else -> { last = o; backoff = (backoff * 3).coerceAtMost(20_000L) }
             }
         }
@@ -119,8 +136,8 @@ class PairingClient(private val http: Http = LiveHttp()) {
         val r = block()
         outcomeOf(r.code, r.body)
     } catch (e: Exception) {
-        // The funnel URL carries no secret; the message may carry a host — fine. NEVER the body.
-        Outcome.Failed(e.message?.take(80) ?: "pair unreachable")
+        // The door URL carries no secret; the message may carry a host — fine. NEVER the body.
+        Outcome.Failed(e.message?.take(80) ?: "pairing door unreachable")
     }
 
     /** The real transport — and the reason this file is the bootstrap door: NO TailnetRoute. */
@@ -150,47 +167,102 @@ class PairingClient(private val http: Http = LiveHttp()) {
     }
 
     companion object {
-        private val Json_ = Json { ignoreUnknownKeys = true }
+        // encodeDefaults ON: `"v":2` is a PROTOCOL FIELD (the door distinguishes v2 from a v1
+        // body by it) — it must ride the wire even when equal to the default, never be omitted
+        // by kotlinx's default-skip.
+        private val Json_ = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
         @Serializable
-        private data class ClaimRequest(val pin: String, val tailnet: String, val hostname: String)
+        private data class BeginRequest(
+            val v: Int = 2,
+            val secret: String,
+            val label: String,
+            val tailnet: String,
+        )
 
-        /** `tux-desktop.tailb12aa5` → `https://tux-desktop.tailb12aa5.ts.net/pair/claim`.
-         *  The handle IS the door host (the node prefix of its MagicDNS name — what
-         *  `hermes watch setup --fix serve` prints); no synthetic `pair.` prefix. */
-        fun claimUrl(handle: String): String {
+        @Serializable
+        private data class AckRequest(val v: Int = 2, val secret: String)
+
+        @Serializable
+        private data class BeginReply(val code: String = "", val expires_in: Int = 0)
+
+        @Serializable
+        private data class AckReply(val token: String = "")
+
+        /** The funnel door host for one verb: `tux-desktop.tailb12aa5` → https://…/pair/<verb>. */
+        fun doorUrl(handle: String, verb: String): String {
             val h = PairingCode.normalizeHandle(handle)
             require(h.isNotEmpty()) { "pairing address needed (the host the wizard prints, before .ts.net)" }
-            return "https://$h.ts.net/pair/claim"
+            return "https://$h.ts.net/pair/$verb"
         }
 
-        fun pollUrl(handle: String, pin: String): String {
-            require(PairingCode.isPin(pin)) { "pin must be 6 digits, no leading zero" }
-            return "${claimUrl(handle)}?pin=$pin"
+        /** THE review fix: the poll URL carries the 256-bit secret — the CODE rides no URL. */
+        fun pollUrl(handle: String, secret: String): String {
+            require(SECRET_RE.matches(secret)) { "device secret must be 64 hex chars" }
+            return "${doorUrl(handle, "poll")}?secret=$secret"
         }
 
-        fun claimBody(pin: String, handle: String, hostname: String): String {
-            require(PairingCode.isPin(pin)) { "pin must be 6 digits, no leading zero" }
+        fun beginBody(secret: String, handle: String, label: String): String {
+            require(SECRET_RE.matches(secret)) { "device secret must be 64 hex chars" }
             val h = PairingCode.normalizeHandle(handle)
             require(h.isNotEmpty()) { "tailnet handle needed (the name before .ts.net)" }
             return Json_.encodeToString(
-                ClaimRequest.serializer(),
-                ClaimRequest(pin = pin, tailnet = h, hostname = hostname.trim().take(64)),
+                BeginRequest.serializer(),
+                BeginRequest(secret = secret, label = label.trim().take(64), tailnet = h),
             )
         }
 
-        /** 200-body → packet; garbage → null (callers surface Failed, never a crash). */
-        fun parsePacket(body: String): PairPacket? =
-            runCatching { Json_.decodeFromString<PairPacket>(body) }.getOrNull()
-            ?.takeIf { it.gatewayFqdn.isNotBlank() }
+        fun ackBody(secret: String): String {
+            require(SECRET_RE.matches(secret)) { "device secret must be 64 hex chars" }
+            return Json_.encodeToString(AckRequest.serializer(), AckRequest(secret = secret))
+        }
+
+        private val SECRET_RE = Regex("^[0-9a-f]{64}$")
+
+        fun parsePickup(body: String): PickupPacket? =
+            runCatching { Json_.decodeFromString<PickupPacket>(body) }.getOrNull()
+                ?.takeIf { it.gatewayFqdn.isNotBlank() && it.authKey.isNotBlank() }
+
+        fun parseCode(body: String): Outcome.Begun? =
+            runCatching { Json_.decodeFromString<BeginReply>(body) }.getOrNull()
+                ?.takeIf { PairingCode.isPin(it.code) }
+                ?.let { Outcome.Begun(it.code, it.expires_in) }
+
+        fun parseToken(body: String): Outcome.Tokened? =
+            runCatching { Json_.decodeFromString<AckReply>(body) }.getOrNull()
+                ?.takeIf { it.token.startsWith("wtk-") }
+                ?.let { Outcome.Tokened(it.token) }
+
+        private fun errorOf(body: String): String =
+            runCatching { Json_.decodeFromString(kotlinx.serialization.json.JsonObject.serializer(), body) }
+                .getOrNull()?.get("error")?.toString()?.trim('"')?.take(120).orEmpty()
+                .ifEmpty { "pairing door refused" }
 
         /** The status-code contract, as pure data (what the JVM tests pin down). */
+        /** Status-code contract (pure; the JVM tests pin this). THE 200 BRANCH PARSES, IT DOES
+         *  NOT SNIFF: the door serializes with stdlib json (`"state": "ready"` — a space after
+         *  every colon), so substring probes on compact JSON silently fell through to
+         *  Malformed on the live door (caught in the 2026-11-09 ceremony). Key presence after a
+         *  real parse is the whole contract. */
         fun outcomeOf(code: Int, body: String): Outcome = when (code) {
-            202 -> Outcome.Queued
+            201 -> parseCode(body) ?: Outcome.Malformed
             204 -> Outcome.Pending
-            200 -> parsePacket(body)?.let { Outcome.Claimed(it) } ?: Outcome.Malformed
+            200 -> {
+                val o = runCatching {
+                    Json_.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject
+                }.getOrNull()
+                when {
+                    o == null -> Outcome.Malformed
+                    o.containsKey("authkey") || o.str("state") == "ready" ->
+                        parsePickup(body)?.let { Outcome.Ready(it) } ?: Outcome.Malformed
+                    o.containsKey("token") -> parseToken(body) ?: Outcome.Malformed
+                    else -> Outcome.Malformed
+                }
+            }
             410 -> Outcome.Gone
             429 -> Outcome.RateLimited
+            426 -> Outcome.ServerTooOld
+            403, 423 -> Outcome.Refused(errorOf(body))
             else -> Outcome.Failed("HTTP $code")
         }
     }

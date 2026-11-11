@@ -1,0 +1,106 @@
+<!doctype html>
+<!-- Wear OS voice-out — dashboard pane mock for the hackathon demo capture.
+     Real data from the product API (/api/plugins/wearos/* via the auth proxy);
+     this is the pane surface being proposed, not a shipped SPA route. -->
+<html lang="en"><head><meta charset="utf-8"><title>Wear OS · Voice-out</title>
+<style>
+ :root{--bg:#0d1117;--card:#161b22;--line:#232a33;--tx:#e6edf3;--mut:#8b949e;--acc:#35d0ba}
+ *{box-sizing:border-box;margin:0}
+ body{background:var(--bg);color:var(--tx);font:15px/1.45 "DejaVu Sans",system-ui,sans-serif;padding:26px 30px}
+ header{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--line);padding-bottom:14px}
+ h1{font-size:22px;letter-spacing:.5px}h1 b{color:var(--acc)}
+ .pill{background:#12332c;color:var(--acc);border:1px solid #1f5c4d;border-radius:20px;padding:2px 10px;font-size:12px}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+ .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+ .card h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px}
+ .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #1d242d;font-size:14px}
+ .row:last-child{border:none}.k{color:var(--mut)}
+ .ok{color:var(--acc)}.no{color:#ff6b6b}
+ .wide{grid-column:1/-1}
+ textarea{width:100%;height:88px;background:#0b0f14;color:var(--tx);border:1px solid var(--line);
+   border-radius:8px;padding:10px;font:14px/1.5 "DejaVu Sans";resize:none}
+ button{margin-top:12px;background:var(--acc);color:#06231e;border:0;border-radius:8px;
+   padding:10px 22px;font-weight:700;font-size:14px;cursor:pointer}
+ button[disabled]{opacity:.55}
+ #state{margin-left:14px;color:var(--mut);font-size:13px}
+ canvas{width:100%;height:150px;margin-top:12px;background:#0b0f14;border-radius:8px;display:block}
+ input[type=range]{width:70%;accent-color:var(--acc)}
+ footer{margin-top:16px;color:var(--mut);font-size:12px;display:flex;gap:22px}
+</style></head><body>
+<header><h1><b>HERMES</b> WEAR OS · Voice-out</h1><span class="pill">gateway: default</span>
+  <span class="pill">lane v0.3</span></header>
+<div class="grid">
+  <div class="card"><h2>Engine — NeuTTS Air</h2>
+    <div class="row"><span class="k">backbone</span><span>Q8_0 GGUF · community mirror</span></div>
+    <div class="row"><span class="k">venv</span><span id="venv">…</span></div>
+    <div class="row"><span class="k">weights verified</span><span id="ver">…</span></div>
+    <div class="row"><span class="k">codec</span><span>neuphonic/neucodec · official</span></div>
+  </div>
+  <div class="card"><h2>Voice cards</h2>
+    <div id="cards"><div class="row"><span class="k">loading…</span></div></div>
+  </div>
+  <div class="card"><h2>Global speed</h2>
+    <div class="row"><span class="k">1.00× — replay each speaker at their measured pace</span></div>
+    <input type="range" min="0.8" max="1.2" step="0.05" value="1.0">
+  </div>
+  <div class="card"><h2>Watch routing</h2>
+    <div class="row"><span class="k">default agent</span><span class="ok">gateway (spoken reply)</span></div>
+    <div class="row"><span class="k">karaoke word sync</span><span>Parakeet aligner</span></div>
+    <div class="row"><span class="k">push-to-talk</span><span class="ok">armed</span></div>
+  </div>
+  <div class="card wide"><h2>Sound test — synthesized right now on this gateway</h2>
+    <textarea id="txt">Hermes Wear OS. Your watch, and your own gateway.</textarea>
+    <div><button id="go">▶ Speak it</button><span id="state"></span></div>
+    <canvas id="wave" width="1240" height="150"></canvas>
+  </div>
+</div>
+<footer><span>no cloud subscription</span><span>nothing you cannot audit</span>
+  <span>voice cloned from a 6.5-second card</span></footer>
+<script>
+const API = "/api/plugins/wearos";
+async function boot(){
+  try{
+    const d = await (await fetch(API+"/voice")).json();
+    const set=(id,txt,cls)=>{const e=document.getElementById(id);e.textContent=txt;if(cls)e.className=cls};
+    set("venv", d.air.venv?"installed · py3.13":"missing", d.air.venv?"ok":"no");
+    set("ver", d.air.model_verified?"verified (sha256)":"pending", d.air.model_verified?"ok":"no");
+    const cards=Object.values(d.voice.cards||{});
+    document.getElementById("cards").innerHTML = cards.length? cards.map(c=>
+      `<div class="row"><span class="k">${c.label}</span><span>${c.words} words · ${c.seconds_total}s ref · ${c.ref_rate} wpm</span></div>`).join("")
+      : `<div class="row"><span class="k">no cards yet</span></div>`;
+  }catch(e){ document.getElementById("state").textContent="status load failed: "+e; }
+}
+boot();
+go.onclick=async()=>{  go.disabled=true; const st=document.getElementById("state");
+  st.textContent="synthesizing on the gateway…";
+  try{
+    const r=await fetch(API+"/voice",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action:"soundtest",text:txt.value,agent:"default"})});
+    const d=await r.json();
+    if(!d.audio_wav_b64) throw new Error(d.error||"no audio");
+    st.textContent="spoken · "+(d.words?"":d.tier+" tier");
+    const bin=atob(d.audio_wav_b64), buf=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
+    const ac=new AudioContext(), ab=await ac.decodeAudioData(buf.buffer);
+    draw(ab); ac.createBufferSource().start(0);
+    go.disabled=false;
+  }catch(e){ st.textContent="failed: "+e; go.disabled=false; }
+};
+function draw(ab){
+  const c=document.getElementById("wave"),g=c.getContext("2d");
+  g.clearRect(0,0,c.width,c.height);
+  const ch=ab.getChannelData(0), step=Math.ceil(ch.length/c.width);
+  g.fillStyle="#35d0ba";
+  for(let x=0;x<c.width;x++){
+    let mn=1,mx=-1;
+    for(let j=0;j<step;j++){const v=ch[x*step+j]||0;if(v<mn)mn=v;if(v>mx)mx=v}
+    const y1=(1-(mn*0.5+0.5))*c.height, y2=(1-(mx*0.5+0.5))*c.height;
+    g.fillRect(y2>y1?x:x, Math.min(y1,y2), 1.4, Math.max(1.5,Math.abs(y1-y2)));
+  }
+}
+// capture hook: demo-recording.sh loads ?autoplay to fire the soundtest itself
+// (no xdotool coordinate roulette); the window title signals playback state.
+// ?text=... overrides the script so the REAL narration flows through the pane.
+const _q = new URLSearchParams(location.search);
+if (_q.has("autoplay")) { if (_q.get("text")) txt.value = _q.get("text"); setTimeout(()=>go.click(), 2500); }
+</script></body></html>

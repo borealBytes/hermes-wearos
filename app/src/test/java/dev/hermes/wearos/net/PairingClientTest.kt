@@ -1,6 +1,5 @@
 package dev.hermes.wearos.net
 
-import dev.hermes.wearos.domain.PairingCode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,225 +8,242 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * PAIRING BOOTSTRAP CLIENT (SPEC §4/§11.4, S5): URL building, claim-body encoding, packet
- * parsing, and the outcome mapping of the funnel protocol (202 queued / 204 pending / 200
- * one-shot packet / 410 spent / 429 rate-limited) — plus the knock-then-poll loop driven by a
- * scripted [PairingClient.Http] fake and a fake sleeper (no real delay on the JVM, no socket).
+ * PAIRING v2 BOOTSTRAP CLIENT (SPEC §4, review 2026-11-09): URL building, bodies, the status
+ * contract (201 issued / 204 pending / 200 ready-token / 410 gone / 429 slow / 426 v1 door /
+ * 403+423 refused) and the begin→poll→ack orchestration — all pure-JVM, scripted through the
+ * [PairingClient.Http] seam with a fake sleeper. The review law these tests pin: the CODE comes
+ * from the GATEWAY (never minted here), the CODE rides NO URL, and the pickup speaks the 256-bit
+ * device secret instead.
  */
 class PairingClientTest {
 
+    private val secret = "a".repeat(32) + "b".repeat(32) // 64 hex
+
     // ── pure wire pieces ─────────────────────────────────────────────────────────────────────
     @Test
-    fun `claim url is plain HTTPS to the plugin funnel host`() {
-        assertEquals("https://lab.ts.net/pair/claim", PairingClient.claimUrl("lab"))
-        // Funnel is reached BEFORE any tunnel exists → it must be a PUBLIC host, never the tunnel.
-        assertFalse(PairingClient.claimUrl("lab").startsWith("http://"))
+    fun `door urls are plain HTTPS to the funnel host`() {
+        assertEquals("https://lab.ts.net/pair/begin", PairingClient.doorUrl("lab", "begin"))
+        assertEquals("https://lab.ts.net/pair/ack", PairingClient.doorUrl("lab", "ack"))
+        // The funnel is reached BEFORE any tunnel exists → it must be PUBLIC, never the tunnel.
+        assertFalse(PairingClient.doorUrl("lab", "begin").startsWith("http://"))
     }
 
     @Test
-    fun `claim url rejects blank and garbage handles`() {
+    fun `door url rejects blank and garbage handles`() {
         for (h in listOf("", "  ", "bad handle", "!")) {
-            var threw = false
-            try { PairingClient.claimUrl(h) } catch (e: IllegalArgumentException) { threw = true }
-            assertTrue("'$h' must not build a URL", threw)
+            runCatching { PairingClient.doorUrl(h, "begin") }.onSuccess {
+                assertTrue("expected reject for '$h'", false)
+            }
         }
     }
 
     @Test
-    fun `poll url carries the pin as a query param`() {
-        assertEquals("https://lab.ts.net/pair/claim?pin=123456", PairingClient.pollUrl("lab", "123456"))
+    fun `poll url carries the SECRET and never the code`() {
+        val url = PairingClient.pollUrl("lab", secret)
+        assertEquals("https://lab.ts.net/pair/poll?secret=$secret", url)
+        // The whole review point: no 6-digit code anywhere in a URL, ever.
+        assertFalse(url.contains(Regex("[?&]pin=")))
+        assertFalse(url.contains(Regex("[?&]code=")))
     }
 
     @Test
-    fun `claim body is the documented shape with the normalized tailnet`() {
-        val body = PairingClient.claimBody("246810", "My-Home", "Galaxy Watch Ultra")
-        assertTrue(body, body.contains("\"pin\":\"246810\""))
-        assertTrue(body, body.contains("\"tailnet\":\"my-home\""))
-        assertTrue(body, body.contains("\"hostname\":\"Galaxy Watch Ultra\""))
-    }
-
-    @Test
-    fun `claim body refuses malformed pins`() {
-        for (p in listOf("012345", "12345", "abcdef", "")) {
-            var threw = false
-            try { PairingClient.claimBody(p, "lab", "w") } catch (e: IllegalArgumentException) { threw = true }
-            assertTrue("pin '$p' must be rejected", threw)
+    fun `poll url rejects a non-hex or short secret`() {
+        for (s in listOf("", "xyz", "ab".repeat(31), "z".repeat(64), secret.uppercase())) {
+            val thrown = runCatching { PairingClient.pollUrl("lab", s) }.isFailure
+            assertTrue("expected reject for '$s'", thrown)
         }
     }
 
-    // ── packet parsing ───────────────────────────────────────────────────────────────────────
-    private val packetJson = """
-        {"authkey":"tskey-auth-SECRETVALUE","tailnet":"lab","gateway_fqdn":"gateway.lab.ts.net",
-         "gateway_port":8642,"watchkit_port":42651,"profile":"wear","api_key":"APIKEY",
-         "watchkit_token":"WKTOKEN"}
-    """.trimIndent()
-
     @Test
-    fun `packet parses every documented field`() {
-        val p = PairingClient.parsePacket(packetJson)!!
-        assertEquals("tskey-auth-SECRETVALUE", p.authKey)
-        assertEquals("lab", p.tailnet)
-        assertEquals("gateway.lab.ts.net", p.gatewayFqdn)
-        assertEquals(8642, p.gatewayPort)
-        assertEquals(42651, p.watchkitPort)
-        assertEquals("wear", p.profile)
-        assertEquals("APIKEY", p.apiKey)
-        assertEquals("WKTOKEN", p.watchkitToken)
+    fun `begin body is the v2 request with label and tailnet`() {
+        val body = PairingClient.beginBody(secret, "Lab", "Galaxy Watch Ultra")
+        assertTrue(body.contains("\"v\":2"))
+        assertTrue(body.contains("\"secret\":\"$secret\""))
+        assertTrue(body.contains("\"tailnet\":\"lab\"")) // handle normalized
+        assertTrue(body.contains("\"label\":\"Galaxy Watch Ultra\""))
     }
 
     @Test
-    fun `unknown packet fields are ignored and a missing gateway host is no packet`() {
-        assertNull(PairingClient.parsePacket("""{"authkey":"x","future_field":{"a":1}}""")) // no fqdn
-        assertNull(PairingClient.parsePacket("not json"))
-        val p = PairingClient.parsePacket("""{"authkey":"x","gateway_fqdn":"g.ts.net","someday":true}""")!!
-        assertEquals(0, p.gatewayPort) // absent ports default to 0 — the caller applies the 8642 convention
+    fun `ack body carries only the secret`() {
+        assertEquals("{\"v\":2,\"secret\":\"$secret\"}", PairingClient.ackBody(secret))
+    }
+
+    // ── the status contract ──────────────────────────────────────────────────────────────────
+    @Test
+    fun `201 issues the gateway code`() {
+        val o = PairingClient.outcomeOf(201, """{"code":"429183","expires_in":300}""")
+        assertEquals(PairingClient.Outcome.Begun("429183", 300), o)
     }
 
     @Test
-    fun `the redacted line never repeats the authkey or the api key`() {
-        val line = PairingClient.parsePacket(packetJson)!!.redacted()
-        assertFalse(line, line.contains("SECRETVALUE"))
-        assertFalse(line, line.contains("APIKEY"))
-        assertFalse(line, line.contains("WKTOKEN"))
-        assertTrue(line, line.contains("auth.len=22"))
-        assertTrue(line, line.contains("gateway.lab.ts.net"))
+    fun `201 with a malformed code is Malformed not a fake Begun`() {
+        assertTrue(PairingClient.outcomeOf(201, """{"code":"12345a"}""") is PairingClient.Outcome.Malformed)
+        assertTrue(PairingClient.outcomeOf(201, "{}") is PairingClient.Outcome.Malformed)
     }
 
-    // ── outcome mapping (the status-code contract) ──────────────────────────────────────────
     @Test
-    fun `status codes map to the documented outcomes`() {
-        assertTrue(PairingClient.outcomeOf(202, "") is PairingClient.Outcome.Queued)
+    fun `204 reads as Pending`() {
         assertTrue(PairingClient.outcomeOf(204, "") is PairingClient.Outcome.Pending)
+    }
+
+    @Test
+    fun `200 ready parses the pickup packet`() {
+        val body = """{"state":"ready","authkey":"tskey-x","key_id":"kid1","profile":"wear",""" +
+            """"gateway_fqdn":"tux.tail.ts.net","gateway_port":8642,"watchkit_port":42651,"private_port":42654}"""
+        val o = PairingClient.outcomeOf(200, body)
+        assertTrue(o is PairingClient.Outcome.Ready)
+        val p = (o as PairingClient.Outcome.Ready).packet
+        assertEquals("tux.tail.ts.net", p.gatewayFqdn)
+        assertEquals(42654, p.privatePort)
+        assertEquals("wear", p.profile)
+        // v2 law: NO api key in the public packet — that arrives later over the private lane.
+        assertFalse(body.contains("api_key"))
+    }
+
+    @Test
+    fun `200 token parses the device token`() {
+        val o = PairingClient.outcomeOf(200, """{"token":"wtk-abcdef"}""")
+        assertEquals(PairingClient.Outcome.Tokened("wtk-abcdef"), o)
+    }
+
+    @Test
+    fun `THE LIVE DOOR SPACES ITS COLONS — stdlib json bodies must still parse`() {
+        // json.dumps serializes '"state": "ready"' — the original sniff used to miss it
+        // and read the pickup as Malformed (caught live 2026-11-09).
+        val ready = """{"authkey": "tskey-x", "key_id": "k", "profile": "wear", """ +
+            """"gateway_fqdn": "t.ts.net", "gateway_port": 8642, "watchkit_port": 42651, """ +
+            """"private_port": 42654, "state": "ready"}"""
+        val o = PairingClient.outcomeOf(200, ready)
+        assertTrue(o is PairingClient.Outcome.Ready)
+        assertEquals("t.ts.net", (o as PairingClient.Outcome.Ready).packet.gatewayFqdn)
+        val ack = """{"token": "wtk-fedcba987654", "device": {"hostname": "w"}}"""
+        assertTrue(PairingClient.outcomeOf(200, ack) is PairingClient.Outcome.Tokened)
+    }
+
+    @Test
+    fun `200 without either shape is Malformed`() {
+        assertTrue(PairingClient.outcomeOf(200, """{"hello":"world"}""") is PairingClient.Outcome.Malformed)
+        assertTrue(PairingClient.outcomeOf(200, "not json") is PairingClient.Outcome.Malformed)
+    }
+
+    @Test
+    fun `410 429 426 and 403 map to their honest outcomes`() {
         assertTrue(PairingClient.outcomeOf(410, "") is PairingClient.Outcome.Gone)
         assertTrue(PairingClient.outcomeOf(429, "") is PairingClient.Outcome.RateLimited)
-        val fail = PairingClient.outcomeOf(500, "boom")
-        assertTrue(fail is PairingClient.Outcome.Failed)
-        assertEquals("HTTP 500", (fail as PairingClient.Outcome.Failed).why)
-        val claimed = PairingClient.outcomeOf(200, packetJson)
-        assertTrue(claimed is PairingClient.Outcome.Claimed)
-        assertEquals("gateway.lab.ts.net", (claimed as PairingClient.Outcome.Claimed).packet.gatewayFqdn)
-        // 200 with garbage is Malformed — terminal (the packet was CONSUMED; re-polling
-        // would only turn the truth into a misleading "spent"). Never a crash.
-        assertTrue(PairingClient.outcomeOf(200, "{{{") is PairingClient.Outcome.Malformed)
+        assertTrue(PairingClient.outcomeOf(426, "") is PairingClient.Outcome.ServerTooOld)
+        val r = PairingClient.outcomeOf(403, """{"error":"pairing window closed"}""")
+        assertTrue(r is PairingClient.Outcome.Refused)
+        assertEquals("pairing window closed", (r as PairingClient.Outcome.Refused).why)
+        assertTrue(PairingClient.outcomeOf(423, """{"error":"code locked"}""") is PairingClient.Outcome.Refused)
+        assertTrue(PairingClient.outcomeOf(500, "") is PairingClient.Outcome.Failed)
     }
 
     @Test
-    fun `a null watchkit_token parses — the plugin serves explicit null, not absence`() {
-        // Measured live 2026-11-06 (first real-watch drill): the packet carried
-        // "watchkit_token":null because no watchkit bearer was configured. A non-null
-        // field deserialized that null, threw AFTER the one-shot GET, and the retry
-        // loop honestly-lyingly reported "that PIN is spent". The contract says
-        // nullable; the model must honor it.
-        val json = packetJson.replace("\"watchkit_token\":\"WKTOKEN\"", "\"watchkit_token\":null")
-        val p = PairingClient.parsePacket(json)!!
-        assertNull(p.watchkitToken)
-        assertTrue(p.redacted(), p.redacted().contains("wkToken.len=0"))
+    fun `newSecret is 64 hex from SecureRandom and unique per call`() {
+        val s1 = PairingClient().newSecret()
+        val s2 = PairingClient().newSecret()
+        assertEquals(64, s1.length)
+        assertTrue(s1.matches(Regex("^[0-9a-f]{64}$")))
+        assertFalse(s1 == s2)
     }
 
-    // ── the knock→poll loop ──────────────────────────────────────────────────────────────────
-    /** Scripted transport: responses in order; records method+url+body per call. */
-    private class FakeHttp(vararg responses: Pair<Int, String>) : PairingClient.Http {
-        val queue = responses.toMutableList()
+    // ── orchestration: begin → poll → ack ────────────────────────────────────────────────────
+    private class ScriptedHttp(private vararg val replies: PairingClient.Res) : PairingClient.Http {
         val calls = mutableListOf<Triple<String, String, String?>>()
+        var i = 0
         override fun exchange(method: String, url: String, bodyJson: String?): PairingClient.Res {
             calls += Triple(method, url, bodyJson)
-            val (code, body) = if (queue.isNotEmpty()) queue.removeAt(0) else 204 to ""
-            return PairingClient.Res(code, body)
-        }
-    }
-
-    /** Run claim() against a scripted transport: fake sleep advances the fake clock. */
-    private class Harness(vararg responses: Pair<Int, String>) {
-        val http = FakeHttp(*responses)
-        val client = PairingClient(http)
-        val slept = mutableListOf<Long>()
-        var t = 0L
-        fun run(maxWaitMs: Long = 120_000L): PairingClient.Outcome = runBlocking {
-            client.claim(
-                "lab", "123456", "Watch",
-                maxWaitMs = maxWaitMs,
-                sleep = { slept += it; t += it },
-                now = { t },
-            )
+            return replies[(i++).coerceAtMost(replies.size - 1)]
         }
     }
 
     @Test
-    fun `claim posts the knock then returns the packet when the poll answers 200`() {
-        val h = Harness(202 to "", 204 to "", 200 to packetJson)
-        val out = h.run()
-        assertTrue(out is PairingClient.Outcome.Claimed)
-        assertEquals("wear", (out as PairingClient.Outcome.Claimed).packet.profile)
+    fun `pair shows the gateway code then collects on approval`() {
+        val http = ScriptedHttp(
+            PairingClient.Res(201, """{"code":"429183","expires_in":300}"""),
+            PairingClient.Res(204, ""),
+            PairingClient.Res(
+                200,
+                """{"state":"ready","authkey":"tskey-x","key_id":"k","profile":"wear",""" +
+                    """"gateway_fqdn":"t.ts.net","gateway_port":8642,"watchkit_port":42651,"private_port":42654}""",
+            ),
+            PairingClient.Res(200, """{"token":"wtk-dev1"}"""),
+        )
+        var shown = ""
+        val out = runBlocking {
+            PairingClient(http).pair("lab", secret, "watch", maxWaitMs = 60_000,
+                sleep = {}, now = { 0L }, onCode = { shown = it })
+        }
+        assertTrue(out is PairingClient.Outcome.Completed)
+        val c = out as PairingClient.Outcome.Completed
+        assertEquals("wtk-dev1", c.deviceToken)
+        assertEquals("wear", c.packet.profile) // the pickup AND the token, in one hand
+        assertEquals("429183", shown) // the UI saw the GATEWAY's code the moment begin answered
+        // begin POST carries the secret; every poll GET speaks ONLY the secret (no code in any
+        // URL — the review law); the ack is the final POST. One 204 lands between begin and ready.
+        assertEquals(listOf("POST", "GET", "GET", "POST"), http.calls.map { it.first })
+        assertTrue(http.calls[1].second.endsWith("?secret=$secret"))
+        assertTrue(http.calls[2].second.endsWith("?secret=$secret"))
+        assertFalse(http.calls[1].second.contains("429183")) // the code rides NO url
     }
 
     @Test
-    fun `claim first call is a POST knock and the rest are GET polls`() {
-        val h = Harness(202 to "", 200 to packetJson)
-        h.run()
-        assertEquals("POST", h.http.calls[0].first)
-        assertEquals("/pair/claim", h.http.calls[0].second.substringAfter("ts.net"))
-        assertTrue(h.http.calls[0].third!!.contains("\"pin\":\"123456\""))
-        assertEquals("GET", h.http.calls[1].first)
-        assertEquals("pin=123456", h.http.calls[1].second.substringAfter("?"))
+    fun `pair returns ServerTooOld instead of retrying a v1 door`() {
+        val http = ScriptedHttp(
+            PairingClient.Res(201, """{"code":"429183","expires_in":300}"""),
+            PairingClient.Res(426, ""),
+        )
+        val out = runBlocking {
+            PairingClient(http).pair("lab", secret, "watch", maxWaitMs = 60_000, sleep = {}, now = { 0L })
+        }
+        assertTrue(out is PairingClient.Outcome.ServerTooOld)
     }
 
     @Test
-    fun `claim returns Gone when the funnel says 410`() {
-        val h = Harness(202 to "", 410 to "")
-        assertTrue(h.run() is PairingClient.Outcome.Gone)
+    fun `pair survives 429 and keeps polling until approval`() {
+        val http = ScriptedHttp(
+            PairingClient.Res(201, """{"code":"111111","expires_in":300}"""),
+            PairingClient.Res(429, ""),
+            PairingClient.Res(204, ""),
+            PairingClient.Res(
+                200,
+                """{"state":"ready","authkey":"tsk","key_id":"k","profile":"wear",""" +
+                    """"gateway_fqdn":"t.ts.net","gateway_port":8642,"watchkit_port":42651,"private_port":42654}""",
+            ),
+            PairingClient.Res(200, """{"token":"wtk-2"}"""),
+        )
+        var clock = 0L
+        val out = runBlocking {
+            PairingClient(http).pair("lab", secret, "watch", maxWaitMs = 500_000,
+                sleep = { clock += it }, now = { clock })
+        }
+        assertTrue("429 must be polled through, got $out", out is PairingClient.Outcome.Completed)
     }
 
     @Test
-    fun `a 429 while polling does not end the wait and keeps the pin`() {
-        val h = Harness(202 to "", 429 to "", 204 to "", 200 to packetJson)
-        val out = h.run()
-        assertTrue("429 must be polled through, got $out", out is PairingClient.Outcome.Claimed)
-        // The 429 poll must NOT have re-POSTed (the knock happens once; the PIN stays as-is).
-        assertEquals(1, h.http.calls.count { it.first == "POST" })
-        assertEquals(3, h.http.calls.count { it.first == "GET" })
-    }
-
-    @Test
-    fun `the wait window ends with the last honest word, backoff capped and advancing`() {
-        // Endless 204s: claim stops at the deadline and returns Pending — the wearer can knock
-        // again with the SAME PIN (nothing was spent).
-        val h = Harness(202 to "")
-        val out = h.run(maxWaitMs = 30_000L)
+    fun `pair deadline reports the last honest state, never a fake success`() {
+        val http = ScriptedHttp(
+            PairingClient.Res(201, """{"code":"111111","expires_in":300}"""),
+            PairingClient.Res(204, ""),
+        )
+        var clock = 0L
+        val out = runBlocking {
+            PairingClient(http).pair("lab", secret, "watch", maxWaitMs = 30_000,
+                sleep = { clock += it }, now = { clock })
+        }
         assertTrue(out is PairingClient.Outcome.Pending)
-        assertTrue("sleeps must advance the fake clock or the loop never ends", h.slept.isNotEmpty())
-        assertTrue("backoff is capped (no unbounded sleeps)", h.slept.max()!! <= 20_000L)
     }
 
     @Test
-    fun `a dead knock surfaces Failed without polling at all`() {
-        val h = Harness(404 to "")
-        val out = h.run()
-        assertTrue(out is PairingClient.Outcome.Failed)
-        assertEquals(1, h.http.calls.size)
+    fun `pickup packet redaction never leaks the authkey`() {
+        val p = PickupPacket(authKey = "tskey-SUPERSECRET", keyId = "k", gatewayFqdn = "t.ts.net", gatewayPort = 8642)
+        assertFalse(p.redacted().contains("SUPERSECRET"))
+        assertTrue(p.redacted().contains("auth.len=${"tskey-SUPERSECRET".length}"))
     }
 
     @Test
-    fun `exchange exceptions become Failed, never crash the caller`() {
-        val boom = PairingClient(PairingClient.Http { _, _, _ -> throw java.io.IOException("connect failed") })
-        val out = runBlocking { boom.knock("lab", "123456", "w") }
-        assertTrue(out is PairingClient.Outcome.Failed)
-        assertEquals("connect failed", (out as PairingClient.Outcome.Failed).why)
-    }
-
-    @Test
-    fun `the PIN the loop claims with survives validation round trip (domain seam)`() {
-        val pin = PairingCode.mint()
-        val url = PairingClient.pollUrl("lab", pin)
-        assertTrue(url.endsWith("?pin=$pin"))
-    }
-    @Test
-    fun `a malformed 200 ends the wait — the consumed PIN is never re-polled`() {
-        // The exact failure that ate the first live drill: packet served (200), body
-        // unparseable, loop kept polling, next GET said 410, wearer saw "spent" for a
-        // claim that had actually SUCCEEDED server-side.
-        val h = Harness(202 to "", 204 to "", 200 to "not json")
-        val out = h.run()
-        assertTrue(out is PairingClient.Outcome.Malformed)
-        assertEquals(3, h.http.calls.size) // POST + one pending GET + the 200 — no fourth call
+    fun `parsePickup demands fqdn and authkey`() {
+        assertNull(PairingClient.parsePickup("""{"state":"ready","authkey":"a","gateway_fqdn":""}"""))
+        assertNull(PairingClient.parsePickup("""{"state":"ready","authkey":"","gateway_fqdn":"t.ts.net"}"""))
     }
 }

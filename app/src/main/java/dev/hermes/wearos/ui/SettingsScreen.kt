@@ -15,6 +15,7 @@ import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +57,7 @@ import androidx.wear.compose.material.Button
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.wear.compose.material.ButtonDefaults
+import androidx.wear.compose.material.Checkbox
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Switch
 import androidx.wear.compose.material.Text
@@ -119,14 +121,15 @@ fun SettingsScreen(
     var tnTesting by remember { mutableStateOf(false) }
     var tnTestResult by remember { mutableStateOf("") }
     var tnReenrollArmed by remember { mutableStateOf(false) }
-    // PAIR page state (S5, SPEC §4): the funnel handle, the watch-minted PIN + its clock, and
-    // the funnel's last word. pairAttempt++ is the knock trigger for the claim LaunchedEffect.
+    // PAIR page state (pairing v2, SPEC §4): the funnel handle, the CODE THE GATEWAY ISSUES
+    // (we display it; we never mint it), the flow's status line, and pairAttempt++ as the knock
+    // trigger. The 256-bit device secret lives in memory for the duration of one knock only.
     var pairHandle by remember { mutableStateOf("") }
-    var pairPin by remember { mutableStateOf(PairingCode.mint()) }
-    var pairMintedAt by remember { mutableStateOf(System.currentTimeMillis()) }
+    var pairCode by remember { mutableStateOf("") }
     var pairStatus by remember { mutableStateOf("type your tailnet handle, then knock") }
     var pairBusy by remember { mutableStateOf(false) }
     var pairAttempt by remember { mutableStateOf(0) }
+    var pairUnpairArmed by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("…") }
     var testing by remember { mutableStateOf(false) }
     var wkResult by remember { mutableStateOf("") }
@@ -177,6 +180,9 @@ fun SettingsScreen(
     var voiceSrc by remember { mutableStateOf(dev.hermes.wearos.domain.VoiceCatalog.ANY) }
     var fbSrc by remember { mutableStateOf(dev.hermes.wearos.domain.VoiceCatalog.ANY) }
     val ttsEngine by settings.ttsEngine.collectAsState()
+    // issue #7: voice-out source — system cascade vs gateway (Wear Kit cloned voices)
+    val ttsSource by settings.ttsSource.collectAsState()
+    var gwProbe by remember { mutableStateOf(0) }
     val ttsFallback by settings.ttsFallback.collectAsState()
     val markdownOn by settings.markdownEnabled.collectAsState()
     val bodyTools by settings.bodyTools.collectAsState()
@@ -188,39 +194,48 @@ fun SettingsScreen(
     // hub of nav rows; every section lives on its own page. Sections below are UNCHANGED logic,
     // just wrapped in `if (page == …)` — same state, same prefs, same behavior.
     var page by remember { mutableStateOf(SettingsPage.Root) }
+    // Enrollment is a FULL PAGE of the Voice page, not a Dialog: this watch's
+    // floating IME rises over activity-window fields (chat, prompt editor) and
+    // stays deaf inside Dialog windows (owner: 'click the box, nothing happens').
+    var enrolling by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = enrolling) { enrolling = false }
     androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = page.up() }
-    // PAIR GATE (S5): first launch (empty registry) and engine edges into NEEDS_AUTH request
-    // the Pair screen — this edge lands the page. Cleared on packet arrival (Graph.pairApplyPacket).
+    // PAIR GATE (SPEC §4): first launch (empty registry) and engine edges into NEEDS_AUTH request
+    // the Pair screen — this edge lands the page. Cleared on pickup (Graph.pairApplyPickup).
     val pairNow by WearApp.Graph.pairRequested.collectAsState()
     LaunchedEffect(pairNow) { if (pairNow) page = SettingsPage.Pair }
-    // KNOCK + POLL the funnel (client.claim owns the backoff; a 429 never burns the PIN).
+    // KNOCK the funnel ONCE: begin → show the gateway's code → poll with backoff → ack (client
+    // pair() owns the whole loop; a 429 backs off, never burns the code). The device secret is
+    // generated fresh per knock and never leaves this process except inside the POST/poll body.
     LaunchedEffect(pairAttempt) {
         if (pairAttempt == 0) return@LaunchedEffect
         val h = PairingCode.normalizeHandle(pairHandle)
         if (h.isEmpty()) { pairStatus = "⚠️ set your tailnet handle first"; return@LaunchedEffect }
         settings.setTailnetHandle(h)
         pairBusy = true
+        pairCode = ""
         pairStatus = "knocking on $h.ts.net…"
-        val out = withContext(Dispatchers.IO) { PairingClient().claim(h, pairPin, android.os.Build.MODEL) }
+        val client = PairingClient()
+        val secret = client.newSecret()
+        val out = withContext(Dispatchers.IO) {
+            client.pair(h, secret, android.os.Build.MODEL,
+                onCode = { code -> pairCode = code; pairStatus = "type $code on the PC — it approves there" })
+        }
         pairBusy = false
         pairStatus = when (out) {
-            is PairingClient.Outcome.Claimed -> {
-                WearApp.Graph.pairApplyPacket(out.packet)
-                "claimed ✓ — enrolling over the tunnel"
+            is PairingClient.Outcome.Completed -> {
+                WearApp.Graph.pairApplyPickup(out.packet, secret, out.deviceToken)
+                "paired ✓ — keys land over the tunnel"
             }
-            PairingClient.Outcome.Gone -> "that PIN is spent — tap New PIN"
-            PairingClient.Outcome.Malformed -> "⚠️ packet arrived unreadable — tap New PIN and retry"
-            PairingClient.Outcome.RateLimited -> "too many tries (429) — the PIN holds, knock again"
+            is PairingClient.Outcome.Refused -> "⚠️ ${out.why}"
+            PairingClient.Outcome.ServerTooOld -> "⚠️ gateway plugin predates pairing v2 — update the plugin"
+            PairingClient.Outcome.Gone -> "code gone — knock again"
+            PairingClient.Outcome.Malformed -> "⚠️ the door answered unreadably — knock again"
+            PairingClient.Outcome.RateLimited -> "too many tries (429) — knock again soon"
             PairingClient.Outcome.Pending -> "still waiting on the PC — knock again any time"
-            PairingClient.Outcome.Queued -> "knocked — waiting for hermes watch pair"
             is PairingClient.Outcome.Failed -> "⚠️ ${out.why}"
+            else -> pairStatus
         }
-    }
-    // The 5-min TTL (SPEC §4): when it dies, the screen says so instead of polling a dead PIN.
-    LaunchedEffect(pairPin) {
-        val left = PairingCode.TTL_MS - (System.currentTimeMillis() - pairMintedAt)
-        if (left > 0) delay(left + 50)
-        if (!pairBusy && pairAttempt > 0) pairStatus = "PIN expired — tap New PIN"
     }
     val gwStatus by WearApp.Graph.endpoints.status.collectAsState()
     val netInfo by WearApp.Graph.network.net.collectAsState() // the link truth (§11.6)
@@ -294,7 +309,8 @@ fun SettingsScreen(
 
         if (page != SettingsPage.Root) {
             Column(
-                modifier = Modifier.fillMaxWidth().clickable { page = page.up() },
+                modifier = Modifier.fillMaxWidth().clickable {
+                    if (enrolling) enrolling = false else page = page.up() },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { Text(if (page.up() == SettingsPage.Root) "‹  all settings" else "‹  " + page.up().title.lowercase(), style = MaterialTheme.typography.caption2) }
             Spacer(Modifier.height(6.dp))
@@ -302,7 +318,10 @@ fun SettingsScreen(
         if (page == SettingsPage.Root) {
             val selGw = gateways.firstOrNull { it.id == selectedGwId }
             SettingNavRow("🌐", "Gateways", "${gateways.size} saved" + (if (selGw != null) " · ✓ ${selGw.label}" else "")) { page = SettingsPage.Gateways }
-            SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×") { page = SettingsPage.Voice }
+            SettingNavRow("🗣️", "Voice out", (if (voiceOut) "on" else "off") + " · ${String.format(java.util.Locale.US, "%.2f", ttsRate)}×" + (if (ttsSource == "gateway") " · 🌐" else "")) {
+                page = SettingsPage.Voice
+                Thread { dev.hermes.wearos.voice.GatewayTts.refresh(); gwProbe++ }.start()
+            }
             // #13: voice-IN gets its own page (was buried in Voice out); subtitle names the
             // provider the orb will use, straight from the same in-memory truth the mic reads.
             SettingNavRow("🎤", "Voice in", SttProviders.navSummary(SttProviders.fromId(SttProviders.current))) { page = SettingsPage.VoiceIn }
@@ -697,12 +716,13 @@ fun SettingsScreen(
         )
         }
         if (page == SettingsPage.Pair) {
-        // ─── PAIR (SPEC §4 onboarding, S5): the bootstrap door ───────────────────────────
-        // The watch mints a one-shot 6-digit PIN (5-min TTL, re-mintable) and knocks the plugin's
-        // funnel over plain HTTPS (the ONLY no-tunnel client, net/PairingClient). The PC's
-        // `hermes watch pair` answers the claim; the packet carries authkey + endpoints + keys and
-        // lands through Graph.pairApplyPacket — the Tailnet Done-handler's sequence, extended.
-        // IME rule holds: the handle EditLine saves on Done AND on the Save button.
+        // ─── PAIR (SPEC §4 onboarding, PAIRING v2): the bootstrap door ───────────────────
+        // The GATEWAY issues the one-shot code (the watch never chooses it); the watch knocks
+        // the plugin's funnel over plain HTTPS (the ONLY no-tunnel client, net/PairingClient)
+        // and polls by its 256-bit device secret — the code rides no URL. Approval happens on
+        // a login surface (CLI/TUI/Desktop), never in a chat the model can write into. The
+        // pickup carries the authkey + endpoints; the KEYS arrive later over the private lane
+        // (Graph.pairFinishSession). IME rule holds: the handle saves on Done AND on Save.
         FieldLabel("Tailnet handle")
         EditLine(
             value = pairHandle,
@@ -714,20 +734,20 @@ fun SettingsScreen(
             onClick = { scope.launch { settings.setTailnetHandle(pairHandle) } },
             modifier = Modifier.size(width = 72.dp, height = 32.dp),
         ) { Text("Save", style = MaterialTheme.typography.button) }
-        FieldLabel("Your PIN (5 min)")
+        FieldLabel("Your code (gateway-issued, 5 min)")
         Text(
-            pairPin,
+            if (pairCode.isNotEmpty()) pairCode else "——————",
             style = MaterialTheme.typography.title2.copy(letterSpacing = 8.sp),
             color = MaterialTheme.colors.primary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            if (pairBusy) "…" else pairStatus,
+            if (pairBusy && pairCode.isEmpty()) "…" else pairStatus,
             style = MaterialTheme.typography.caption2,
             color = when {
-                pairStatus.startsWith("⚠️") || pairStatus.startsWith("that PIN") || pairStatus.startsWith("PIN expired") -> Color(0xFFE57373)
-                pairStatus.startsWith("claimed") -> Color(0xFF81C784)
+                pairStatus.startsWith("⚠️") || pairStatus.startsWith("code gone") -> Color(0xFFE57373)
+                pairStatus.startsWith("paired") -> Color(0xFF81C784)
                 else -> MaterialTheme.colors.onBackground.copy(alpha = 0.7f)
             },
             fontSize = 11.sp,
@@ -738,19 +758,24 @@ fun SettingsScreen(
                 onClick = { if (!pairBusy) pairAttempt++ },
                 modifier = Modifier.size(width = 84.dp, height = 32.dp),
                 colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.85f)),
-            ) { Text(if (pairBusy) "…" else "Knock", style = MaterialTheme.typography.button) }
-            Button(
-                onClick = {
-                    pairPin = PairingCode.mint(); pairMintedAt = System.currentTimeMillis()
-                    pairStatus = "new PIN — knock when ready"
-                },
-                modifier = Modifier.size(width = 84.dp, height = 32.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
-            ) { Text("New PIN", style = MaterialTheme.typography.button) }
+            ) { Text(if (pairBusy) "…" else if (pairCode.isEmpty()) "Knock" else "Retry", style = MaterialTheme.typography.button) }
+            if (dev.hermes.wearos.net.PrivateLane.configured) {
+                Button(
+                    onClick = {
+                        if (pairUnpairArmed) { WearApp.Graph.unpair(); pairUnpairArmed = false
+                            pairStatus = "unpaired — the gateway revoked this watch" }
+                        else { pairUnpairArmed = true; pairStatus = "tap Unpair again to revoke" }
+                    },
+                    modifier = Modifier.size(width = 84.dp, height = 32.dp),
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF5C2B2B)),
+                ) { Text(if (pairUnpairArmed) "Sure?" else "Unpair", style = MaterialTheme.typography.button) }
+            }
         }
         Text(
-            "On the PC: hermes watch pair — it types this PIN once. The claim is served exactly " +
-                "once, the funnel is reached BEFORE any tunnel exists, and the authkey never appears in a log.",
+            "On the PC: hermes watch pair (or the Wear Kit pane) — the pairing window opens there, " +
+                "one code per open. The code is typed on the PC, never spoken to an agent; the " +
+                "authkey and keys never appear in a log, and the gateway key arrives only over " +
+                "this watch's private tailnet lane.",
             style = MaterialTheme.typography.caption2,
             color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
         )
@@ -1009,22 +1034,103 @@ fun SettingsScreen(
             Text("🔊 voice out", style = MaterialTheme.typography.body2)
             Switch(checked = voiceOut, onCheckedChange = { speak.setVoiceEnabled(it) })
         }
+        // VOICE SOURCE (issue #7, SPEC §19): speak with the OS cascade (Samsung/Google —
+        // the engine+voice rows below) or with the WEAR KIT's cloned gateway voices served
+        // by the private lane. The probe (GET /voice/cards) runs on entry to this page; the
+        // note states the truth — engine missing is a refusal, not a silent dead end, and
+        // a lane that fails mid-answer falls the sentence back to the system cascade.
+        FieldLabel("voice source")
+        val gw = dev.hermes.wearos.voice.GatewayTts
+        gwProbe  // the entry probe bumps this volatile counter-backed state → fresh note/cards
+        // Equal-size pills, STACKED: two 150dp+ buttons side by side overflow the inscribed
+        // square of the round dial and the longer label ellipsizes into looking smaller.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("system" to "system", "gateway" to "gateway 🌐").forEach { (id, label) ->
+                val chosen = ttsSource == id
+                Button(
+                    onClick = { speak.setVoiceSource(id); gwProbe++ },
+                    modifier = Modifier.size(width = 168.dp, height = 36.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = if (chosen) MaterialTheme.colors.primary.copy(alpha = 0.5f)
+                        else MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                ) { Text(label, style = MaterialTheme.typography.button, maxLines = 1) }
+            }
+        }
+        if (ttsSource == "gateway") {
+            StatusLine("lane", gw.note)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = { Thread { gw.refresh(); gwProbe++ }.start() },
+                    modifier = Modifier.size(width = 100.dp, height = 30.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                ) { Text("↻ probe", style = MaterialTheme.typography.button) }
+            }
+            if (gw.cards.isNotEmpty()) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                FieldLabel("voices · ✓ = default")
+                gw.cards.forEach { (cid, label) ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(label.take(14), style = MaterialTheme.typography.body2,
+                            modifier = Modifier.weight(1f))
+                        Button(
+                            onClick = { Thread { gw.previewCard(cid, agentNow) }.start() },
+                            modifier = Modifier.size(width = 48.dp, height = 34.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                        ) { Text("▶", style = MaterialTheme.typography.button) }
+                        // DEFAULT checkbox (owner 2026-11-10): the state lives in the canonical
+                        // prefs doc (voices.__default__, gateway-canonical, higher-rev-wins) —
+                        // the wrist mirrors it and edits it THROUGH the lane, never owns it.
+                        Checkbox(
+                            checked = gw.defaultCard == cid,
+                            onCheckedChange = { on ->
+                                if (on) Thread { gw.setAsDefault(cid); gwProbe++ }.start()
+                            },
+                        )
+                    }
+                }
+            }
+            // ➕ NEW VOICE (owner 2026-11-10): enrollment lives on the WATCH, right under
+            // the voices it extends — name, one scripted take, hear it, retry or accept.
+            // Shows even when the library is EMPTY (a dead list gets its first voice here).
+            Button(
+                onClick = { enrolling = true },
+                modifier = Modifier.size(width = 140.dp, height = 36.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.4f)),
+            ) { Text("➕ new voice", style = MaterialTheme.typography.button, maxLines = 1) }
+        }
         // SPEECH INPUT lives on its own nested page now (batch-4 #13: Settings ▸ Voice in) —
         // the owner asked for the orb's default engine to be settable the same way voice-out
         // is, not buried under it.
         // VOLUME (owner 2026-10-29): above the speed slider — the ear adjusts loudness first.
         // Edits the CURRENT AGENT's override (unset agents ride the global default); the orb
         // dial's double-slider and the mute satellite write the SAME store, so all three agree.
+        // EAR-TEST (owner 2026-11-10, second ruling): the ▶ on a voice row is the ONLY
+        // preview — it plays through the real pipeline and respects both knobs (gain on
+        // the player, dial speed on the gateway). Sliders commit SILENTLY like they used
+        // to; dragging must not spam the engine.
+        val gwSource = ttsSource == "gateway"
+        var gwSpeed by remember { mutableStateOf(if (gw.laneSpeed > 0f) gw.laneSpeed else ttsRate) }
         VolumeSlider(
             volume = replyVolFor,
             agent = agentNow,
             commit = { speak.setReplyVolume(it) },
-            onDone = { if (voiceOut) speak.preview() },
+            onDone = { },
         )
         RateSlider(
-            rate = ttsRate,
-            onRate = { speak.setSpeechRate(it) },
-            onDone = { if (voiceOut) speak.preview() },
+            rate = if (gwSource) gwSpeed else ttsRate,
+            onRate = { v -> if (gwSource) gwSpeed = v else speak.setSpeechRate(v) },
+            onDone = {
+                if (gwSource) {
+                    val v = gwSpeed
+                    Thread { gw.setSpeed(v); gwSpeed = gw.laneSpeed.coerceAtLeast(v); gwProbe++ }.start()
+                }
+            },
         )
         // ENGINE row (owner: "choose google/samsung/(other if exists)") — switching packages
         // rebuilds the live engine; its voices load right after.
@@ -1386,6 +1492,15 @@ fun SettingsScreen(
             StatusLine("author", "Clayton Young")
         }
     }
+        // ENROLLMENT OVERLAY (owner IME law): rendered in the ACTIVITY window as a
+        // full-screen sheet over the settings surface — the Wear floating keyboard
+        // rises here exactly as it does in chat; inside androidx Dialog windows on
+        // this watch it stays mute (proven twice, 2026-11-11).
+        if (enrolling && page == SettingsPage.Voice) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
+                VoiceEnroll(onClose = { enrolling = false; gwProbe++ }, agent = agentNow)
+            }
+        }
     } // Box (batch-5 #18 edge-scroll host)
 }
 

@@ -11,11 +11,10 @@ name: Plugin mirror sync
 # ② Any open PR touching hermes-plugin/** publishes mirror branch `pr-<n>`
 #    (number-keyed, so a source-branch rename can't orphan it; PR runs use
 #    the PR-head copy of this file, so it works from the very first PR).
-# ③ The daily cron re-publishes main (so a red run can strand the mirror at
-#    most a day) AND prunes `pr-*` branches whose PRs closed/merged — GitHub
-#    does not reliably run workflows on `pull_request closed`, so the cron is
-#    the sweeper. workflow_dispatch runs the same prune for on-demand proof
-#    ("prune now" without waiting for 07:23 UTC).
+# ③ The daily cron re-publishes main (a red run can strand the mirror at
+#    most a day) AND prunes `pr-*` branches whose PRs closed — GitHub does
+#    not reliably run workflows on `pull_request closed`, so the cron is the
+#    sweeper.
 #
 # Needs secret MIRROR_PAT: fine-grained PAT, single repo
 # borealBytes/hermes-wearos-plugin, Contents: read+write. A missing secret
@@ -78,7 +77,7 @@ jobs:
           fi
 
       - name: prune stale pr-* branches
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'schedule'
         env:
           # GITHUB_TOKEN, NOT MIRROR_PAT: a Contents-permissions PAT cannot
           # read PRs at all (would 404); GITHUB_TOKEN has pull-requests:read.

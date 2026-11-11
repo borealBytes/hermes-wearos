@@ -70,10 +70,19 @@ The Gemini complaint: every press = new chat, no history. Hermes Wear OS flips i
 
 ## 4. Settings & pairing (all on-device)
 
-**Onboarding:** (1) mDNS auto-discovery of the gateway on home Wi-Fi (no typing) · (2) PC runs
-`hermes watch pair` (or equivalent CLI) → 6-digit one-shot code (5-min TTL) · (3) watch taps digits →
-receives token + endpoints, Keystore-encrypted. Fallbacks: manual entry with keyboard/paste, `adb push`
-config for dev. (No QR scan — Ultra has no usable camera.)
+**Onboarding (v2, review-locked):** pairing is a **device-flow code ceremony** — the window is
+closed by default and opened at the gateway (`hermes watch pair` / pane Pair button / bare `/pair`
+on a local surface); the watch types the funnel handle and knocks, carrying a 256-bit device secret
+**it** generated at `begin`; the gateway mints the 6-digit code (never model-visible, never in any
+URL after `begin`) and shows it on the glass; approval happens only on CLI/TUI/Desktop (messaging
+replies honestly point there — and 3 wrong typed codes lock *approval*, never the watch's polls);
+the watch picks up by secret, acks for its device token, enrolls its tsnet node, and binds it to
+the device via `tailscale whois` on the first **private-lane** session (`:42654`, tailnet-only) —
+the same whois-verified lane is the only road `API_SERVER_KEY` and the watchkit bearer ever travel.
+Everything lands Keystore-sealed (AES-256-GCM, non-exported). Revoke is full removal: token+queue,
+tailnet-node DELETE, agent-key rotation (hot for named profiles; `default` warns about its restart).
+Fallbacks: manual authkey entry (Settings ▸ Gateways ▸ Tailnet), `adb push` config for dev. (No QR
+scan — Ultra has no usable camera.)
 
 **Settings tree:** Gateways (registry rows, endpoint winner dots, add/edit/delete, row-tap select,
 the live link readout of §11.6) ·
@@ -326,6 +335,35 @@ does not exist** (GitHub 404; Go module proxy `not found` for both `tailscale/ts
 see the SHIPPED block above; the authkey flow is `-e set_tailnet_key`/Settings ▸ Tailnet, and
 the "Phase B artifact" this section was is now `tailnet/go/` + `TailnetService`.
 
+**Addendum (2026-11-09, pairing v2 — the review's ceremony, lived through the first wear-demo run):**
+the lane/door split and every surprise that cost a fix commit are now pinned in code and tests.
+What the first live ceremonies proved (all re-verified on-wrist after the fixes):
+
+- **The registry is gateway-global.** The door is ONE shared port hosted by the launch profile's
+  process, while `hermes -p <p> watch pair` runs under `…/profiles/<p>`; `pairing._default_home()`
+  therefore collapses a profile home to the gateway root — one fcntl-locked `pairing.json` shared
+  by door, CLI and lane. (Caught live: `begin` 403'd "pairing closed" seconds after opening.)
+- **Parse, don't sniff.** The door serializes with stdlib `json.dumps` (space after every colon);
+  the client's 200-branch dispatches on KEY PRESENCE after a real parse — substring sniffing on
+  compact JSON read a perfectly good pickup as Malformed (caught live).
+- **The grant law:** the device's OWN agent's key always flows over its lane — no grant, whatever
+  profile hosts the lane; a sibling agent's route 403s "no key grant yet" until the pane grants the
+  REQUESTED profile. (v2.0 gated the wrong side; its first live pairing caught it.)
+- **Watchkit bearer rides the lane, read through the routed profile's secret scope** — a plugin-host
+  thread has no scope bound and falls to `os.environ`, so a naive `_get_secret` shipped
+  `wkToken.len=0` forever (watchkit answered the watch's polls with 401).
+- **Self-node guard:** a lane dial whose whois resolves to the gateway's own node is a NAT'd dial
+  (emulator on the gateway box) — the lane refuses it *at the binding moment* (before capture), and
+  `revoke` never DELETEs the gateway's own node for a device bound that way.
+- **Watch side:** pickup folds the legacy mirror immediately (the phase probe reads its host; a
+  placeholder there means DEGRADED forever and the keys-edge never fires), DEGRADED counts as
+  tunnel-up for the lane session (it means the NODE is up; only the probe host lagged), the paired
+  agent persists (boot restore must dial the PAIRED agent's route), and the 20 s outbox beat
+  retries the first session while the secret is unspent.
+- **Cron alert titles** come from the cron store via the hook's `task_id` (`cron:<job>:<run>`): the
+  `state.db` title is written at finalize, seconds after `on_session_end` fires, so a DB-only
+  lookup was structurally doomed.
+
 
 ### 11.5 What "tailnet endpoint" can and cannot mean on the watch (owner bug, 2026-10-29)
 
@@ -552,6 +590,9 @@ Fix, three layers:
    `{agents:[{profile, has_key}]}` with the keys themselves, guarded by the existing watchkit
    bearer on a tailnet-only port. The watch refreshes them with the agent list and caches them,
    so switching agents works the first time on a machine that already has keys configured.
+   *(Superseded by pairing v2 / D17: `/agent_keys` is retired — watchkit answers 410 — and the
+   watch learns each agent's key over its own whois-verified private lane, per granted profile;
+   Settings ▸ Gateways ▸ Agent keys shows ✓/— from that lane, with ⟳ re-learning the same way.)*
 3. **Fail loud, degrade kind** — a 401 on submit says `no key for <agent> — Settings ▸ Gateways ▸
    Agent keys`, not `run submit 401: {…}`; `setup.sh --agent-keys` + the `set_agent_key` dev hook
    push every locally-detected key for scripted installs; AGENTS.md §5 documents the trap.
@@ -1473,6 +1514,416 @@ gh attestation verify --repo borealBytes/hermes-wearos hermes-wearos-@rc.apk # @
 apksigner verify --print-certs <apk>   # who signed it: release key vs CI debug key
 ```
 
+## 19. VOICE-OUT MILESTONE — dual-tier TTS (issue #7; sliced on `feat/voiceout`, PR #8)
+
+The watch speaks with a voice cloned from a CARD, on the user's own hardware, with
+word-synced karaoke — no cloud voice dependency. Full design: issue #7 body; the
+gateway half is `hermes-plugin/voiceout.py` (prefs/cards/synthesis) and
+`hermes-plugin/tts_air.py` (the engine). Owner rulings that bind every slice:
+
+- **Gateway-canonical prefs** — one `voiceout.yaml`, monotonic `rev`, higher-rev
+  wins per field; an offline watch's edits replay on reconnect. No forked truth.
+- **A card is data** — reference wav + transcript + the MEASURED `ref_rate` (VAD
+  speech-span against the known 17-word scripted prompt). 1.0x replays the speaker
+  at THEIR pace; a fast speaker's clone never 'fixes' their speed. 3 s floor, 60 s
+  cap, enforced gateway-side — a watch bug can't smuggle a 1 s clip.
+- **Enrollment is anyone's voice** (owner ruling 2026-11-09): the shipped default
+  is the founder's recorded card (the seed pack), but enrollment copy says plainly
+  — *record whoever you want to hear on your wrist: yours, or anyone's.* The pane
+  (slice 3) must encourage a personal card, never treat the seed as the endpoint.
+- **One global speed dial**, riding the existing TTS-speed feature; per-agent voice
+  + mode (gateway | watch | off), never a per-agent rate.
+- **Alignment is honest per tier** — gateway: synth → forced-align → `words[]`;
+  watch-native: the sentence IS the highlight unit, and the UI says so. A
+  degradation is a REPORTED mode, never a silent lie.
+- **The timeline ring NEVER animates** (the PTT conic halo owns motion, the ring
+  owns time); track `#431410`, played `#C0392B`, concentric with the orb; orb tap =
+  stop, extending the §12.11 mute semantics.
+- **Nothing unscannable ships** (rule 17): the seed pack and the Air model arrive
+  hash-pinned at first use like the Parakeet weights; the runtime lives in its own
+  venv, behind a subprocess boundary — an engine crash can't take the gateway.
+
+**Engine (locked 2026-11-08 in #7):** NeuTTS Air — Apache-2.0, ~552M-param speech-LM,
+GGUF, zero-shot clone from ~3 s reference audio. Runtime `neuphonic/neutts` @
+`ac69851f28fc63a487917e7c2e27f0d75c759cba` (pinned), pip spec
+`neutts[all] @ git+…@<commit>`, private venv. Model
+`huggingface.co/neuphonic/neutts-air-q8-gguf/resolve/main/neutts-air-Q8_0.gguf`,
+802,658,528 bytes; the repo is `gated: auto` — a one-time consent click + read token
+(HF_TOKEN or the pane's token box) is required, and the fetch names that cause on
+401/403. Source choice is a user dropdown, not a wall (owner ruling, §19.4 2e):
+the DEFAULT is the best community quant (mradermacher re-quant — most-downloaded
+GGUF source on the Hub, ungated, zero-account), official rows ride the same menu
+for consent-keepers. Slots are per-device: `gateway` runs the best the box can
+hold (Q8), `watch` records the smaller Q4 the wrist will pull when on-watch
+inference lands (slice 5); `install --for watch` stores the choice only. Every
+row pins its own byte count and sha-records on first fetch. `MODEL_SHA256` is
+PENDING until the first token-carrying install records the observed digest (the
+installer writes it beside the model; the constant gets pinned in
+a follow-up commit, same pattern as `voiceout.SEED_SHA256`). Runner-up if Air stalls:
+CosyVoice2 (verify the license fine-print first). Off-1.0 speed = stdlib linear
+time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment log.
+
+| slice | surface | state |
+|---|---|---|
+| 1 | `voiceout.py` — prefs rev/merge, measured cards, seed fetch, tier-aware `synthesize()` | SHIPPED `493eb2b`, tests 8/8 |
+| 2a | `tts_air.py` — pinned installer, subprocess runner, time-scale, honest probe | SHIPPED this push, tests 11/11 |
+| 2b | `align_parakeet.py` — TDT word timings re-blended onto the script; proportional slots flagged `estimated`; honest `align:"none"` when the STT engine is absent | SHIPPED, tests 8/8 |
+| 2c | `/voice/*` routes on the private lane — node-law auth (WHOIS → bound device, no token), prefs GET/PUT (rev-merge), cards snapshot, card_wav streaming, card_create/delete, synthesize (b64 wav + words) | SHIPPED this push, tests 10/10 (`test_voice_api.py`, real-HTTP lane + fake whois) |
+| 3–7 | desktop pane ▸ Voice-out · watch prefs client · karaoke orb player · recorder UI · PR hygiene | planned |
+| 2e | **source menu** (owner ruling: a dropdown of every known weights source — **community quants default** (most-downloaded mradermacher re-quant, ungated), official gated rows for consent-keepers; per-device slots: gateway Q8 best, watch Q4 small): `SOURCES` table + slot persistence, pane dropdown via `GET /voice/tts_sources`, `POST /voice/tts_install {source, for, token}` (token stored 0600, never echoed), CLI `tts_air.py sources\|install --source --for`, every row size-pins itself + sha-records on first fetch, ungated NeuCodec port (`bezzam/neucodec-hf`) so a no-account install is possible end-to-end | SHIPPED, tests 5/5 |
+
+### 19.4 Amendment log (append-only; dated; never rewrite history)
+
+
+- **2026-11-09 (weardev)** — docs commit `2b16c8e` announced "SPEC §14 voice-out
+  milestone + amendment log" but its diff touched only AGENTS.md/CONTRIBUTING.md:
+  the voice-out section never landed in docs/SPEC.md. Numbering collision too —
+  §14 is batch 4 (2026-10-29). This §19 is the section that commit owed; AGENTS §8
+  pointers fixed to §19 in the same push.
+- **2026-11-09 (weardev, slice 2a)** — two seams added to `voiceout.py` the Air
+  adapter needs: cards persist the exact `transcript` their pace was measured
+  against (zero-shot cloning would otherwise GUESS the reference words), and
+  `synthesize()` hands the engine `card_id` with the meta (the adapter must address
+  `cards/<id>.wav` on disk). Both additive; slice-1 tests untouched and green.
+- **2026-11-09 (weardev, slice 2a)** — speed scaling is linear resample (pitch
+  follows at extremes). Known debt, chosen over shipping a WSOLA first-cut inside
+  the same slice that pins an 803 MB model. Polish tracked here, not in prose.
+- **2026-11-09 (weardev, slice 2b)** — the aligner reuses the Parakeet/CTA build
+  `stt_install.py` already produces (same venv, same pinned model, `timestamps=
+  "word"` on the 5700f127 bindings — `Word.t0_ms/t1_ms` verified against the pinned
+  source). Recognized rows are RE-BLENDED onto the script we synthesized: the
+  karaoke must follow the script (punctuation included), and any word the
+  recognizer dropped gets a proportional slot explicitly flagged
+  `"align":"estimated"` — measured truth and estimated truth never mix silently.
+- **2026-11-09 (weardev, env note)** — the pairing-era pytest suite (test_pairing
+  cron-alert test + test_private_api grant-law test) fails on THIS machine's
+  interpreter (profiles resolve to the real `~/.hermes` instead of the test tmp —
+  host-module version drift, python3.14/pytest9 surface). Reproduces with all
+  voice-out work stashed at HEAD~; not introduced here; owner's OpenCode rig owns
+  that floor. Voice-out suites run standalone (`python3 tests/test_*.py`).
+- **2026-11-09 (weardev, slice 2c — CORRECTS the env note above)** — that note's
+  diagnosis was wrong and the floor is fixable on this box. Both failures were the
+  TEST RUNNER, not the code: (1) pytest inherited `TMPDIR` inside the real
+  `~/.hermes` tree, so the sandboxed `HERMES_HOME` resolved its root UP to the real
+  one and the cron-name test read the machine's live jobs store — run with
+  `TMPDIR=/tmp`; (2) the grant-law test needs `ruamel` + the host modules — run with
+  the Hermes-managed interpreter and its environment venv on `PYTHONPATH` (keep the
+  inherited `PYTHONPATH`, don't overwrite it), e.g.
+  `TMPDIR=/tmp PYTHONPATH=tests:$PYTHONPATH <hermes-py> -m pytest tests/` →
+  **111 passed**. No plugin-code fix was needed for either.
+- **2026-11-09 (weardev, slice 2c)** — never add `hermes-plugin/tests/__init__.py`:
+  the package marker makes pytest import conftest twice (rootdir vs PYTHONPATH), the
+  plugin module is exec'd twice, and `test_plugin_api`'s `is`-identity resolver test
+  fails on same-file/different-module. The suite ran green 74/74 at `e24bd5a` with
+  no marker; this branch had it wrong for a beat and removed it.
+- **2026-11-09 (weardev, slice 2c)** — the `/voice/*` identity law: WHOIS must
+  resolve AND the node must be BOUND to a paired device (first-session capture).
+  An on-tailnet stranger's node gets 403, not the token 401 — the surface is
+  credential-bearing audio, and no bearer exists yet at first sync (the watch can
+  replay prefs before it ever has a session token). `synthesize` with no engine is
+  a 200 `{ok:false}` naming the fix; a registered-but-crashed engine is a 503
+  (transient); neither is ever a silent empty string.
+- **2026-11-09 (weardev, first real human voice — CORRECTIVE)** — the owner's
+  recorded card (founder voice; the seed-pack default, per the enrollment ruling
+  above) measured 567 wpm through slice 1's VAD. My mistake: a −9 dB gate
+  (peak/8) shatters dynamic speech into syllable confetti, so `voiced_s`
+  collapsed and `ref_rate` ballooned — every synthetic fixture passed because
+  envelope speech has no natural valleys. `_voiced_seconds` now uses a −18 dB
+  hysteresis gate, ±1-frame hangover, and bridges dips ≤300 ms (coarticulation
+  is voice; a 600 ms dip — breath, cough — is silence). Regression test
+  `test_vad_bridges_conversation_not_coughs`; fixtures and all prior contracts
+  untouched; 112/112. Re-measured on the owner's true take: a human-plausible
+  213 wpm voiced span.
+- **2026-11-09 (weardev, slice 2e — source menu)** — owner ruling: the weights
+  install is a CHOICE, not a wall. `neuphonic/*` rows are `gated: auto` (one-time
+  consent click + read token, no approval queue); community re-quant mirrors
+  (`MrDrinking`, `mradermacher`) and the `bezzam/neucodec-hf` codec port serve the
+  no-account path today. Trust honesty: mirror files differ from the official
+  GGUF by hundreds of bytes of metadata (their own quantization of the same
+  Apache-2.0 weights), so each row size-pins ITSELF and sha-records on first
+  fetch; the pane labels the active source, `status()` names it, and the mirror
+  tier is never presented as Neuphonic's own file. CLI mirrors the pane exactly
+  (`tts_air.py sources / install --source --token`).
+- **2026-11-09 (weardev, slice 2e second pass — community default + per-device
+  slots)** — owner ruling: "make the community ones the default … the most
+  popular one; choose a model for the gateway and a model for the watch, the
+  watch needs the smaller 4-bit quant, you get to choose the best [on the box]."
+  `DEFAULT_SLOTS = {gateway: community-q8, watch: community-q4}` (mradermacher's
+  re-quant: 562 downloads/10 likes at ruling time — the most-downloaded source
+  on the Hub; Q4_K_M 596,267,936 B is the watch row). source.json is now the
+  slot map (old single-`source` files migrate silently); `select_source(id,
+  for_slot)`, `GET /voice/tts_sources` returns `slots`, `POST tts_install
+  {for: gateway|watch}` — watch records intent only, its files ride to the wrist
+  with slice 5's model-pull (the same gateway-cached, resume-safe pattern as the
+  Vosk model). Popularity is a dated fact in the label, the menu order is
+  static.
+- **2026-11-10 (weardev, owner ruling)** — the pane carries ONE agent list:
+  “Enable Wear Kit for your agents” and “Agents the watch may use” were the same
+  decision rendered twice; they merge into a single row-per-agent with an enable
+  box and a watch-may-use box (D17 grants law unchanged server-side — own agent
+  always flows, siblings need the box). Future pane surfaces: one list per
+  concern, no parallel enumerations of profiles.
+- **2026-11-10 (weardev, owner report “click play, nothing plays”)** — the Air
+  engine reloads weights per subprocess call (271 s cold / 41 s warm, owner box),
+  so the pane’s soundtest timed out invisibly. Three fixes: (a) disk synthesis
+  cache in `voiceout.py` keyed (text, card, speed, want_words), bounded 60,
+  eviction by mtime, failure-tolerant; (b) background prewarm thread at engine
+  registration (engine+cards present → one seed sentence cached before any
+  human click); (c) the Play button states `synthesizing…` the instant it is
+  clicked and names any failure — the honesty rule again. The lane `/voice` 404s
+  first blamed for this were a probe artifact: the lane binds tailnet-only and
+  WHOIS-gates to paired device nodes, so a host loopback curl 404s BY DESIGN.
+  MediaPlayer.kt now downloads gateway audio through the app’s own tailnet-routed
+  OkHttp stack and plays from cache (the slice-4 media-over-tailnet gap, closed
+  early); `PromptEditor.kt`’s IME ladder retries showSoftInput at 400/800 ms —
+  One UI Watch 6 drops the single 120 ms attempt, which is why GBoard never
+  rose from the keyboard chip.
+- **2026-11-10 (weardev, lane-race postmortem)** — a restart window let a foreign
+  HTTP server take :42653/:42654 while `lane_alive()` accepted ANY HTTP answer as
+  proof, so the lane reported healthy and every `/voice/*` call 404'd (owner:
+  "click play, nothing plays" round two). Two rules: `lane_alive` recognizes the
+  lane by its ROUTE TABLE (401/403/410 auth-law answers pass; a bare 404 passes
+  only if `/voice/prefs` is wired behind it); and a bind lost to a non-lane
+  listener is loud (warning + pane lane row) and retried every 5 s for 15 min —
+  boot races self-heal. Upkeep note: sibling dirs in `~/.hermes/plugins/` poison
+  discovery (the `.bak-0.2.0` collision hid the plugin), and the install ledger
+  pins by revision — dev-syncing files without re-pinning marks the plugin
+  integrity-failed, which reads as "disabled".
+- **2026-11-10 (weardev, slice 5 client — voice-out on the wrist)** — the watch
+  Voice-out page gained a VOICE SOURCE choice: `system` (the OS cascade, the
+  2026-10-29 engine/voice rows) or `gateway` (the Wear Kit's cloned voices). The
+  client is `voice/GatewayTts.kt`: sentences queue to `POST /voice/synthesize`
+  on the lane (`VoiceCatalog.laneBase` = the api endpoint's host, port 42654 —
+  WHOIS identity, no bearer), decode to `MediaPlayerHolder.playBytes`, and play
+  SERIALLY — the worker blocks on a playback-ended latch (ExoPlayer is
+  main-thread-owned and now reports STATE_IDLE/ENDED, the same fix that closed
+  the `Expected thread main` throw). Honesty law: availability comes from
+  `GET /voice/cards` (engine flag + card count); no engine is a REFUSAL with a
+  reason on the page, never silence; a lane that fails mid-answer re-queues the
+  sentence on the local cascade in order; orb-STOP (`speak.stop()`) cuts the
+  gateway queue too — the 12.11 mute heritage unchanged. Rate rides the pane's
+  global speed dial (gateway side); the local rate/volume knobs shape only the
+  fallback voice — the page says so.
+
+- **2026-11-10 (weardev, voice-card curation + wrist-side controls)** — the owner
+  chose the shipped voice: `clay-synth` (the watch-recorded card, ref_rate 270.7) is
+  the library's only entry; `Clay (real)` and `desk demo` were deleted through the
+  plugin's own API (rev 12). On the wrist the voices list gained a DEFAULT checkbox —
+  it reads and writes `voices.__default__` in the CANONICAL doc over the lane
+  (read-modify-write at rev+1; the watch mirrors, never owns) — and the ear-test
+  rides the selected source: on gateway, the reply-volume slider applies the same
+  per-agent gain to lane clips (ExoPlayer volume) and the speed slider IS the one
+  global dial (PUT `global.speed`), so what you tune is what you hear in the
+  shipped voice.
+
+- **2026-11-10 (audition + tab, owner ruling):** Preview lives in exactly one place:
+  the ▶ on a voice row. It POSTs /voice/synthesize with a `card_id` override so the
+  audition is the same pipeline an answer rides (ref_rate normalization × the ONE global
+  dial) and honors the reply-volume gain client-side. Sliders commit silently — dragging
+  must never spam the engine. Latency law: the reference wav plays at tap; the pipeline
+  clip replaces it when ready; the gateway pre-warms every card's own transcript at its
+  own line (boot / create / speed change) so repeat taps are cache hits. Desktop sidebar
+  tabs come from /api/panes (hermes-dashboard.service, discovered at boot) — plugin
+  reinstalls require `systemctl --user restart hermes-dashboard`, not a desktop relaunch.
+
+- **2026-11-10 (engine economy, owner ruling):** the gateway keeps EXACTLY ONE NeuTTS
+  Air worker (serve-loop runner: one model load, JSON-lines, 900 s idle reaper, respawn-
+  once on death) fronted by an explicit FIFO ticket gate — first ask first voice, because
+  one agent speaks at a time on the wrist. Reply speed law re-confirmed: the pipeline
+  clip is time-scaled by the live global dial; a card reference NEVER reflects the dial
+  (that's why the ref-first audition must swap to the scaled clip before the owner judges
+  pace). Dashboard pane discovery scans profile-scope roots FIRST — dev-sync must write
+  every plugin root and bounce hermes-dashboard.
+
+- **2026-11-10 (f): silence is a failure; opt-in pane half.** A serve-mode render cached
+  1.25 s of DIGITAL SILENCE and every ▶ swapped the audible reference for it (owner: 'play
+  button isn't working'), so the engine now refuses its own zeros: runner-side peak<128 =>
+  RuntimeError('engine decoded digital silence'); voiceout._cache_get purges zero-peak entries
+  on read (self-heal); a failed request retries once with a rotated sampler seed (certain
+  lines drew degenerate generations; the shipped card line measured 4/4 audible at 29 s/warm
+  call). Lesson: `ok:true` with silent audio is a lying contract — honesty law extends to the
+  bytes, not just the UI. Separately, the Wear Kit pane ships OFF by design: the desktop half
+  of a unified package carries .hermes-package.json => runtime-loader defaultEnabled:false
+  (GHSA-mcfc-hp25-cjv7); enabling is the owner's toggle at Capabilities > Plugins (decision
+  key hermes.desktop.pluginDecisions.v2, Electron localStorage — not file-flippable from here).
+
+- **2026-11-10 (g): PACING AT PLAYBACK (owner ruling) — supersedes the linear time-scale
+  above.** Clips render ONCE at the engine's natural 1x pace; the cache key is speed-free
+  (v2), and the ONE global dial rides the PLAYER: ExoPlayer `PlaybackParameters(speed,
+  pitch=1f)` on the watch (pitch-preserved stretch — strictly better than the linear
+  resample, which shifted pitch at the extremes) and `Audio.playbackRate` with
+  `preservesPitch` in the pane. Consequences: moving the dial never re-renders (the
+  re-warm hooks on speed change are gone), and the pane's stuck-"synthesizing" complaint
+  is dead twice over — no dial-keyed cold cache, and the slider itself was the second
+  bug: every `change` POST ran through the busy-gate, disabling the range input mid-drag
+  (owner: 'only move one notch at a time'). Speed now commits with an optimistic local
+  echo + 250 ms debounce, silently (▶ owns previews). The pane answers every ▶ with a
+  LIVE note that names WHICH wait it is — 'loading voice model (first call ≈2 min,
+  once)' vs 'queued: N in line (FIFO)' vs 'synthesizing' — flips to 'done ✓', and the
+  card header carries an engine chip (warm='model loaded' / loading / 'sleeps between
+  calls'), fed by `tts_air.engine_state()` (phase + queue depth, merged into GET /voice).
+  Word timestamps are media-time, so karaoke alignment is untouched by playback rate.
+  The reference wav still plays FLAT (1.0x = the speaker's own pace). Retries widened
+  to 3 with seed rotation (attempt tuple had silently capped at 2).
+
+- **2026-11-10 (l): ON-WATCH TTS PARKED — pulled from the pane, kept in code
+  (owner: "remove the on-watch text-to-speech from the pane… and the watch model
+  version for TTS too… you're just changing the interface so we don't show those
+  buttons").** Interface-only: the Voice-out card STAYS (it owns the engine install,
+  the gateway quant dropdown, the ▶ audition, the dial, the voice cards — the gateway
+  lane needs them), but behind `WATCH_TTS_UI = false` at the top of
+  desktop/plugin.js the 'watch' quant dropdown is not rendered, the wrist-naming
+  copy swaps to gateway wording (naming Settings ▸ Voice ▸ WearKit Gateway), and the
+  recorder footnote hides. One flip restores every control AS-IS. Nothing else
+  moved: the Kotlin player + GatewayTts lane, voiceout tiers, and the pane's REST
+  actions all remain merged and tested, and a bound watch will still speak pushed
+  replies (runtime untouched — this is a CONSENT-SURFACE parking, so no half-tested
+  UI ships in the competition build). The gateway lane is the milestone focus:
+  Settings ▸ Voice ▸ 'wearkit-gateway' (§19.4(i)) on the resident engine (§19.4(j)).
+
+- **2026-11-10 (m): GPU EXECUTION, CPU FLOOR (owner: "Can this model run on GPU?
+  I want the drop-down for CPU and GPUs, expose all the GPUs… for me it's GPU 1,
+  never, ever, ever GPU 0").** The pinned llama.cpp wheel ships CPU-only and the
+  neutts backbone loads through it, so GPU support is a SECOND private venv
+  (`tts/venv_cu`) with llama-cpp-python rebuilt against CUDA (`-DGGML_CUDA=on`,
+  nvcc 13.2 on this box), on the same pinned neutts commit. Surface: the Voice-out
+  card grows a 'speak on' dropdown fed by `tts_air.devices()` (nvidia-smi
+  enumeration — CPU plus EVERY GPU by name, index, and free VRAM). Selecting a
+  GPU IS the install consent (rule 12) and starts the one build in a background
+  thread; until `.cuda-installed` lands the switch reports queued and the engine
+  stays honestly on CPU (no placebo). Selection persists in `tts/device.json`;
+  the resident worker REBINDS lazily (next speak boots on the new device).
+  Hard rules: (1) the GPU0 shield — the worker env always carries
+  `CUDA_VISIBLE_DEVICES=<picked index>`, so inside the engine exactly one card
+  is visible and the card you did not pick can never be touched; (2) the CUDA
+  build failing degrades to CPU with the reason on the pane, it never breaks
+  speech; (3) the pane never shows spinner silence — `engine_state()` carries
+  phase ('rebinding') and build progress. Tests: `test_tts_air_device.py`.
+  MEASURED 2026-11-10 (this box): the upstream RELEASE WHEEL is the fast lane —
+  `v0.3.36-cu124` (the exact pin), 1.78 GB full-arch build, hash-pinned
+  `3d53f944…bc30ad`; the source nvcc compile (killed at 13 min, unneeded) is
+  the automatic fallback if the wheel verification fails. GPU 1 = RTX 4070
+  (sm_89), glibc 2.43 ≥ wheel's manylinux_2_35: wheel installed + CUDA-verified
+  in ~5 min total (11.8 GB peak was the wheel unpack, nice 10). The worker
+  rebind, the visible-devices fence and the verification probe all ran for
+  real on this box before this line was written.
+- **2026-11-10 (m2): THE GPU PIN IS EXCLUSIVE (owner, post-restart review of the
+  CPU-twin incident: "If GPU is selected, that's the only one that should
+  run").** Supersedes (m) hard-rule 2 (silent CPU degrade). A GPU pick with
+  an unfinished CUDA build yields `effective_device() == 'pending-gpu'`: no
+  worker spawns, and a speak REFUSES with 'GPU selected but its engine build
+  is not ready' — the pane's Build row carries the remedy. A CPU worker may
+  now exist ONLY because CPU is the selected backend; the incident that
+  proved the old rule wrong was a stale-code gateway (booted 15:29 from a
+  pre-GPU slice plugin copy) running its CPU default beside the new CUDA
+  worker while the twin-respawn loop kept replacing instances — the pane's
+  chip watched a respawner, not an engine, and showed 'loading' forever.
+  Tests: `test_gpu_pin_never_downgrades_to_cpu`,
+  `test_pending_gpu_speak_refuses_without_spawning` (Popen spy: pending pin
+  must never spawn). Commit `9072ce9`.
+
+- **2026-11-10 (k): SENTENCE BY SENTENCE in BOTH lanes (owner: "we need sentence by
+  sentence… we're not waiting for the full damn pass").** The 12:58 CPU screenshot
+  was a 'big old line of text' rendered as ONE mega-generation. Now the server cuts
+  long replies at sentence boundaries (`voiceout._sentences`: ≤160 chars stays one
+  clip; fragments <24 chars merge forward) and renders each sentence as its own
+  short, individually cache-keyed draw stitched into one WAV with 80 ms breaths;
+  karaoke timelines shift with the cumulative position. Consequences: no single
+  multi-minute engine hold, repeated sentences across ANY future reply replay from
+  disk (first sentence of a boilerplate reply is instant), and the WearKit Gateway
+  provider declares `streams_pcm` + `stream_sample_rate` (24000, engine-verified;
+  drift raises instead of garbling) so the desktop speaker's own SentenceChunker
+  starts playback at sentence one — dictation no longer waits for the whole
+  paragraph. Engine lifecycle hardened with the same care: atexit terminate→kill
+  grace (resident workers die with the gateway, never orphan 3.4 GB), a
+  `_SHUTTING_DOWN` flag stops boot-warm/retries from re-igniting a worker during a
+  stop, and a pre-spawn sweep SIGKILLs init-parented air_runner strays (measured:
+  one stuck drain left THREE 3.4 GB workers on the box) plus a tracked-list reaper
+  enforcing one live worker per process. 137 pytest green (10 new).
+
+- **2026-11-10 (j): RESIDENT ENGINE (owner: "keep the model loaded").** The 900 s
+  idle reaper made every first-speak-after-pause pay a full reload — now the worker
+  is resident: reaper off by default (`WEARKIT_TTS_IDLE_S=900` restores it for small
+  boxes), boot warm loads the model at gateway start (daemon thread, first configured
+  card, silent-fail), and voice switching is FREE because the card is a per-request
+  zero-shot reference — only a MODEL-weights swap reloads. engine_state drops the
+  960 s warm-slack heuristic (resident = warm). README discloses the ~3.4 GB RSS.
+
+- **2026-11-10 (i): WEARKIT GATEWAY — the provider entry in Settings ▸ Voice.** The
+  owner ruling: the TTS provider dropdown should carry ONE Wear Kit row that routes all
+  Hermes speech through our engine ("one TTS engine loaded on gateway… FIFO queue").
+  Hermes core already merges plugin-registered providers into the settings schema
+  (web_server_config reads agent.tts_registry per request), so the plugin now ships
+  tts_provider.py: WearKitGatewayProvider (name `wearkit-gateway`, display 'WearKit
+  Gateway'), synthesize routes through voiceout.synthesize — the SAME serve worker,
+  ticket gate, cache, and silence guard the watch uses; voices = the pane's cards; the
+  canonical dial is honoured on this file path by a stdlib time-compress (audioop died
+  in 3.13+; the watch keeps pitch-preserved ExoPlayer pacing and never passes here).
+  Import law learned the hard way: plugin submodules MUST be pulled `try: from .
+  import X / except ImportError: import X` — the loader imports the plugin as a
+  package, a bare `import X` throws ModuleNotFoundError in-host (silent unless the
+  warning carries exc_info). Dashboard (not just gateway) must restart to repopulate
+  its registry — the dropdown lives in the :9119 process. Proven live: options list
+  ends 'wearkit-gateway' after `systemctl --user restart hermes-dashboard
+  hermes-gateway`; 127 pytest green incl. tests/test_tts_provider_wearkit.py.
+
+- **2026-11-10 (h): CPU discipline for the engine worker (owner: htop load 24).** The
+  retry design was secretly a reload storm: every refusal SIGKILLed the worker and a
+  respawn pays a full llama.cpp load at ALL 32 threads. Measured root cause of the
+  3/3-silence line: respawn-at-seed-42 REPLAYS the identical sampler stream — retries
+  were deterministically identical, and neutts 1.4.1 has no per-call backbone seed hook
+  (constructor only). Laws now: (1) an ENGINE'S OWN REFUSAL (ProtocolRefusal: silence
+  guard, bad draw) keeps the warm worker — the llama RNG has advanced, so the next draw
+  is genuinely new; (2) the retry rotates temperature too (rides the per-request
+  generate() call — a second, real diversity lever) and feeds the seed into the respawn
+  argv (the only place neutts listens); (3) workers run at OMP/MKL_NUM_THREADS=8 and
+  nice(10) — the engine shares this box with sglang and the gateway and must never
+  outrank either. Proof: the line that failed 3/3 rendered audible (5.26 s,
+  peak 25721, T 42 s single reload+retry) with nice=10 observed in ps.
+
+- **2026-11-10 (n): DESKTOP READ-ALOUD STREAMS AS TEXT LANDS — contest-compliant (owner:
+  "make it start as soon as we have it… but we've got to follow the contest rules — can we
+  rewrite stuff in core?").** The lag lived in the desktop client, not the gateway:
+  `use-auto-speak-replies.ts` had `if (!reply || reply.pending) return` — the pending reply
+  was ignored until settle, then spoken whole via POST. Ruled against the admission text
+  (docs ▸ Catalog submission, 'Public surfaces only'): the rule forbids the PLUGIN from
+  patching Hermes code or Desktop markup at runtime; the catalog entry is our plugin repo
+  at a pinned SHA, and it loads and speaks on VANILLA core (graceful lag, no breakage).
+  The fix is therefore a SEPARATE upstream core contribution — exactly what the 'Asking
+  for a hook' section invites — never a runtime monkey-patch shipped in our plugin.
+  The change (hermes-agent `feat/desktop-read-aloud-stream` @ 318996aa25): a pending reply
+  opens a `SpeechStreamSession`; each message wake appends only the text tail; `finish()`
+  at settle. The server's SentenceChunker (same cutter as §19.4(k)) speaks sentence one
+  while the rest still generates, and our provider's `streams_pcm` (§19.4(i)/(k)) means
+  the gateway synthesizes it on the resident GPU worker mid-stream. Invariants held: idle
+  gate (never overlaps clips), cross-window claims (`speak:live:<id>` at open + segment
+  claim at seal), consume-at-seal only (marking spoken mid-stream starves the feed —
+  caught by test), replaced-mid-stream seals honestly, non-streaming providers keep the
+  exact old whole-text POST path. 285 composer-hook tests green (2 new, 283 unchanged);
+  eslint clean; packaged app rebuilt from the committed tree (wear-desktop-rebuild3).
+  Demo-machine consequence: this box's desktop app has the fix; a clean `hermes update`
+  reverts the renderer to vanilla behavior until the core PR merges — reapply from the
+  branch or rebuild before filming.
+- **2026-11-10 (owner ruling, §19.5 — enrollment moves to the wrist)** — "we need a
+  screen": the gateway voice-out page gains ➕ NEW VOICE under the voices list (shown
+  even when the list is empty). One scripted take, not three: name → read the gateway's
+  OWN prompt line (served as `prompt` in the /voice/cards snapshot — the same string
+  create_card stores server-side, so the transcript auto-fill can never drift) → live
+  mic meter + elapsed (proof of life, never a bare spinner) → ▶ hear-it-back → ↻ retry
+  or ✓ accept. ONE take is enough because the wearer judges the clip they just heard
+  and the encoder re-uses the best window; three takes would only triple the round
+  glass's wait. 3 s floor is pre-checked on the watch and PROVEN again gateway-side
+  (test_voice_api pins the snapshot prompt + the auto-fill law). PCM16@16k mono, the
+  lane's canonical rate; the 44-byte RIFF wrapper is JVM-tested (CodecMuxers.wav).
+
+- **2026-11-11 — ONE SHIPPED VOICE (owner ruling, verbatim: "remember we only
+  ship clay-synth"):** the product ships a single voice — the founder's
+  clay-synth — everywhere (docs, demos, PR copy, screenshots). Multi-voice is
+  a CAPABILITY (enrollment from wrist and pane, per-agent picks, Parakeet
+  transcription at creation), never a multi-voice catalogue marketing claim.
+  Enrollment proven live on gateway + pane + watch the same hour.
+
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
@@ -1953,3 +2404,74 @@ apksigner verify --print-certs <apk>   # who signed it: release key vs CI debug 
   emit `![desc](/abs/path.png)`, never raw paths. Proven: agent-written red PNG → card on screen.
 - **TALK orb** (`7727e7c`) — floating bottom-center (fell below the fold at 480×480);
   hold = Vosk push-to-talk, tap = keyboard; physical buttons belong to other apps.
+
+#### (n) 2026-11-10 — enable IS the grant; per-agent voice overrides surface in the pane (owner ruling)
+
+Pane step 3 collapses to one checkbox per agent: enabling the plugin also grants the
+watch the agent's key (`/enable` writes `set_grant(profile, enabled)`); disabling
+revokes. The "watch may use" box is gone (the `/grants` route stays for CLI/agents).
+Each row carries a voice dropdown writing the ALREADY-CANONICAL `voices[agent]`
+field in voiceout.yaml (blank = follow the single Voice-out card — no new global
+selector was needed; the Voice-out card IS the global default, per the owner). An
+"Enable all" box bulk-toggles every profile through the same `/enable` verb.
+Pref schema unchanged; watch replays keep higher-rev-wins semantics.
+
+#### (o) 2026-11-10 — the enable law reaches the WATCH; the ring gains a swipe leg (owner: "it should only show me the active enabled")
+
+Two provable halves of one ruling, both hardware-driven same evening:
+
+1. **Switcher = grants.** The owner's fresh-install Agents dialog listed all 26 gateway
+   profiles — useless and a lie (unchecked agents 401 on every ask anyway). watchkit
+   `GET /agents` now filters its profile scan through the plugin's grant map
+   (`<gateway-home>/plugin-data/wearos/pairing.json`, mtime-hot-reload, `pairing_store`
+   config pin — HERMES_HOME deliberately NOT consulted, watchkit may launch from any
+   profile's shell). Store absent (standalone watchkit / pre-pairing) ⇒ full scan.
+   Since (n), grants ARE the pane's checkboxes, so the watch now shows exactly what
+   the pane ticks, within one poll of the click. This supersedes the 2026-10
+   walkthrough line "dialog lists profiles … + every profiles/<name>/ with a
+   config.yaml".
+2. **Forward swipe restored.** Batch 6 replaced the pager with the BackRing
+   (physical back walks Chat→Sessions→Agents→Chat) but left the FINGER only a
+   backward edge-swipe — the owner experienced the Agents leg as "gone".
+   `SwipeForward` (MainActivity) wraps the screen switch: a leftward horizontal drag
+   past 56 dp advances the same `BackRing.action(screen)` mapping the physical back
+   uses; a rightward drag cancels early so edge-back keeps its gesture; vertical
+   scrolling bows out on child consumption. One mapping, two input paths — no new
+   destination, the Agents overlay stays the dialog it became in batch 6.
+- **(o) addendum, same night — no-flash enable.** With the pane overlay deployed the
+  box still jumped back: the click HAD landed (grants proved it — the watch showed
+  the agent), but serve-stale + background fan-out converges the snapshot only in
+  seconds, and the pane refetches instantly. `refresh_inventory_row(profile)` now
+  re-reads the MUTATED profile's row synchronously (one CLI) and splices/appends it
+  into the cache before `/enable` returns; the fan-out invalidation still runs
+  behind. Locked by `test_enable_row_is_true_in_the_very_next_status`. (Electron
+  note: the published pane half refreshes on INSTALL events — after a manual cp of
+  the half, the desktop app must actually restart; a tab reopen reuses the loaded
+  module. This is why the owner's 'flashes' persisted through two deploys.)
+- **(o) addendum 2, same hour — the body-key law.** The flashes' true culprit was
+  never the cache: desktop.log showed every owner click 403ing
+  `profile_scope_mismatch`. Core's dashboard native proxy
+  (`dashboard_auth/native_http._own_profile`) rejects ANY JSON body whose
+  `profile` key names a profile other than the session's scope — and a pane
+  that manages OTHER agents from the default session always trips it. LAW:
+  cross-agent bodies of this plugin's API key the target as `agent`
+  (`/enable`, `/grants`, `/alerts`; `profile` stays accepted for direct-curl
+  back-compat, never the documented spelling; `/devices/revoke` is `name`,
+  `/voice` is `for`). Pane error path fixed in the same pass (act() surfaces
+  failures — buttons never silent) and the `wearos.bak-0.2.0` duplicate-id
+  loader leftover removed. Locked by
+  `test_cross_agent_bodies_key_the_target_as_agent`.
+
+- **2026-11-10 (catalog review round 3, Nous #151546 @ pin 628f28a2) — the
+  pending pairing code is a SECRET until a human types it.** Pairing is public
+  and first-caller-wins, so any gateway-side echo of a pending code lets the
+  knock caller arrange its own approval (and walk with tailnet key + API key).
+  `pending_list()` now carries `pair_id/label/profile/state/seconds_left` —
+  never the code; the code exists only on the watch's screen and in the
+  human-typed claim. Engine-internal `state_of_code()` serves surfaces that
+  already hold a typed code (`_await_pickup`). The CLI wizard prints
+  `watch waiting: <label>` and instructs reading the wrist. Locked by
+  `test_pending_surfaces_hide_the_code`. Companion laws from the same review:
+  STT/TTS build chains run on ALLOWLIST env (provider keys never inherited —
+  `test_env_hygiene.py`), and the README names `tailscale funnel` as a MUTATING
+  call and discloses the wrist-unpair key rotation + default-profile restart.
