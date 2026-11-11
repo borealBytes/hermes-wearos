@@ -1916,6 +1916,14 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   (test_voice_api pins the snapshot prompt + the auto-fill law). PCM16@16k mono, the
   lane's canonical rate; the 44-byte RIFF wrapper is JVM-tested (CodecMuxers.wav).
 
+- **2026-11-11 — ONE SHIPPED VOICE (owner ruling, verbatim: "remember we only
+  ship clay-synth"):** the product ships a single voice — the founder's
+  clay-synth — everywhere (docs, demos, PR copy, screenshots). Multi-voice is
+  a CAPABILITY (enrollment from wrist and pane, per-agent picks, Parakeet
+  transcription at creation), never a multi-voice catalogue marketing claim.
+  Enrollment proven live on gateway + pane + watch the same hour.
+
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist
