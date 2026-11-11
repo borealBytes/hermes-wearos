@@ -1029,7 +1029,8 @@ def tailnet_gateway_url(ttl: float = 60.0) -> dict:
             self_node = (json.loads(txt).get("Self") or {}) if done.returncode == 0 else {}
             fqdn = str(self_node.get("DNSName") or "").strip().rstrip(".")
             if fqdn:
-                out = {"gateway_url": f"http://{fqdn.lower()}:8642"}
+                out = {"gateway_url": f"http://{fqdn.lower()}:8642",
+                       "host": fqdn.lower()}
             else:
                 out = {"reason": "not-logged-in"}
         except (OSError, ValueError, subprocess.SubprocessError):

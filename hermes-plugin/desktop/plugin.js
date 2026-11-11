@@ -535,6 +535,41 @@ function WearKitPane () {
               })
             ]
           }),
+          // owner ruling 2026-11-10 ~22:2x: the host row sits DIRECTLY under the
+          // card title, above the code/approve row — label 'wear kit host', value
+          // bare hostname (no scheme, no port: the app completes them, minimal-input
+          // law), explanation as a hover tooltip. Derived, never narrated.
+          tailnet.host ? jsxs('div', {
+            className: 'flex items-center gap-2 text-[10px]',
+            title: 'type this on the watch — Settings ▸ Gateways ▸ add gateway (the app fills in http:// and the port)',
+            children: [
+              jsx('span', {
+                className: 'text-(--ui-text-tertiary)',
+                children: 'wear kit host'
+              }),
+              jsx('code', {
+                className: 'rounded bg-(--ui-bg-secondary) px-1 py-0.5 select-all',
+                children: tailnet.host
+              }),
+              jsx('button', {
+                className: 'rounded border border-(--ui-border) px-1.5 py-0.5 disabled:opacity-50',
+                type: 'button', disabled: busy,
+                onClick: () => {
+                  navigator.clipboard.writeText(tailnet.host)
+                    .then(() => $pairNote.set('host copied'))
+                    .catch(() => $pairNote.set('copy failed — select the host'))
+                },
+                children: 'copy'
+              })
+            ]
+          }, 'tailnet-address') : jsx('div', {
+            className: 'text-[10px] text-(--ui-text-tertiary)',
+            children: tailnet.reason === 'tailscale-missing'
+              ? 'tailscale not on this machine — the gateway address stays whatever URL you serve.'
+              : tailnet.reason === 'not-logged-in'
+                ? 'tailscale logged out on this machine — log in and this line fills itself.'
+                : null
+          }, 'tailnet-address'),
           pending.map(p => jsx('div', {
             className: 'text-xs text-(--ui-text-secondary)',
             // the code is a secret: the watch SCREEN is its only display (Nous #151546)
@@ -569,39 +604,6 @@ function WearKitPane () {
               jsx('a', { className: 'underline', href: 'https://huggingface.co/settings/tokens', rel: 'noreferrer', target: '_blank', children: 'HF token' })
             ]
           }, 'source-links'),
-          // owner ruling 2026-11-10 ~21:4x: the address a watch user must TYPE
-          // is shown, not guessed — derived from `tailscale status` server-side
-          // (60 s cache), rendered right under the Pair card's top half.
-          tailnet.gateway_url ? jsxs('div', {
-            className: 'flex items-center gap-2 text-[10px]',
-            children: [
-              jsx('span', {
-                className: 'text-(--ui-text-tertiary)',
-                children: 'type on the watch (Settings ▸ Gateways):'
-              }),
-              jsx('code', {
-                className: 'rounded bg-(--ui-bg-secondary) px-1 py-0.5 select-all',
-                children: tailnet.gateway_url
-              }),
-              jsx('button', {
-                className: 'rounded border border-(--ui-border) px-1.5 py-0.5 disabled:opacity-50',
-                type: 'button', disabled: busy,
-                onClick: () => {
-                  navigator.clipboard.writeText(tailnet.gateway_url)
-                    .then(() => $pairNote.set('gateway address copied'))
-                    .catch(() => $pairNote.set('copy failed — select the address'))
-                },
-                children: 'copy'
-              })
-            ]
-          }, 'tailnet-address') : jsx('div', {
-            className: 'text-[10px] text-(--ui-text-tertiary)',
-            children: tailnet.reason === 'tailscale-missing'
-              ? 'tailscale not on this machine — the gateway address stays whatever URL you serve.'
-              : tailnet.reason === 'not-logged-in'
-                ? 'tailscale logged out on this machine — log in and this line fills itself.'
-                : null
-          }, 'tailnet-address'),
           // owner ruling 2026-11-10 ~16:55: the paired list lives INSIDE this
           // card — pair, then see them; one box for the whole pairing concern.
           devices.length ? jsxs('div', {

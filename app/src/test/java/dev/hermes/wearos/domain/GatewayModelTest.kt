@@ -36,6 +36,21 @@ class GatewayModelTest {
     }
 
     @Test
+    fun `bare host input completes scheme and gateway port`() {
+        // MINIMAL-INPUT LAW (owner 2026-11-10): the pane shows the host alone; the
+        // watch must accept typing exactly that.
+        assertEquals("http://a.b:8642", GatewayModel.normalizeEndpoint("a.b"))
+        assertEquals("http://t.tailb12aa5.ts.net:8642",
+                     GatewayModel.normalizeEndpoint("t.tailb12aa5.ts.net"))
+        assertEquals("lonejunk", GatewayModel.normalizeEndpoint("lonejunk"))  // not host-like
+        // an explicit port rides untouched…
+        assertEquals("http://h:9000", GatewayModel.normalizeEndpoint("h:9000"))
+        // …and an explicit scheme is honoured exactly (port stays as typed, even absent).
+        assertEquals("https://h", GatewayModel.normalizeEndpoint("https://h"))
+        assertEquals("http://a.b:8642", GatewayModel.normalizeEndpoint("a.b/p/wear"))
+    }
+
+    @Test
     fun `apiBase re-derives the profile segment`() {
         assertEquals("http://h:8642/p/wear", GatewayModel.apiBase("http://h:8642/p/wear", "wear"))
         assertEquals("http://h:8642/p/default", GatewayModel.apiBase("http://h:8642/", "default"))

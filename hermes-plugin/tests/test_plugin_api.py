@@ -184,7 +184,8 @@ def test_tailnet_gateway_url_is_derived_not_narrated(wearos, monkeypatch):
     monkeypatch.setattr(wearos.shutil, "which", lambda x: "/usr/bin/tailscale")
     monkeypatch.setattr(wearos.subprocess, "run", fake_run)
     out = wearos.tailnet_gateway_url(ttl=0)
-    assert out == {"gateway_url": "http://tuxdesktop.tailb12aa5.ts.net:8642"}
+    assert out == {"gateway_url": "http://tuxdesktop.tailb12aa5.ts.net:8642",
+                   "host": "tuxdesktop.tailb12aa5.ts.net"}
     assert calls["n"] == 1
     # cache: a second call inside the TTL does not re-shell
     wearos.tailnet_gateway_url()
