@@ -94,7 +94,10 @@ class TailnetService : Service() {
             // Live status → the notification (phase transitions are the user-visible story).
             var lastText = ""
             TailnetEngine.status.collect { st ->
-                val gatewayHost = runCatching { java.net.URI(settings.baseUrl()).host }.getOrDefault("")
+                // URI.host is NULL for opaque/odd bases — getOrDefault only guards the
+                // exception path, so a null RESULT sailed through to a non-null param and
+                // NPE'd the service on first status emit (watch boot-crash, 2026-11-10).
+                val gatewayHost = runCatching { java.net.URI(settings.baseUrl()).host }.getOrNull() ?: ""
                 val phase = TailnetLogic.phase(st, enabled = true, gatewayHost = gatewayHost)
                 val text = TailnetLogic.describe(phase, st, gatewayHost)
                 if (text != lastText) {
