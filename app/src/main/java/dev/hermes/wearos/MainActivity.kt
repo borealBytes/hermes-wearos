@@ -85,6 +85,7 @@ import dev.hermes.wearos.ui.ChatScreen
 import dev.hermes.wearos.ui.ChatsScreen
 import dev.hermes.wearos.ui.LocalFontScale
 import dev.hermes.wearos.ui.PromptActionSheet
+import dev.hermes.wearos.ui.staleGestureGuard
 import dev.hermes.wearos.ui.PromptEditorOverlay
 import dev.hermes.wearos.ui.PttOverlay
 import dev.hermes.wearos.ui.SessionActionSheet
@@ -587,6 +588,8 @@ class MainActivity : ComponentActivity() {
                     uiScope.launch { settings.refreshSlashCatalog(profile) }
                 }
                 fun runCommand(e: CommandEntry) {
+                    // #24 FORENSICS: name every executed entry + its age since the sheet opened.
+                    Log.i("HermesWear", "runCommand /${e.name} at +${android.os.SystemClock.elapsedRealtime() - sheetsOpenedAt[0]}ms")
                     uiScope.launch { settings.recordCommand(e.name) }
                     when (e.honored) {
                         CommandKind.Steer -> {
@@ -906,6 +909,7 @@ class MainActivity : ComponentActivity() {
                                 onPick = { e -> runCommand(e) },
                                 onPrompt = { t -> commandsOpen = false; submitMaybeSlash(t) },
                                 onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) commandsOpen = false },
+                                guard = Modifier.staleGestureGuard(sheetsOpenedAt),
                             ),
                         )
                         Screen.Chats -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
@@ -1098,6 +1102,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { showAgents = false; screen = Screen.Chat } },
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                     )
                 }
                 if (showModels) {
@@ -1122,6 +1127,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { showModels = false; screen = Screen.Chat } },
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                     )
                 }
                 if (approvalsOpen) {
@@ -1142,11 +1148,13 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { approvalsOpen = false; screen = Screen.Chat } },
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                     )
                 }
                 promptSheet?.let { msg ->
                     PromptActionSheet(
                         preview = msg.text,
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                         onEdit = {
                             promptSheet = null
                             editor = EditorReq(text = msg.text, original = msg.text, hint = "✎ edit & resend", editOf = msg.id)
@@ -1655,6 +1663,7 @@ private fun ChatBody(
                 onPick = commands.onPick,
                 onPrompt = commands.onPrompt,
                 onDismiss = commands.onDismiss,
+                modifier = commands.guard,
             )
         }
     }
@@ -1669,6 +1678,7 @@ private data class DialCommands(
     val open: Boolean,
     val state: CommandOverlayState,
     val prefill: String?,
+    val guard: Modifier = Modifier,  // #24 stale-lift guard (built from sheetsOpenedAt)
     val voiceOn: Boolean,
     val onVoiceStart: () -> Unit,
     val onVoiceStop: () -> Unit,
