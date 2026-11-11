@@ -1290,7 +1290,9 @@ fun SettingsScreen(
         if (page == SettingsPage.VoiceIn) {
             // SPEECH INPUT PROVIDER (batch-4 #8 picker, #13 page: the orb's default engine,
             // nested like Voice out). HONEST subtitles from domain/SttProviders (pure +
-            // JVM-tested); Vosk stays default — airplane mode must keep listening (SPEC §5).
+            // JVM-tested); gateway streaming is the first-run default (owner doctrine 2026-11-11),
+            // Local Vosk the optional offline fallback — GatewayStt auto-falls-back to it, so
+            // airplane mode keeps listening (SPEC §5).
             // The mic path resolves the pick on every startListening (WearApp.Graph.sttNow),
             // so a pick is live immediately, no restart.
             FieldLabel("🎙 speech input")

@@ -74,7 +74,8 @@ class WearApp : Application() {
         lateinit var voskInstaller: dev.hermes.wearos.voice.VoskInstaller
             private set
 
-        /** Which engine the mic flow gets NOW (batch-4 #8/#9 picker; offline-safe default).
+        /** Which engine the mic flow gets NOW (batch-4 #8/#9 picker; gateway-first default
+         *  since the 2026-11-11 doctrine — on-device Vosk is the optional offline fallback).
          *  GATEWAY needs no availability gate — voice/GatewayStt falls back locally by design. */
         fun sttNow(): SttSource = when (SttProviders.fromId(SttProviders.current)) {
             SttProvider.SYSTEM -> if (SystemStt.isAvailable(app)) sttSystem else stt
