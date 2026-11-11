@@ -281,6 +281,14 @@ class PrivateHandler(BaseHTTPRequestHandler):
             self._send(200, backend.events(profile, device, n))
         except KeyError:
             self._send(410, {"error": "device is gone"})
+        except PermissionError as exc:
+            # A poll for a sibling agent's feed is a POLICY answer, not a
+            # crash: answer a clean 403 (the watch backs off its 20 s retry
+            # loop against a status, and the gateway journal stops holding a
+            # fresh traceback every poll — owner 2026-11-11 "fix that noisy
+            # error"). The message names the paired agent so a pane-side
+            # grant click is the obvious cure.
+            self._send(403, {"error": str(exc)})
 
     def do_PUT(self) -> None:  # noqa: N802
         if self._is_voice():
