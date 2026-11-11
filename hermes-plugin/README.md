@@ -1,13 +1,39 @@
 # Hermes Wear Kit — the watch half of your gateway
 
+<p align="center">
+  <img src="docs/banner.png" width="820" alt="Hermes Wear Kit banner: the orb screen and the six-digit pairing screen on two round watch faces — voice-first Wear OS client for your own Hermes gateway"/>
+</p>
+
+<p align="center">
+  <a href="https://github.com/borealBytes/hermes-wearos-plugin/releases/latest"><img src="https://img.shields.io/github/v/tag/borealBytes/hermes-wearos-plugin?label=plugin&color=7A9CC6" alt="plugin release"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
+  <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/Hermes%E2%80%91agent-%E2%89%A5%200.23.0-1A1D22" alt="Hermes pin"/></a>
+  <a href="https://github.com/borealBytes/hermes-wearos/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/borealBytes/hermes-wearos/ci.yml?label=CI" alt="CI"/></a>
+</p>
+
+<p align="center"><b>▶ <a href="https://github.com/borealBytes/hermes-wearos/blob/main/docs/demo/voiceout-voicedemo/wearos-voice-demo.mp4">Watch the demo</a></b> — 46 s, one real pairing, one real question, answered out loud in the owner's cloned voice. <!-- TODO(x): swap to the native X post URL the day the announcement is live. --></p>
+
 This is the Hermes plugin that pairs a Wear OS watch with your gateway and keeps it
 answerable: [Hermes Wear OS](https://github.com/borealBytes/hermes-wearos) (the watch app, same
 repo). The plugin runs on the gateway box inside Hermes; it owns pairing, the watch's tailnet
 enrollment, the private lane the watch calls home on, and the Wear Kit pane in Hermes Desktop.
+Stock watch bridges speak one vendor voice from a datacenter; this one clones *your* voice from
+3 seconds of audio, computed on your gateway's CPU, and karaoke-lights the words on your wrist.
+**Status, tiered:** hardware-proven on a Galaxy Watch Ultra (SM-L705U) and the Wear OS emulator;
+the Play listing for the watch app is pending.
 
 ```bash
-hermes plugins install wearos        # catalog entry, pinned reviewed SHA
+hermes plugins install borealBytes/hermes-wearos-plugin   # today; 'wearos' works once the catalog PR merges
 ```
+
+**Testers welcome:** pair it against any Wear OS watch or the emulator — if the PIN flow takes
+more than 30 seconds, I want to know.
+
+<p align="center">
+  <img src="docs/screenshots/33-approval-card.png" width="150" alt="An in-session tool-call approval card on the watch — approve from the wrist"/>
+  <img src="docs/screenshots/48-media-cards.png" width="150" alt="A reply rendering a comfy-generated aurora image card with animated GIF playback"/>
+  <img src="docs/screenshots/42-gateways-multi.png" width="150" alt="The gateways screen: several Hermes profiles selectable from the watch"/>
+</p>
 
 ## Getting started (30 seconds, the shape the first-run test forced)
 
@@ -69,11 +95,18 @@ here so nobody reads it as the watch "rebooting the server on its own".
 
 ## What you get installed
 
-The Desktop app gains a **Wear Kit** page ([desktop/plugin.js](./desktop/plugin.js)): the pairing
-window control (open/close + the live pending list with Approve), paired devices with live tailnet
-state and a Revoke button, per-agent **key grants**, per-agent **cron-alert preference** (all runs
-/ only failures / off), a one-click **Parakeet STT installer** (see below), and readiness lights.
-Its data plane is [dashboard/plugin_api.py](./dashboard/plugin_api.py), a FastAPI router
+The Desktop app gains a **Wear Kit** page ([desktop/plugin.js](./desktop/plugin.js)): a
+four-step checklist — *install the APK → pair the watch → enable agents → green lights* — where
+the checkbox **is** the grant (checking enables the plugin for that profile and re-pins it to the
+current bytes; unchecking revokes the agent from the watch's ring and never self-disables the
+plugin; fresh installs grant nobody, and an Enable-all box sits over the list), a per-agent
+**voice-out dropdown** riding the canonical `voiceout.yaml` store, the pairing window control
+(the button opens it and toggles to a bare countdown chip; the live pending list carries
+Approve), paired devices with live tailnet state and a Revoke button (no device row carries an
+agent name — the row is the hardware, the grant is yours to make), per-agent **cron-alert
+preference** (all runs / only failures / off), a one-click **Parakeet STT installer** (see
+below), and ✅/❌ **readiness lights** where every red names its fix verb. Its data plane is
+[dashboard/plugin_api.py](./dashboard/plugin_api.py), a FastAPI router
 hot-mounted at `/api/plugins/wearos/*`: `/status`, `/pair/window|pending|claim`, `/devices`,
 `/devices/revoke`, `/grants`, `/alerts`, `/enable`, `/stt`. The pane never calls tools — the
 desktop SDK has no tool-call door (measured on v0.23.0), which is exactly why the REST half exists.

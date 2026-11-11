@@ -1,16 +1,35 @@
 # Hermes Wear OS
 
+<p align="center">
+  <img src="hermes-plugin/docs/banner.png" width="820" alt="Hermes Wear Kit banner: the orb screen and the six-digit pairing screen on two round watch faces — voice-first Wear OS client for your own Hermes gateway"/>
+</p>
+
+<p align="center">
+  <a href="https://github.com/borealBytes/hermes-wearos/releases/latest"><img src="https://img.shields.io/github/v/release/borealBytes/hermes-wearos?label=watch&color=7A9CC6" alt="watch release"/></a>
+  <a href="https://github.com/borealBytes/hermes-wearos-plugin/releases/latest"><img src="https://img.shields.io/github/v/tag/borealBytes/hermes-wearos-plugin?label=plugin&color=7A9CC6" alt="plugin release"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
+  <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/Hermes%E2%80%91agent-%E2%89%A5%200.23.0-1A1D22" alt="Hermes pin"/></a>
+  <a href="https://github.com/borealBytes/hermes-wearos/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/borealBytes/hermes-wearos/ci.yml?label=CI" alt="CI"/></a>
+</p>
+
+<p align="center"><b>▶ <a href="docs/demo/voiceout-voicedemo/wearos-voice-demo.mp4">Watch the demo</a></b> — 46 s, one real pairing, one real question, answered out loud in the owner's cloned voice. <!-- TODO(x): swap to the native X post URL the day the announcement is live. --></p>
+
 **Your Wear OS watch talks directly to your own AI gateway.** No phone companion, no cloud relay,
 no Telegram in the middle. Tap the orb, say a thing, and a real agent on your own box — with real
 tools, memory, cron jobs, and your files — answers on your wrist, out loud, before your hand
 leaves the glass.
 
-Watch front-ends for Hermes gateways have existed; this is the first **full-featured** one — the
-whole gateway on the wrist (every agent, approvals, media that animates, session management), not a
-single scoped chatbot bolted to a mic. **In active development: features land roughly weekly.**
-**Install today** is the CI-built APK; the **Google Play Store listing is pending** in Google's
-approval queue — it's coming, because an install that takes a Store tap instead of developer mode
-is the point of making this easy.
+Stock watch assistants are a mic bolted to a chatbot, speaking one vendor voice from a datacenter.
+This is the whole gateway on the wrist: every agent, every session, approvals, media that
+animates — and it clones *your* voice from 3 seconds of audio, computed on your gateway's CPU,
+then karaoke-lights the words on your glass as they're spoken.
+
+Watch front-ends for Hermes gateways have existed; this is the first **full-featured** one.
+**Status, tiered:** hardware-proven on a Galaxy Watch Ultra (SM-L705U) and the Wear OS emulator;
+in active development, features land roughly weekly. **Install today** is the CI-built APK from
+[releases](https://github.com/borealBytes/hermes-wearos/releases/latest); the **Google Play Store
+listing is pending** in Google's approval queue — it's coming, because an install that takes a
+Store tap instead of developer mode is the point of making this easy.
 
 <p align="center">
   <img src="docs/demo/demo-walkthrough-v0.8.0.gif" width="280" alt="The v0.8.0 walkthrough: the shipped splash film opens inside the watch circle, then sixteen captioned beats walk the features — orb dial, streaming markdown, a four-column table, image card, mermaid diagram, push-to-talk, model picker, the in-session approval card, the approval-mode sheet, a settled-answer notification, the desktop-watch mirror card, the comfy-generated aurora card, an animated GIF, About, tailnet status, sessions — closing on the wordmark"/>
@@ -66,7 +85,12 @@ out of the way forever.
    watch collects its single-use enrollment key, its node joins *your* tailnet, and the lane
    session delivers the real secrets over the tunnel. The tunnel is everything from there on.
 
-After pairing, the daily loop is ≤3 touches on the wrist: raise → tap the orb → talk.
+After pairing, the daily loop is ≤3 touches on the wrist: raise → tap the orb → talk. The agent you
+paired through answers with no further ceremony; every *other* agent earns its place on the ring in
+the Wear Kit pane's checkbox list — and the checkbox *is* the grant, no separate box to forget.
+
+**Testers welcome.** Pair it against any Wear OS watch or the emulator — if the pairing takes you
+longer than 30 seconds, or anything slips through, I want to know.
 
 ## Why this exists
 
@@ -343,7 +367,7 @@ whose whole job is a four-step checklist:
 
 | | |
 |:--:|:--:|
-| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: install checklist, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen: the tailnet handle typed, Knock button under a code field — the shot predates 0.2, where the 6-digit code is gateway-minted"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. (Shots are from the 0.1 pane; 0.2 replaces PIN+claim with the window/Approve code ceremony, per-agent key grants, cron-alert prefs, and the pinned Parakeet STT installer — see [hermes-plugin/README.md](hermes-plugin/README.md).) Agent names are blurred by the maintainer — they are yours to populate. |
+| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: install checklist, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen: the tailnet handle typed, Knock button under a code field — the shot predates 0.2, where the 6-digit code is gateway-minted"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. (These two shots are 0.1-era; the live pane is the four-step checklist above with voice dropdowns, Enable-all, and ✅/❌ health lights — re-shoot wave below. See [hermes-plugin/README.md](hermes-plugin/README.md).) Agent names are blurred by the maintainer — they are yours to populate. |
 
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
