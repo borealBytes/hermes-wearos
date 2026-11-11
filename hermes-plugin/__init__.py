@@ -1003,6 +1003,41 @@ def _clean_env() -> dict:
     return env
 
 
+_TAILNET_CACHE: dict = {"stamp": 0.0, "out": None}
+
+
+def tailnet_gateway_url(ttl: float = 60.0) -> dict:
+    """The address the WATCH user must type (Settings ▸ Gateways) — derived,
+    never narrated (owner ruling 2026-11-10): `tailscale status --json` →
+    Self.DNSName (MagicDNS FQDN, trailing dot trimmed) → http://<fqdn>:8642.
+    60 s cache (the pane polls /status every few seconds). Honest empties:
+    {'reason': 'tailscale-missing'} when the CLI is absent, 'not-logged-in'
+    when it reports no self node."""
+    now = time.time()
+    if _TAILNET_CACHE["out"] is not None and now - _TAILNET_CACHE["stamp"] < ttl:
+        return _TAILNET_CACHE["out"]
+    out: dict
+    exe = shutil.which("tailscale")
+    if not exe:
+        out = {"reason": "tailscale-missing"}
+    else:
+        try:
+            done = subprocess.run([exe, "status", "--json"], capture_output=True,
+                                  timeout=4, env=_clean_env(), stdin=subprocess.DEVNULL)
+            raw = done.stdout
+            txt = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")
+            self_node = (json.loads(txt).get("Self") or {}) if done.returncode == 0 else {}
+            fqdn = str(self_node.get("DNSName") or "").strip().rstrip(".")
+            if fqdn:
+                out = {"gateway_url": f"http://{fqdn.lower()}:8642"}
+            else:
+                out = {"reason": "not-logged-in"}
+        except (OSError, ValueError, subprocess.SubprocessError):
+            out = {"reason": "tailscale-error"}
+    _TAILNET_CACHE.update(stamp=now, out=out)
+    return dict(out)
+
+
 def _install_source_ref() -> tuple[str, str]:
     """(source, 40-hex revision) of THIS plugin per the install metadata at
     <HERMES_HOME>/plugins/.install-metadata.json — the pin the pane itself runs

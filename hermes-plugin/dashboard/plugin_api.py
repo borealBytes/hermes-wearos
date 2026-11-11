@@ -75,6 +75,8 @@ def status(api: int = 0):
     """The exact JSON `watch_status` gives the agent — door/lane bits included."""
     payload = json.loads(_p()._tool_watch_status({"api": bool(api)}))
     payload["door"] = {"listening": bool(_p()._door_listening())}
+    # the address to TYPE INTO THE WATCH, derived live (owner 2026-11-10):
+    payload["tailnet"] = _p().tailnet_gateway_url()
     return payload
 
 

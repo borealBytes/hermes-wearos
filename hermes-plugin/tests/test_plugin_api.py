@@ -166,6 +166,33 @@ def test_enable_delegates_to_the_manage_cli(wearos, api):
                                                      "all-profiles default)"}
 
 
+def test_tailnet_gateway_url_is_derived_not_narrated(wearos, monkeypatch):
+    """Owner ruling 2026-11-10: the Pair card shows the address the watch user
+    must TYPE, computed from `tailscale status --json` (never LLM prose)."""
+    import json as _json
+    calls = {"n": 0}
+
+    class Done:
+        returncode = 0
+        stdout = _json.dumps({"Self": {"DNSName": "TuxDesktop.tailb12aa5.ts.net."}}).encode()
+
+    def fake_run(cmd, **kw):
+        calls["n"] += 1
+        assert cmd[1:] == ["status", "--json"]
+        return Done()
+
+    monkeypatch.setattr(wearos.shutil, "which", lambda x: "/usr/bin/tailscale")
+    monkeypatch.setattr(wearos.subprocess, "run", fake_run)
+    out = wearos.tailnet_gateway_url(ttl=0)
+    assert out == {"gateway_url": "http://tuxdesktop.tailb12aa5.ts.net:8642"}
+    assert calls["n"] == 1
+    # cache: a second call inside the TTL does not re-shell
+    wearos.tailnet_gateway_url()
+    assert calls["n"] == 1
+    monkeypatch.setattr(wearos.shutil, "which", lambda x: None)
+    assert wearos.tailnet_gateway_url(ttl=0) == {"reason": "tailscale-missing"}
+
+
 def test_cross_agent_bodies_key_the_target_as_agent(wearos, api):
     """The desktop's native proxy (dashboard_auth/native_http._own_profile)
     403s any body whose `profile` key names another profile — and this pane
