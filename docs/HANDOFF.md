@@ -5,6 +5,8 @@
 
 ## 2026-11-10 ~23:00 — ➕ new voice enrollment ON THE WATCH (SPEC §19.5)
 - Owner ruling: a screen under the voices list — name, ONE scripted take, hear it back, retry or accept. Built: VoiceEnroll.kt (full-bleed Dialog, wear-M2, live mic meter via MicLevel, 12 s cap), GatewayTts.enroll() → lane POST /voice/card_create (already existed and was tested), CodecMuxers.wav() PCM→RIFF (JVM-tested), voiceout.status() now serves `prompt` = SCRIPTED_PROMPT (single source; test_voice_api pins prompt-in-snapshot + transcript auto-fill law). JVM 523/523; python 149 pass / 1 known fixture drift.
+- HARDWARE-PROVEN 23:07 on SM-L705U: Settings ▸ Voice out ▸ ➕ → name → READY (server prompt rendered verbatim) → ● record (live meter, real 8.6 s room-noise take) → ✓ accept → card `watch-voice-76bb94ae` appeared in the watch list — full lane round-trip incl. gateway validation + ref_rate measure. Junk card deleted (yaml rev 102; clay-synth untouched). Enroll shot on PR #151546 (comment 6786740540); mirror re-pinned a968ac3 (tree-identical). PR comment 6786357548 corrected per owner: core PR ships reply text as ONE chunk at turn end — the 'end-of-sentence speech starts earlier' claim is not live; core PR's value there is voice-identity plumbing for bot mode/chat rooms.
+- Gotcha: `input swipe` on this watch must stay inside 480x480 — y>480 swipes run but no-op silently (wasted a dozen 'scrolls').
 - Deploy note: voiceout.py changed → gateway restart needed for the live lane (detached systemd-run trick); plugin dir + dashboard refreshed.
 - Hardware proof pending owner's voice: open Settings ▸ Voice out (gateway source) → ➕ new voice → record → ✓ → new card appears in the list (mine: clay-synth row + fresh card).
 
