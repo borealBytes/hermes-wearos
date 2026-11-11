@@ -32,8 +32,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalView
+import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -94,6 +98,36 @@ fun VoiceEnroll(onClose: () -> Unit) {
     val ime = LocalSoftwareKeyboardController.current
     val recThread = remember { AtomicReference<Thread?>(null) }
     val fieldFocus = remember { FocusRequester() }
+    var wantKbd by remember { mutableStateOf(false) }
+    val imeView = LocalView.current
+    // THE KEYBOARD LADDER — the app's proven idiom (PromptEditor / VoiceOrTypeField):
+    // on this watch a bare show() lands before OneUI attaches the IME session to the
+    // fresh InputConnection, the caret blinks and no keyboard rises (owner report,
+    // twice). Focus → show → SHOW_EXPLICIT retry → forced toggle.
+    suspend fun raiseKeyboard() {
+        runCatching { fieldFocus.requestFocus() }
+        ime?.show()
+        try {
+            val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager
+            @Suppress("DEPRECATION")
+            for (d in longArrayOf(0L, 400L, 800L)) {
+                if (d > 0L) delay(d)
+                if (imm?.isAcceptingText != true) imm?.showSoftInput(imeView, 1) else break
+            }
+            if (imm?.isAcceptingText != true) {
+                @Suppress("DEPRECATION")
+                imm?.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED, 0)
+            }
+        } catch (e: Exception) { /* IME is whatever the watch runs; best effort */ }
+    }
+    LaunchedEffect(wantKbd) {
+        if (!wantKbd) return@LaunchedEffect
+        runCatching { fieldFocus.requestFocus() }
+        withFrameNanos { }
+        delay(120)
+        raiseKeyboard()
+    }
     var step by remember { mutableStateOf(Step.NAME) }
     var name by remember { mutableStateOf("") }
     var pcm by remember { mutableStateOf<ByteArray?>(null) }
@@ -170,7 +204,7 @@ fun VoiceEnroll(onClose: () -> Unit) {
                 Box(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colors.surface.copy(alpha = 0.6f))
-                        .clickable { fieldFocus.requestFocus(); ime?.show() }
+                        .clickable { wantKbd = true }
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
                     if (name.isEmpty()) Text("voice name", style = MaterialTheme.typography.body2,
