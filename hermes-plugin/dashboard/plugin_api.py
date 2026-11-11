@@ -297,7 +297,7 @@ def voice_post(body: dict):
             if body.get("gzip"):
                 import gzip
                 blob = gzip.decompress(blob)
-            logging.getLogger("hermes.wearos").info(
+            logging.getLogger("hermes.wearos").warning(
                 "voice card_create: %s label=%r b64=%dKB wav=%dKB gzip=%s",
                 "ok", str(body.get("label") or "")[:24],
                 len(str(body.get("wav_b64") or "")) // 1024, len(blob) // 1024,
@@ -309,12 +309,12 @@ def voice_post(body: dict):
                 blob, str(body.get("label") or "pane voice")[:48],
                 source=str(body.get("source") or "pane-record")[:24],
                 transcript="")
-            logging.getLogger("hermes.wearos").info(
+            logging.getLogger("hermes.wearos").warning(
                 "voice card created: %s rate=%s", card.get("card_id"),
                 card.get("ref_rate"))
             return card
         except Exception as exc:
-            logging.getLogger("hermes.wearos").info(
+            logging.getLogger("hermes.wearos").warning(
                 "voice card_create FAILED: %r", exc)
             return {"error": str(exc)[:300]}
     if action == "card_delete":

@@ -363,7 +363,7 @@ async function voRecConfirm () {
   const label = String(_recName || '').trim().slice(0, 48)
   if (!label) { $voNote.set('give the voice a name first'); return }
   if (!_recBlob) return
-  if (($recBlob.length - 44) / 2 / 16000 < 3) {
+  if ((_recBlob.length - 44) / 2 / 16000 < 3) {
     $voNote.set('too short — talk for 3–12 seconds'); return
   }
   $recPhase.set('send')
@@ -568,6 +568,10 @@ function WearKitPane () {
   const voToken = useValue($voToken)
   const voText = useValue($voText)
   const voNote = useValue($voNote)
+  const enrolling = useValue($enrolling)
+  const recPhase = useValue($recPhase)
+  const recSecs = useValue($recSecs)
+  const recFrames = useValue($recFrames)
   const ask = useValue($sttAsk)
   const sttTyped = useValue($sttTyped)
   const sttNote = useValue($sttErr)
@@ -1243,10 +1247,10 @@ function WearKitPane () {
           jsxs('div', {
             className: 'flex flex-col gap-0.5 pt-1',
             children: [
-              $enrolling.get() ? jsxs('div', {
+              enrolling ? jsxs('div', {
                 className: 'flex items-center gap-1 text-xs',
                 children: [
-                  ($recPhase.get() === 'idle' || $recPhase.get() === 'rec')
+                  (recPhase === 'idle' || recPhase === 'rec')
                     ? jsx('input', {
                         className: 'min-w-0 flex-1 rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-xs',
                         type: 'text', maxLength: 48, placeholder: 'voice name',
@@ -1256,32 +1260,32 @@ function WearKitPane () {
                     : jsxs('span', {
                         className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)',
                         children: [String(_recName || ''),
-                                   ' · ', ($recSecs.get() || 0).toFixed(1), 's',
-                                   $recPhase.get() === 'rec'
-                                     ? ` · ${$recFrames.get()} samples`
+                                   ' · ', (recSecs || 0).toFixed(1), 's',
+                                   recPhase === 'rec'
+                                     ? ` · ${recFrames} samples`
                                      : '',
                                    _recBlob ? ` · ${Math.round(_recBlob.length / 1024)} KB` : '']
                       }),
-                  $recPhase.get() === 'rec'
+                  recPhase === 'rec'
                     ? jsxs('span', {
                         className: 'shrink-0 tabular-nums text-(--ui-text-danger)',
-                        children: [`${Math.floor($recSecs.get() || 0)}s`]
+                        children: [`${Math.floor(recSecs || 0)}s`]
                       })
                     : null,
-                  $recPhase.get() === 'idle'
+                  recPhase === 'idle'
                     ? jsx('button', {
                         className: 'shrink-0 rounded border border-(--ui-text-danger) px-1.5 py-0.5 text-[10px] text-(--ui-text-danger)',
                         type: 'button', disabled: busy, title: 'record 3–12 s from your mic',
                         onClick: voRecStart, children: '● record'
                       })
                     : null,
-                  $recPhase.get() === 'rec'
+                  recPhase === 'rec'
                     ? jsx('button', {
                         className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
                         type: 'button', onClick: voRecStop, children: '■ stop'
                       })
                     : null,
-                  $recPhase.get() === 'ready'
+                  recPhase === 'ready'
                     ? jsxs(Fragment, { children: [
                         jsx('button', {
                           className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
@@ -1300,7 +1304,7 @@ function WearKitPane () {
                         })
                       ] })
                     : null,
-                  $recPhase.get() === 'send'
+                  recPhase === 'send'
                     ? jsx('span', {
                         className: 'shrink-0 text-[10px] text-(--ui-text-tertiary)',
                         children: 'listening to your take…'
@@ -1311,10 +1315,10 @@ function WearKitPane () {
               jsx('button', {
                 className: 'self-start rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px] text-(--ui-text-secondary)',
                 type: 'button',
-                title: $enrolling.get() ? 'close the recorder'
+                title: enrolling ? 'close the recorder'
                                         : 'enroll a new voice right here (system mic)',
-                onClick: () => $enrolling.get() ? voRecClose() : $enrolling.set(true),
-                children: $enrolling.get() ? '✕ close' : '＋ add a voice'
+                onClick: () => enrolling ? voRecClose() : $enrolling.set(true),
+                children: enrolling ? '✕ close' : '＋ add a voice'
               })
             ]
           }),
