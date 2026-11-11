@@ -34,7 +34,7 @@ object SplashIntro {
     /** Settings ▸ Display ▸ Launch splash (owner: *"video by default"*). */
     enum class Choice { VIDEO, STATIC }
 
-    enum class Gate { PlayVideo, PlayStatic, WarmStart, DeepLink, NotLauncher }
+    enum class Gate { PlayVideo, PlayStatic, WarmStart, DeepLink, NotLauncher, Onboarding }
 
     /** The persisted mode string, or the legacy Launch-video switch, mapped to a [Choice]. */
     fun choiceOf(stored: String?, legacyVideoOn: Boolean? = null): Choice =
@@ -52,10 +52,18 @@ object SplashIntro {
         choice: Choice,
         deepLink: Boolean,
         fromLauncher: Boolean,
+        needsPairing: Boolean = false,
     ): Gate = when {
         !firstCompositionOfProcess -> Gate.WarmStart
         deepLink -> Gate.DeepLink
         !fromLauncher -> Gate.NotLauncher
+        // #17 rework (owner 2026-11-11, cold-start forensics on the AVD): a fresh install
+        // routes to the Pair wizard the moment the empty registry loads — BEHIND the film.
+        // The film's overlay had nothing legitimate to hand off to (no chat composes under a
+        // wizard), the notification dialog on that same first launch steals the player's
+        // focus, and the wearer just watches an icon marinate. Setup launches answer the
+        // SETUP question first; the film is the reward for the second launch.
+        needsPairing -> Gate.Onboarding
         choice == Choice.VIDEO -> Gate.PlayVideo
         else -> Gate.PlayStatic
     }
@@ -145,20 +153,33 @@ object SplashIntro {
         fun holds(nowMs: Long): Boolean = shouldHold(gate, painted, nowMs - startedAtMs)
     }
 
+    /** #17 rework (owner spec, verbatim: *\"it should be a second or two of the nouse girl
+     *  icon, then go into video right away while the app loads\"*): the icon may NEVER marinate.
+     *  The happy path releases EARLIER — at the film's moving-frame reveal (~2.2 s, [#30]) —
+     *  this cap only binds when the decoder is starved (focus, a sick codec, a queue under
+     *  load): past it the splash fades onto the overlay's own surface (poster, then the film
+     *  as it wakes) instead of holding the whole launch hostage. 800 ms above the proven
+     *  moving-frame moment: on a healthy boot the reveal always wins the race, and the owner
+     *  never sees the difference. */
+    const val OWNER_ICON_CAP_MS = 3_000L
+
     /**
      * Should the SYSTEM splash still be on screen? Pure so the whole state machine is unit-
      * tested: [gate] null = the Display switch has not been read yet (hold to budget+slack —
      * the same bounded wait that always decided the gate, now invisible behind the icon);
      * PlayVideo/PlayStatic = hold until [painted] (the media's first real pixels, not merely
-     * "player prepared" — a prepared-but-unpainted film would leak black); every skip verdict
-     * and the [FILM_HOLD_CAP_MS] ceiling release immediately. Called only on launches the
-     * holder deems show-shaped (launcher-shaped intent, no deep link) — everything else gets
-     * the plain OS hand-off.
+     * "player prepared" — a prepared-but-unpainted film would leak black), now ALSO capped at
+     * [OWNER_ICON_CAP_MS] (#17 rework — the icon holds for a second or two, then the app's
+     * OWN surface shows whatever it has: a playing film, its poster, or the wizard); every
+     * skip verdict and the [FILM_HOLD_CAP_MS] ceiling release immediately. Called only on
+     * launches the holder deems show-shaped (launcher-shaped intent, no deep link) —
+     * everything else gets the plain OS hand-off.
      */
     fun shouldHold(gate: Gate?, painted: Boolean, elapsedMs: Long): Boolean = when {
         elapsedMs >= FILM_HOLD_CAP_MS -> false
         gate == null -> elapsedMs < SETTING_BUDGET_MS + HOLD_SLACK_MS
-        gate == Gate.PlayVideo || gate == Gate.PlayStatic -> !painted
+        gate == Gate.PlayVideo || gate == Gate.PlayStatic ->
+            !painted && elapsedMs < OWNER_ICON_CAP_MS
         else -> false
     }
 

@@ -1676,6 +1676,35 @@ def _startup_pass() -> None:
                                                 for k, v in local_checks().items()})
 
 
+def _ensure_tts_default() -> None:
+    """Owner ruling 2026-11-11: enabling Wear Kit makes the agent SPEAK on the
+    Wear Kit's own TTS by default — and guarantees the provider is PRESENT in
+    the desktop dropdown (core's provider-option builder keeps the profile's
+    ACTIVE provider name selectable even when the plugin registry slice is
+    process-local — that's exactly what 'worked yesterday' and vanished with
+    the config wipe). Writes ONLY when this profile's config has no explicit
+    tts.provider — an explicit pick (ours or edge's) is never steamrolled."""
+    try:
+        import re as _re
+        home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+        cfg = os.path.join(home, "config.yaml")
+        txt = open(cfg, encoding="utf-8").read() if os.path.exists(cfg) else ""
+        m = _re.search(r"(?m)^tts:[ \t]*\r?\n((?:^[ \t].*(?:\r?\n|$))*)", txt)
+        if m and _re.search(r"(?m)^\s+provider\s*:", m.group(1)):
+            return
+        prof = _re.sub(r"^.*profiles/", "", home).strip("/")
+        prof = prof if home.endswith(("profiles/" + prof,)) and "/profiles/" in home else "default"
+        hermes = shutil.which("hermes")
+        if not hermes:
+            return
+        argv = ([hermes] if prof == "default" else [hermes, "-p", prof]) + \
+               ["config", "set", "tts.provider", "wearkit-gateway"]
+        subprocess.run(argv, capture_output=True, text=True, timeout=60,
+                       stdin=subprocess.DEVNULL)
+    except Exception:  # a config nicety must never break plugin load
+        logger.debug("wearos: tts default seed skipped", exc_info=True)
+
+
 def register(ctx) -> None:
     """Entry point called by the Hermes plugin loader (docs: developer-guide/plugins)."""
     global _CTX
@@ -1695,6 +1724,7 @@ def register(ctx) -> None:
             import tts_provider            # type: ignore[no-redef]
         _singleton_alias(tts_provider)
         tts_provider.register(ctx)
+        _ensure_tts_default()   # dropdown presence + speak-by-default (owner 2026-11-11)
     except Exception:
         logger.warning("wearos: TTS provider registration skipped", exc_info=True)
     ctx.register_cli_command(

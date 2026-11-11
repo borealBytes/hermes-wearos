@@ -189,4 +189,33 @@ class SplashIntroTest {
         h.painted = true
         assertFalse(h.holds(2_000L))
     }
+
+    // ── #17 REWORK (2026-11-11, owner cold-start spec: *"a second or two of the icon, then
+    // go into video right away"*; reproduced on the AVD: the first-launch permission dialog
+    // paused media3 and the wizard routed behind an unhanded-off hold) ──
+    @Test fun `a setup launch answers setup — the film waits for the next launch`() {
+        // Baseline (flag not set): yesterday's behavior stands — a launcher video launch plays.
+        assertEquals(
+            SplashIntro.Gate.PlayVideo,
+            gate(first = true, choice = SplashIntro.Choice.VIDEO, link = false, launcher = true),
+        )
+        assertEquals(
+            SplashIntro.Gate.Onboarding,
+            SplashIntro.decide(true, SplashIntro.Choice.VIDEO, false, true, needsPairing = true),
+        )
+        // The wizard must never stare at an icon: Onboarding releases immediately.
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.Onboarding, false, 10L))
+    }
+
+    @Test fun `the icon holds for a second or two — never longer`() {
+        val c = SplashIntro.OWNER_ICON_CAP_MS
+        // Unpainted film holds right up to the owner's cap…
+        assertTrue(SplashIntro.shouldHold(SplashIntro.Gate.PlayVideo, false, c - 1))
+        // …and releases onto the app's own surface at it, however sick the decoder is.
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.PlayVideo, false, c))
+        assertFalse(SplashIntro.shouldHold(SplashIntro.Gate.PlayStatic, false, c))
+        // The cap sits ABOVE the happy reveal (moving frame at INTRO_OPEN_MS), so a healthy
+        // boot always cuts on the film itself and the cap only ever catches a starved one.
+        assertTrue(c > SplashIntro.INTRO_OPEN_MS)
+    }
 }
