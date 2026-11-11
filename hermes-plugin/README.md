@@ -1,7 +1,7 @@
 # Hermes Wear Kit — the watch half of your gateway
 
 <p align="center">
-  <img src="docs/banner.png" width="820" alt="Hermes Wear Kit banner: the orb screen and the six-digit pairing screen on two round watch faces — voice-first Wear OS client for your own Hermes gateway"/>
+  <img src="docs/banner.png" width="820" alt="Hermes Wear Kit banner: the orb's eight-wedge dial and the gateway-minted pairing code on two round watch faces — voice-first Wear OS client for your own Hermes gateway"/>
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ more than 30 seconds, I want to know.
 <p align="center">
   <img src="docs/screenshots/33-approval-card.png" width="150" alt="An in-session tool-call approval card on the watch — approve from the wrist"/>
   <img src="docs/screenshots/48-media-cards.png" width="150" alt="A reply rendering a comfy-generated aurora image card with animated GIF playback"/>
-  <img src="docs/screenshots/42-gateways-multi.png" width="150" alt="The gateways screen: several Hermes profiles selectable from the watch"/>
+  <img src="docs/screenshots/42-gateways-multi.png" width="150" alt="The gateway manager mid-edit: a saved demo row with its delete chip, the + add row below"/>
 </p>
 
 ## Getting started (30 seconds, the shape the first-run test forced)
