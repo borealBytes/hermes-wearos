@@ -65,6 +65,9 @@ fun CommandsOverlay(
     onVoiceStop: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open CommandsOverlay") }
     var query by remember { mutableStateOf(prefill?.removePrefix("/") ?: "") }
     androidx.compose.runtime.LaunchedEffect(prefill) {
         prefill?.let { query = it.removePrefix("/") }

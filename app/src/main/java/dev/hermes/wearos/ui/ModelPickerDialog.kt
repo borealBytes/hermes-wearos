@@ -54,6 +54,9 @@ fun ModelPickerDialog(
     onPick: (String) -> Unit,          // model id, or "" for gateway default
     onDismiss: () -> Unit,
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open ModelPickerDialog") }
     var openProvider by remember { mutableStateOf<String?>(null) }
     Dialog(
         onDismissRequest = onDismiss,
