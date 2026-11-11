@@ -1142,6 +1142,24 @@ fun SettingsScreen(
                 }
             },
         )
+        // CHUNK (owner 2026-11-11, plugin v0.3.4): 'sentence' clips lag between draws and the
+        // voice shifts at every boundary; 'paragraph' — the shipped default — draws one
+        // paragraph per synthesis (over 900 chars it sentence-splits gateway-side, so first
+        // audio stays honest). Writes the SAME gateway-canonical doc the pane edits (rev'd,
+        // higher-rev-wins; an offline tap replays on next contact).
+        FieldLabel("chunk replies")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("sentence" to "sentence", "paragraph" to "paragraph").forEach { (id, label) ->
+                val chosen = gw.chunkMode == id
+                Button(
+                    onClick = { Thread { gw.setChunk(id); gwProbe++ }.start() },
+                    modifier = Modifier.size(width = 130.dp, height = 34.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = if (chosen) MaterialTheme.colors.primary.copy(alpha = 0.5f)
+                        else MaterialTheme.colors.surface.copy(alpha = 0.4f)),
+                ) { Text(label, style = MaterialTheme.typography.button, maxLines = 1) }
+            }
+        }
         // ENGINE row (owner: "choose google/samsung/(other if exists)") — switching packages
         // rebuilds the live engine; its voices load right after.
         FieldLabel("engine")
