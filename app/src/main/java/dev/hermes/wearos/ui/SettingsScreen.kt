@@ -194,6 +194,11 @@ fun SettingsScreen(
     // hub of nav rows; every section lives on its own page. Sections below are UNCHANGED logic,
     // just wrapped in `if (page == …)` — same state, same prefs, same behavior.
     var page by remember { mutableStateOf(SettingsPage.Root) }
+    // Enrollment is a FULL PAGE of the Voice page, not a Dialog: this watch's
+    // floating IME rises over activity-window fields (chat, prompt editor) and
+    // stays deaf inside Dialog windows (owner: 'click the box, nothing happens').
+    var enrolling by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = enrolling) { enrolling = false }
     androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = page.up() }
     // PAIR GATE (SPEC §4): first launch (empty registry) and engine edges into NEEDS_AUTH request
     // the Pair screen — this edge lands the page. Cleared on pickup (Graph.pairApplyPickup).
@@ -304,7 +309,8 @@ fun SettingsScreen(
 
         if (page != SettingsPage.Root) {
             Column(
-                modifier = Modifier.fillMaxWidth().clickable { page = page.up() },
+                modifier = Modifier.fillMaxWidth().clickable {
+                    if (enrolling) enrolling = false else page = page.up() },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { Text(if (page.up() == SettingsPage.Root) "‹  all settings" else "‹  " + page.up().title.lowercase(), style = MaterialTheme.typography.caption2) }
             Spacer(Modifier.height(6.dp))
@@ -1014,7 +1020,10 @@ fun SettingsScreen(
         )
 
         }
-        if (page == SettingsPage.Voice) {
+        if (page == SettingsPage.Voice && enrolling) {
+            VoiceEnroll(onClose = { enrolling = false; gwProbe++ })
+        }
+        if (page == SettingsPage.Voice && !enrolling) {
         // ─── VOICE-OUT CONFIG (owner 2026-10-29: "change voices… and change speed"; the chips
         // became a DRAG SLIDER the same day: "the buttons don't all fit… a slider would do me
         // better"). domain/TtsConfig owns the ↔ mapping; SpeakAloud applies mid-queue live and
@@ -1091,14 +1100,12 @@ fun SettingsScreen(
             // ➕ NEW VOICE (owner 2026-11-10): enrollment lives on the WATCH, right under
             // the voices it extends — name, one scripted take, hear it, retry or accept.
             // Shows even when the library is EMPTY (a dead list gets its first voice here).
-            var enrolling by androidx.compose.runtime.remember { mutableStateOf(false) }
             Button(
                 onClick = { enrolling = true },
                 modifier = Modifier.size(width = 140.dp, height = 36.dp),
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.4f)),
             ) { Text("➕ new voice", style = MaterialTheme.typography.button, maxLines = 1) }
-            if (enrolling) VoiceEnrollDialog(onClose = { enrolling = false; gwProbe++ })
         }
         // SPEECH INPUT lives on its own nested page now (batch-4 #13: Settings ▸ Voice in) —
         // the owner asked for the orb's default engine to be settable the same way voice-out

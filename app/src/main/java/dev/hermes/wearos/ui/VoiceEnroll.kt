@@ -107,6 +107,12 @@ fun VoiceEnroll(onClose: () -> Unit) {
     suspend fun raiseKeyboard() {
         runCatching { fieldFocus.requestFocus() }
         ime?.show()
+        // This enrollment lives in a Dialog — its own window. OneUI's floating IME
+        // answers WindowInsetsController on dialog windows when the IMM heuristics
+        // stay deaf (minSdk 30, so the platform API is always there).
+        runCatching {
+            imeView.windowInsetsController?.show(android.view.WindowInsets.Type.ime())
+        }
         try {
             val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
                 as? android.view.inputmethod.InputMethodManager
