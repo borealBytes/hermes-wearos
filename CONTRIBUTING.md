@@ -125,6 +125,13 @@ the full table + verify commands: SPEC §18). This adds nothing to your PR check
 lanes fire on their own; just don't be surprised when your PR shows an APK download comment,
 and don't force-push `@rc` by hand.
 
+**Release-lint escape hatch (learned 2026-11-11, PR #9→#10):** the release lane runs
+`lintVitalRelease`, which JVM tests and debug builds NEVER see — a transitive
+androidx.fragment 1.2.x under an ActivityResult launcher reddened the first post-merge @rc
+roll while the whole test suite stayed green. Before a merge that touches `app/`, run
+`gradle :app:assembleRelease` locally (unsigned is fine — the lane signs in-workflow); one
+command catches the entire lint class. Fix applied: explicit `fragment = 1.8.5` floor.
+
 ## Watch connection gotchas (real hardware)
 
 - Wireless-debugging `IP:PORT` **rotates every reconnect** — offline serial = reconnect to the
