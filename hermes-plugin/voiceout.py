@@ -464,6 +464,51 @@ def register_transcriber(name: str, fn: Callable) -> None:
     _TRANSCRIBERS[name] = fn
 
 
+_PENDING_TRIED = False
+
+
+def transcribe_pending() -> int:
+    """Backfill: every card WITHOUT words gets another listen (owner law
+    2026-11-11: transcription is automatic whenever a voice is added — a take
+    recorded while the ASR engine was down/busy must not stay deaf forever).
+    Cheap stat scan, then one Parakeet run per deaf card; fills transcript +
+    re-measures pace (syllabic-est cards get upgraded to measured). One
+    attempt per process; creation-time transcription covers the normal path.
+    Returns how many cards were healed."""
+    global _PENDING_TRIED
+    if _PENDING_TRIED or not _TRANSCRIBERS:
+        return 0
+    _PENDING_TRIED = True
+    healed: list = []
+    p = read_prefs()
+    for cid, card in (p.get("cards") or {}).items():
+        if card.get("transcript"):
+            continue
+        wav = _root() / CARDS_DIR / f"{cid}.wav"
+        if not wav.is_file():
+            continue
+        try:
+            blob = wav.read_bytes()
+            rate0, _sm = _wav_parse(blob)
+            got = _transcribe(blob, rate0)
+        except Exception:
+            continue
+        if len(got.split()) >= 2:
+            healed.append((cid, got, blob, rate0))
+    if not healed:
+        return 0
+    with LOCK:
+        p = read_prefs()
+        for cid, got, blob, rate0 in healed:
+            card = (p.get("cards") or {}).get(cid)
+            if not card or card.get("transcript"):
+                continue
+            card["transcript"] = got[:600]
+            card.update(measure_ref_rate(blob, got))
+        _save_and_return(p)
+    return len(healed)
+
+
 def _transcribe(wav_bytes: bytes, rate: int) -> str:
     for fn in _TRANSCRIBERS.values():
         try:

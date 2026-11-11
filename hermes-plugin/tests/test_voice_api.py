@@ -175,6 +175,24 @@ def test_card_create_wav_and_delete_round_trip(vlane):
     assert heard["transcript"] == "sprayer window opens thursday six ten"
     assert heard["rate_source"] == "measured"        # exact word count, no estimate
     http(vlane["base"], "POST", "/voice/card_delete", {"card_id": heard["card_id"]})
+    # A card that was born DEAF (engine busy at creation) gets its words on
+    # the next engine rise — backfill is automatic (owner 2026-11-11).
+    st, deaf = http(vlane["base"], "POST", "/voice/card_create",
+                    {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
+                     "label": "deaf", "transcript": ""})
+    assert st == 200 and deaf["rate_source"] == "syllabic-est"
+    vo.register_transcriber("late",
+                            lambda b, r: "the engine woke up and heard the words")
+    vo._PENDING_TRIED = False
+    try:
+        assert vo.transcribe_pending() >= 1   # deaf + any earlier freeform card
+    finally:
+        vo._TRANSCRIBERS.pop("late", None)
+    st, snap = http(vlane["base"], "GET", "/voice/cards")
+    assert snap["cards"][deaf["card_id"]]["transcript"] == \
+        "the engine woke up and heard the words"
+    assert snap["cards"][deaf["card_id"]]["rate_source"] == "measured"
+    http(vlane["base"], "POST", "/voice/card_delete", {"card_id": deaf["card_id"]})
     # NAME IS DISPLAY TEXT: rename swaps the label, the id never moves.
     st, doc = http(vlane["base"], "POST", "/voice/card_rename",
                    {"card_id": cid, "label": "  dad  "})

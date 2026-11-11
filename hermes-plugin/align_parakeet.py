@@ -298,4 +298,16 @@ def register_if_ready() -> bool:
     # transcription come from the same pinned Parakeet build — voice-in
     # free make transcripts free (owner 2026-11-11).
     _voiceout().register_transcriber("parakeet", transcribe)
+    # AUTOMATIC (owner 2026-11-11): whenever the engine comes up, every card
+    # that never got its words gets another listen on a side thread — a take
+    # recorded while the engine was cold can't stay voiceless-forever, and
+    # the pane's Test button must never answer "no stored transcript" for a
+    # voice the wearer can see.
+    vo = _voiceout()
+    try:
+        import threading
+        threading.Thread(target=vo.transcribe_pending,
+                         daemon=True, name="wearos-transcribe-backfill").start()
+    except Exception:
+        vo.transcribe_pending()
     return True
