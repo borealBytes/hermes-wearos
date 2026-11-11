@@ -275,5 +275,8 @@ def voice_post(body: dict):
                            str(body.get("mode") or "gateway"))
     if action == "card_delete":
         return vo.delete_card(str(body.get("card") or ""))
+    if action == "card_rename":
+        return vo.rename_card(str(body.get("card") or ""),
+                              str(body.get("label") or ""))
     return {"error": f"unknown voice action {action!r} — select|install|cancel|"
-                     "soundtest|speed|karaoke|voice|mode|card_delete"}
+                     "soundtest|speed|karaoke|voice|mode|card_delete|card_rename"}

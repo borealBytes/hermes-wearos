@@ -142,12 +142,36 @@ def test_card_create_wav_and_delete_round_trip(vlane):
     assert st == 200 and ctype == "audio/wav" and raw == wav
     st, snap = http(vlane["base"], "GET", "/voice/cards")
     assert cid in snap["cards"]                      # mirror snapshot lists it
-    # the enroll screen renders the SERVER's script — one source for the words.
+    # the pane still serves the script line for its own demo box.
     assert snap["prompt"] == vo.SCRIPTED_PROMPT
     st, auto = http(vlane["base"], "POST", "/voice/card_create",
                     {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
                      "label": "no transcript sent"})
-    assert st == 200 and auto["transcript"] == vo.SCRIPTED_PROMPT   # auto-fill law
+    assert st == 200 and auto["transcript"] == vo.SCRIPTED_PROMPT   # scripted default
+    # FREEFORM law (2026-11-11): the watch sends transcript "" — talk about
+    # anything — and pace comes back flagged as the envelope estimate it is.
+    st, free = http(vlane["base"], "POST", "/voice/card_create",
+                    {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
+                     "label": "freeform", "transcript": ""})
+    assert st == 200 and free["transcript"] == ""
+    assert free["rate_source"] == "syllabic-est"
+    # fixture AM = 3.1 Hz pulses → ~186 syl/min / 1.65 ≈ 113 wpm; band is wide.
+    assert 60 < free["ref_rate"] < 200, free["ref_rate"]
+    st, meas = http(vlane["base"], "POST", "/voice/card_create",
+                    {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
+                     "label": "scripted", "transcript": "one two three four"})
+    assert st == 200 and meas["rate_source"] == "measured"
+    # NAME IS DISPLAY TEXT: rename swaps the label, the id never moves.
+    st, doc = http(vlane["base"], "POST", "/voice/card_rename",
+                   {"card_id": cid, "label": "  dad  "})
+    assert st == 200 and doc["cards"][cid]["label"] == "dad"
+    st, snap = http(vlane["base"], "GET", "/voice/cards")
+    assert snap["cards"][cid]["label"] == "dad"      # every mirror sees it
+    st, doc = http(vlane["base"], "POST", "/voice/card_rename",
+                   {"card_id": "no-such-card", "label": "x"})
+    assert st == 500 or "no such" in str(doc.get("error", doc))
+    for junk in (free, meas):
+        http(vlane["base"], "POST", "/voice/card_delete", {"card_id": junk["card_id"]})
     st, doc = http(vlane["base"], "POST", "/voice/card_delete", {"card_id": cid})
     assert st == 200 and cid not in doc.get("cards", {})
     st, doc2 = http(vlane["base"], "POST", "/voice/card_delete",

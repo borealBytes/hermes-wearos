@@ -599,6 +599,10 @@ def _lane_voice(action: str, method: str, body: dict, node: dict,
     if action == "card_delete":
         return 200, voiceout.delete_card(
             re.sub(r"[^a-z0-9-]", "", str(body.get("card_id") or ""))[:64])
+    if action == "card_rename":
+        return 200, voiceout.rename_card(
+            re.sub(r"[^a-z0-9-]", "", str(body.get("card_id") or ""))[:64],
+            str(body.get("label") or ""))
     if action == "synthesize":
         import base64
         r = voiceout.synthesize(str(body.get("text") or "")[:4000],

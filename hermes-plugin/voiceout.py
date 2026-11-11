@@ -183,22 +183,68 @@ def set_karaoke(on: bool) -> dict:
 
 # ------------------------------------------------------------------ cards
 
+def _syllable_wpm(wav_bytes: bytes, voiced: float) -> float:
+    """Freeform pace without a transcript: count syllable nuclei in the energy
+    envelope (10 ms hops / 40 ms windows, 3-tap smooth, prominence gate at
+    floor+25% of range, 120 ms refractory) and divide by the English mean
+    1.65 syllables/word. An ESTIMATE, flagged as such on the card — the
+    owner's freeform enrollment law (2026-11-11) retired read-off-the-page
+    scripts on the watch, and pace still has to be real: a fast take must
+    measure fast."""
+    rate, sm = _wav_parse(wav_bytes)
+    hop = max(1, int(rate * 0.01))
+    win = max(1, int(rate * 0.04))
+    env = []
+    for k in range(0, len(sm) - win + 1, hop):
+        seg = sm[k:k + win]
+        env.append(sum(s * s for s in seg) / win)
+    if len(env) < 5:
+        return 0.0
+    sm3 = [(env[i - 1] + env[i] + env[i + 1]) / 3.0 for i in range(1, len(env) - 1)]
+    srt = sorted(sm3)
+    floor, peak = srt[len(srt) // 5], srt[-1]
+    if peak <= floor * 1.5:
+        return 0.0
+    gate = floor + 0.25 * (peak - floor)
+    refr = max(1, int(0.12 / 0.01))            # frames (hop is 10 ms)
+    syl, last = 0, -10**9
+    for i in range(1, len(sm3) - 1):
+        if (sm3[i] > gate and sm3[i] >= sm3[i - 1] and sm3[i] >= sm3[i + 1]
+                and (sm3[i] > sm3[i - 1] or sm3[i] > sm3[i + 1])
+                and i - last >= refr):
+            syl += 1
+            last = i
+    span_min = (voiced / 60.0) if voiced > 0 else len(sm) / rate / 60.0
+    if span_min <= 0:
+        return 0.0
+    return (syl / span_min) / 1.65
+
+
 def measure_ref_rate(wav_bytes: bytes, transcript: Optional[str] = None) -> dict:
     """Words-per-minute of the reference, measured — never assumed.
 
-    With a transcript (the scripted prompt): wpm = words / voiced-seconds, silence
-    trimmed by stdlib energy VAD. Without one but with Parakeet present, callers pass
-    the transcription; if neither, refuse rather than guess a pace.
+    Three lanes, honest about which one ran (`rate_source` on the card):
+      transcript given   → wpm = words / voiced-seconds.  'measured'
+      transcript == ""   → freeform take (owner law 2026-11-11: talk 3-12 s,
+                           say ANYTHING): syllable-envelope estimate. 'syllabic-est'
+      transcript None    → legacy/scripted default (seed pack, pane demo). 'measured'
     """
     voiced = _voiced_seconds(wav_bytes)
-    if transcript is None:
-        transcript = SCRIPTED_PROMPT          # recorder UI reads the card; the doc matches
-    n = len(WORD_RE.findall(transcript))
     if voiced < 0.5:
         raise ValueError("reference is (nearly) all silence — record 3s of actual speech")
-    wpm = n / voiced * 60.0
+    if transcript == "":
+        wpm = _syllable_wpm(wav_bytes, voiced)
+        n = max(1, int(round(wpm * voiced / 60.0)))
+        src = "syllabic-est"
+    else:
+        if transcript is None:
+            transcript = SCRIPTED_PROMPT      # seed/pane lane: the doc matches the words
+        n = len(WORD_RE.findall(transcript))
+        wpm = n / voiced * 60.0
+        src = "measured"
     return {"ref_rate": round(wpm, 1), "voiced_s": round(voiced, 2),
-            "words": n, "seconds_total": round(_wav_duration(wav_bytes), 2)}
+            "words": n, "seconds_total": round(_wav_duration(wav_bytes), 2),
+            "rate_source": src}
 
 
 def _wav_parse(wav_bytes: bytes) -> tuple[int, list[int]]:
@@ -320,6 +366,21 @@ def create_card(wav_bytes: bytes, label: str, source: str = "watch-record",
         _save_and_return(p)
     _warm_audition()   # a new card should be auditionable the moment it appears
     return {"card_id": card_id, **p["cards"][card_id]}
+
+
+def rename_card(card_id: str, label: str) -> dict:
+    """Display label swapped on the SAME card_id (owner law 2026-11-11): the
+    id is the unchanging uuid nobody sees — voices bound to a card, the watch
+    list, and every dropdown update the moment the rev does, because 'name'
+    was always just a label. Free text, capped like at creation."""
+    label = re.sub(r"[\x00-\x1f\x7f]", "", label).strip()[:48] or card_id[:48]
+    with LOCK:
+        p = read_prefs()
+        card = (p.get("cards") or {}).get(card_id)
+        if not card:
+            raise KeyError(f"no such voice card: {card_id}")
+        card["label"] = label
+        return _save_and_return(p)
 
 
 def delete_card(card_id: str) -> dict:

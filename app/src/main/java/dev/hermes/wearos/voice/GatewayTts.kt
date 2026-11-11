@@ -223,6 +223,7 @@ object GatewayTts {
             val body = JSONObject()
                 .put("label", label.trim().ifEmpty { "watch voice" })
                 .put("wav_b64", Base64.getEncoder().encodeToString(wav))
+                .put("transcript", "")   // freeform take — gateway estimates pace from the envelope
             val req = Request.Builder().url("$base/voice/card_create")
                 .post(body.toString().toRequestBody(JSON)).build()
             http.newCall(req).execute().use { resp ->

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -31,10 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -91,6 +93,7 @@ fun VoiceEnroll(onClose: () -> Unit) {
     val ctx = LocalContext.current
     val ime = LocalSoftwareKeyboardController.current
     val recThread = remember { AtomicReference<Thread?>(null) }
+    val fieldFocus = remember { FocusRequester() }
     var step by remember { mutableStateOf(Step.NAME) }
     var name by remember { mutableStateOf("") }
     var pcm by remember { mutableStateOf<ByteArray?>(null) }
@@ -161,31 +164,40 @@ fun VoiceEnroll(onClose: () -> Unit) {
         when (step) {
             Step.NAME -> {
                 Text("name this voice", style = MaterialTheme.typography.body2)
+                // Tapping the box MUST open the system keyboard — a field that
+                // ignores the finger is a dead widget (owner, first real contact
+                // 2026-11-11). FocusRequester + explicit show() is the Wear idiom.
                 Box(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colors.surface.copy(alpha = 0.6f))
+                        .clickable { fieldFocus.requestFocus(); ime?.show() }
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
-                    if (name.isEmpty()) Text("e.g. hannah", style = MaterialTheme.typography.body2,
+                    if (name.isEmpty()) Text("voice name", style = MaterialTheme.typography.body2,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f))
                     BasicTextField(
                         value = name, onValueChange = { name = it.take(24) },
                         singleLine = true,
+                        modifier = Modifier.focusRequester(fieldFocus),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { ime?.hide() }),
                         textStyle = MaterialTheme.typography.body2.copy(color = MaterialTheme.colors.onSurface),
                     )
                 }
-                Button(onClick = { step = Step.READY },
+                Button(onClick = { ime?.hide(); step = Step.READY },
                     modifier = Modifier.size(width = 140.dp, height = 36.dp)) {
                     Text("next", style = MaterialTheme.typography.button)
                 }
             }
             Step.READY -> {
-                Text("say this once", style = MaterialTheme.typography.body2)
-                Text(GatewayTts.prompt, style = MaterialTheme.typography.body2,
-                    textAlign = TextAlign.Center, color = MaterialTheme.colors.primary)
-                Text("3–$MAX_SECONDS s · you'll hear it back",
+                // Freeform law (owner 2026-11-11): NO script on the watch — talk
+                // 3-12 s about anything. Pace comes from the syllable envelope
+                // (rate_source 'syllabic-est' on the card), so a fast take
+                // legitimately measures fast without anyone reading a page.
+                Text("talk 3–$MAX_SECONDS s", style = MaterialTheme.typography.body2)
+                Text("say anything — this take becomes your voice",
+                    style = MaterialTheme.typography.caption1)
+                Text("you'll hear it back before it's kept",
                     style = MaterialTheme.typography.caption1)
                 if (error.isNotEmpty()) Text(error, style = MaterialTheme.typography.caption1,
                     color = Color(0xFFE0836F))
@@ -196,7 +208,7 @@ fun VoiceEnroll(onClose: () -> Unit) {
                 }
             }
             Step.REC -> {
-                Text("recording — read the line", style = MaterialTheme.typography.body2)
+                Text("recording — talk freely", style = MaterialTheme.typography.body2)
                 // Live meter, not a spinner (owner doctrine: prove the mic is hearing).
                 Box(Modifier.fillMaxWidth().size(8.dp)
                     .background(MaterialTheme.colors.surface, RoundedCornerShape(4.dp))) {
@@ -224,7 +236,7 @@ fun VoiceEnroll(onClose: () -> Unit) {
                         modifier = Modifier.size(width = 64.dp, height = 40.dp)) { Text("↻") }
                     Button(
                         onClick = {
-                            if (dur < MIN_SECONDS) error = "too short — read the whole line"
+                            if (dur < MIN_SECONDS) error = "too short — talk at least 3 s"
                             else {
                                 error = ""
                                 step = Step.SAVE

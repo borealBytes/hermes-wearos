@@ -43,6 +43,8 @@ const $busy = atom(false)
 const $error = atom('')
 const $code = atom('')
 const $pairNote = atom('')
+const $renaming = atom('')       // card_id whose label is being edited ('' = none)
+const $renamingVal = atom('')
 
 let api = null
 const rest = (path, opts) => {
@@ -213,6 +215,16 @@ const voKaraoke = e => voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'karaoke', karaoke: e.target.checked } }))
 const voDelete = cid => voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'card_delete', card: cid } }))
+// Rename is label-only: the card_id (uuid-ish slug) is the identity every
+// binding speaks; the name you see is display text and can change forever.
+const voRenameStart = (cid, label) => { $renaming.set(cid); $renamingVal.set(label) }
+const voRename = cid => {
+  const label = String($renamingVal.get() || '').trim().slice(0, 48)
+  $renaming.set('')
+  if (!label) return
+  voiceAct(() => rest('/voice', {
+    method: 'POST', body: { action: 'card_rename', card: cid, label } }))
+}
 
 async function act (fn) {
   haptic('tap')
@@ -954,21 +966,48 @@ function WearKitPane () {
             ? jsxs('div', {
                 className: 'flex flex-col gap-0.5',
                 children: [
-                  ...Object.entries(voicing.cards).map(([cid, m]) => jsxs('div', {
-                    className: 'flex items-center justify-between gap-1 text-xs',
-                    children: [
-                      jsxs('span', {
-                        className: 'text-(--ui-text-secondary)',
-                        children: [m.label || cid.slice(0, 8),
-                                   m.ref_rate ? ` · ${Math.round(m.ref_rate)} wpm` : '']
-                      }),
-                      jsx('button', {
-                        className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
-                        type: 'button', disabled: busy, onClick: () => voDelete(cid),
-                        children: '✕'
-                      })
-                    ]
-                  }, cid))
+                  ...Object.entries(voicing.cards).map(([cid, m]) =>
+                    $renaming.get() === cid ? jsxs('div', {
+                      className: 'flex items-center gap-1',
+                      children: [
+                        jsx('input', {
+                          className: 'min-w-0 flex-1 rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-xs',
+                          type: 'text', value: $renamingVal.get() || '', maxLength: 48,
+                          onInput: (e) => $renamingVal.set(e.target.value),
+                          onKeyDown: (e) => { if (e.key === 'Enter') voRename(cid); if (e.key === 'Escape') $renaming.set('') }
+                        }),
+                        jsx('button', {
+                          className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
+                          type: 'button', disabled: busy, onClick: () => voRename(cid),
+                          children: '✓'
+                        }),
+                        jsx('button', {
+                          className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px]',
+                          type: 'button', onClick: () => $renaming.set(''),
+                          children: '✕'
+                        })
+                      ]
+                    }, cid) : jsxs('div', {
+                      className: 'flex items-center justify-between gap-1 text-xs',
+                      children: [
+                        jsxs('span', {
+                          className: 'text-(--ui-text-secondary)',
+                          children: [m.label || cid.slice(0, 8),
+                                     m.ref_rate ? ` · ${Math.round(m.ref_rate)} wpm` : '']
+                        }),
+                        jsx('button', {
+                          className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
+                          type: 'button', disabled: busy, title: 'rename (the id never changes)',
+                          onClick: () => voRenameStart(cid, m.label || ''),
+                          children: '✎'
+                        }),
+                        jsx('button', {
+                          className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
+                          type: 'button', disabled: busy, onClick: () => voDelete(cid),
+                          children: '✕'
+                        })
+                      ]
+                    }, cid))
                 ]
               })
             : null,
