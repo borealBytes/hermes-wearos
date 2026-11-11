@@ -118,13 +118,39 @@ def _fake_engine(monkeypatch, texts, wav=None):
         return (wav or _sine_wav(0.5)), 24000
     monkeypatch.setitem(voiceout._SYNTH, "air", air)
     monkeypatch.setattr(voiceout, "read_prefs",
-                        lambda: {"rev": 1, "cards": {}, "global": {"speed": 1.0},
-                                 "modes": {}})
-    return seen
+                        lambda: {"rev": 1, "cards": {},
+                                 "global": {"speed": 1.0, "chunk": "sentence"},
+                                 "modes": {}})   # stub pins the lane each test
+    return seen                                  # asserts on (chunk_mode reads
+                                                 # this stub via read_prefs)
+
+
+def _sandbox_home(monkeypatch):
+    """Point the plugin's prefs root at a throwaway dir so voiceout state writes
+    never land in whoever's home runs pytest. The resolver prefers a CONTEXT-LOCAL
+    override and profile-pin env vars over HERMES_HOME — neutralize all three
+    (exact conftest pattern, 2026-11-10 lesson)."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix="wearos-home-")
+    monkeypatch.setenv("HERMES_HOME", d)
+    try:
+        import hermes_constants as _hc
+        if hasattr(_hc, "set_hermes_home_override"):
+            _token = _hc.set_hermes_home_override(d)
+            monkeypatch.finalize(lambda: _hc.reset_hermes_home_override(_token))
+    except Exception:
+        pass
+    monkeypatch.delenv("HERMES_GATEWAY_PROFILE_PIN", raising=False)
+    monkeypatch.delenv("HERMES_SESSION_PROFILE", raising=False)
+    return d
 
 
 def test_stream_yields_one_pcm_chunk_per_sentence(monkeypatch):
+    _sandbox_home(monkeypatch)
     seen = _fake_engine(monkeypatch, None)
+    import voiceout
+    voiceout.set_chunk_mode("sentence")   # this test pins the SENTENCE lane;
+    # product default became 'paragraph' 2026-11-11 (see test_chunk_mode.py).
     p = tts_provider.WearKitGatewayProvider()
     chunks = list(p.stream(LONG3, speed=None))
     assert len(seen) == 3 and seen == voiceout_sentences()
