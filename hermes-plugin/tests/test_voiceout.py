@@ -1,5 +1,6 @@
 """voiceout core: cards, measured ref_rate, rev'd prefs, honest refusals (issue #7)."""
 import importlib.util, math, os, struct, tempfile, unittest
+import threading as _th, time as _t
 os.environ.setdefault("HERMES_HOME", tempfile.mkdtemp(prefix="vo-test-"))
 _spec = importlib.util.spec_from_file_location(
     "voiceout", os.path.join(os.path.dirname(__file__), "..", "voiceout.py"))
@@ -109,9 +110,23 @@ class SentenceChunkingTests(unittest.TestCase):
 
     def setUp(self):
         os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="vo-test-")
+        # These are the issue #7 SENTENCE-mode tests; paragraph became the
+        # product default on 2026-11-11 (see test_chunk_mode.py for that lane).
+        vo.set_chunk_mode("sentence")
         self.calls = []
         vo._SYNTH["air"] = self._air
         self._align = dict(vo._ALIGN)
+
+    def _drain_audition(self):
+        """create_card warms the audition clip on a daemon thread (voiceout
+        340-361): it lands a draw in self.calls ASYNC — join it before any
+        call-count snapshot or the count races (owner's CI-vs-local flake)."""
+        deadline = _t.time() + 2.0
+        while _t.time() < deadline:
+            th = [x for x in _th.enumerate() if x.name.startswith("voiceout-audition-warm")]
+            if not th:
+                return
+            th[0].join(0.1)
 
     def tearDown(self):
         vo._SYNTH.pop("air", None)
@@ -130,6 +145,7 @@ class SentenceChunkingTests(unittest.TestCase):
         # dropdown's selection IS the fallback voice for unbound agents.
         c = vo.create_card(VOICED, "Global")
         vo.set_voice("__default__", c["card_id"])
+        self._drain_audition()                # async warm: settle before counting
         before = len(self.calls)              # create_card may audition once
         r = vo.synthesize("Knock knock.", "desktop", want_words=False)
         self.assertTrue(r["ok"], r.get("error"))

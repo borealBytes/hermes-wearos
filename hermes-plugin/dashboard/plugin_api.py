@@ -307,6 +307,8 @@ def voice_post(body: dict):
         return vo.set_speed(float(body.get("speed", 1.0)))
     if action == "karaoke":
         return vo.set_karaoke(bool(body.get("karaoke", True)))
+    if action == "chunk_mode":                    # sentence | paragraph (v0.3.4)
+        return vo.set_chunk_mode(str(body.get("value", "")))
     if action == "voice":                       # per-agent default card
         return vo.set_voice(str(body.get("agent") or "default"),
                             str(body.get("card") or ""))

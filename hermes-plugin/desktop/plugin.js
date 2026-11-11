@@ -213,6 +213,11 @@ const voSpeed = e => {
 }
 const voKaraoke = e => voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'karaoke', karaoke: e.target.checked } }))
+// chunk mode (owner 2026-11-11: sentence draws lag between clips and the voice
+// shifts at every boundary — paragraph is the default; sentence stays one tap
+// away for snark-fast first audio). Buttons answer the click or name the failure.
+const voChunk = m => voiceAct(() => rest('/voice', {
+  method: 'POST', body: { action: 'chunk_mode', value: m } }))
 const $confirmDel = atom('')      // card_id armed for delete ('' = none)
 // Default picker feedback must be UNMISTAKABLE (owner 2026-11-11: "the
 // checkbox doesn't turn green"): theme-independent green accent, an optimistic
@@ -1160,7 +1165,18 @@ function WearKitPane () {
                   jsx('input', { type: 'checkbox', checked: !!voicing.karaoke, disabled: busy, onChange: voKaraoke }),
                   jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'karaoke' })
                 ]
-              })
+              }),
+              // chunk mode segmented: sentence | paragraph (theme-proof active: inline green)
+              jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)', children: 'chunk' }),
+              ...['sentence', 'paragraph'].map(m => jsx('button', {
+                className: 'cursor-pointer text-[10px]',
+                style: (voicing.chunk || 'paragraph') === m
+                  ? { color: '#4ade80', textDecoration: 'underline', textUnderlineOffset: '3px' }
+                  : { color: 'var(--ui-text-tertiary, #888)' },
+                disabled: busy,
+                onClick: () => voChunk(m),
+                children: m
+              }, 'chunk-' + m))
             ]
           }) : null,
 
