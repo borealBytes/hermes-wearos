@@ -328,9 +328,15 @@ class AppSettings(private val context: Context) {
      *  voices through the private lane. Unknown values ride "system" — never a silent mystery. */
     private val _ttsSource = MutableStateFlow("system")
     val ttsSource: StateFlow<String> = _ttsSource
-    suspend fun ttsSourceValue(): String =
-        context.dataStore.data.first()[KEY_TTS_SOURCE].orEmpty().ifEmpty { "system" }
-    suspend fun loadTtsSource() { _ttsSource.value = ttsSourceValue() }
+    /** Raw preference: "" = NEVER SET (the doctrine default resolves below, not a stored value). */
+    suspend fun ttsSourceValue(): String = context.dataStore.data.first()[KEY_TTS_SOURCE].orEmpty()
+    /** Doctrine default (owner 2026-11-11, voice-out invariant): voice-out rides the GATEWAY
+     *  tier — the watch's own engine is the fallback, never the default. A watch that has a
+     *  private lane boots on gateway voices; one still pairing boots on system until its first
+     *  pair, and any explicit Settings pick always wins over this resolution. */
+    suspend fun ttsSourceResolved(): String =
+        ttsSourceValue().ifEmpty { if (dev.hermes.wearos.net.PrivateLane.configured) "gateway" else "system" }
+    suspend fun loadTtsSource() { _ttsSource.value = ttsSourceResolved() }
     suspend fun setTtsSource(v: String) {
         val s = if (v.trim().lowercase() == "gateway") "gateway" else "system"
         context.dataStore.edit { it[KEY_TTS_SOURCE] = s }

@@ -2475,3 +2475,20 @@ Two provable halves of one ruling, both hardware-driven same evening:
   STT/TTS build chains run on ALLOWLIST env (provider keys never inherited —
   `test_env_hygiene.py`), and the README names `tailscale funnel` as a MUTATING
   call and discloses the wrist-unpair key rotation + default-profile restart.
+
+- **v0.10.1 — fresh-person findings, watch side (2026-11-11, owner's physical test).** Four
+  fixes from the owner's brand-new-person pairing pass (the run that also produced plugin
+  0.3.1/0.3.2): (1) **ENABLE⇒LEARN** — `AgentsRepo.refresh()` now auto-runs
+  `refreshAgentKeys()` when any granted-listed agent has no key; an agent enabled on the
+  Wear Kit pane is talkable without visiting Settings ▸ Gateways ▸ Agent keys ▸ ⟳ (the button
+  stays as the manual repair; the server grant law is unchanged — it just gets exercised
+  automatically). (2) **Gateway voice is the default** — the persisted voice-out source now
+  stores "" = never-set, and the resolution doctrine (voice-out invariant, owner ruling): a
+  watch that HAS a private lane boots on GATEWAY voices; system TTS is the fallback, never
+  the default; an explicit Settings pick always outranks. (3) **Gear means the hub** — the ⚙
+  lane (and ⚙ buttons, /settings, dev open) opens Settings at ROOT even while the pair gate
+  is up; only the automatic pairing takeover may land the Pair page. (4) **Back unwinds one
+  level** — the ring's BackHandler stands down while Settings has pages to pop (sub → parent
+  → hub, enrollment first), so the hardware back walks out of sub- and sub-sub-screens and
+  only THEN rejoins the Chat→Sessions→Agents→Chat loop; edge-swipe keeps its straight-to-chat
+  contract. JVM suite + release lint gate the build.

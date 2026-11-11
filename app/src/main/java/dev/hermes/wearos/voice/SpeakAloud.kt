@@ -150,7 +150,7 @@ class SpeakAloud(context: Context, private val settings: AppSettings, private va
         settings.loadTtsEngine()
         settings.loadTtsFallback()
         settings.loadTtsSource()
-        source = settings.ttsSourceValue()
+        source = settings.ttsSourceResolved()
         rate = settings.ttsRateValue()
         voiceName = settings.ttsVoiceValue()
         settings.loadTtsVolume()

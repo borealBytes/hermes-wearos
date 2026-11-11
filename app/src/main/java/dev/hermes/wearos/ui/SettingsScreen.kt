@@ -107,6 +107,13 @@ fun SettingsScreen(
     context: Context,
     settings: AppSettings,
     speak: SpeakAloud,
+    // GEAR MEANS THE ROOT (owner 2026-11-11): true = the wearer opened Settings themselves
+    // (gear lane, ⚙ button, /settings) — do NOT hijack to the Pair page even while the pair
+    // gate is up; the auto-takeover path (pairTookOver) passes false and still lands Pair.
+    openAtRoot: Boolean = false,
+    // BACK UNWINDS ONE LEVEL (owner 2026-11-11): report whether this screen has anything to
+    // pop, so MainActivity can stand its ring handler down while we handle back ourselves.
+    onUnwindChanged: (Boolean) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var baseUrl by remember { mutableStateOf("") }
@@ -200,10 +207,13 @@ fun SettingsScreen(
     var enrolling by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(enabled = enrolling) { enrolling = false }
     androidx.activity.compose.BackHandler(enabled = page != SettingsPage.Root) { page = page.up() }
+    LaunchedEffect(page, enrolling) { onUnwindChanged(enrolling || page != SettingsPage.Root) }
     // PAIR GATE (SPEC §4): first launch (empty registry) and engine edges into NEEDS_AUTH request
     // the Pair screen — this edge lands the page. Cleared on pickup (Graph.pairApplyPickup).
+    // v0.10.1: a MANUAL open (openAtRoot) is the wearer asking for the hub — the gate may not
+    // hijack a requested page; the pairing takeover opens with openAtRoot=false as before.
     val pairNow by WearApp.Graph.pairRequested.collectAsState()
-    LaunchedEffect(pairNow) { if (pairNow) page = SettingsPage.Pair }
+    LaunchedEffect(pairNow, openAtRoot) { if (pairNow && !openAtRoot) page = SettingsPage.Pair }
     // KNOCK the funnel ONCE: begin → show the gateway's code → poll with backoff → ack (client
     // pair() owns the whole loop; a 429 backs off, never burns the code). The device secret is
     // generated fresh per knock and never leaves this process except inside the POST/poll body.
