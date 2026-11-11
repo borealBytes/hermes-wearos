@@ -47,6 +47,14 @@ class AgentsRepo(private val settings: AppSettings) {
                 _agents.value = list
                 val root = JsonObject(mapOf<String, JsonElement>("agents" to JsonArray(list.map { JsonPrimitive(it) })))
                 settings.setAgentsCache(root.toString())
+                // ENABLE⇒LEARN (v0.10.1, owner's fresh-person pass): an agent enabled on the
+                // Wear Kit pane must be talkative on the wrist WITHOUT the manual ⟳. /agents is
+                // grant-filtered by the plugin, so a listed agent missing a key is one lane
+                // session call away — and refreshAgentKeys is grant-law-correct, idempotent,
+                // write-only-on-change, and quiet when the lane is unconfigured.
+                if (list.any { settings.agentKeysSync()[it]?.isNotBlank() != true })
+                    runCatching { settings.refreshAgentKeys() }
+                        .onSuccess { n -> if (n > 0) Log.i(TAG, "auto-learn: $n agent key(s) learned") }
             }
         } catch (e: Exception) {
             Log.w(TAG, "agents refresh failed (cache/fallback shown): ${e.message}")

@@ -243,6 +243,17 @@ class MainActivity : ComponentActivity() {
                 val gatewayLabel by WearApp.Graph.gatewayLabel.collectAsState()
 
                 var screen by remember { mutableStateOf(Screen.Chat) }
+                // GEAR MEANS THE ROOT (owner 2026-11-11): a manually-opened Settings lands on the
+                // hub, never on a forced sub-page — the pairing takeover may still drive the page
+                // when IT opened the screen. Reset whenever the wearer leaves Settings.
+                var settingsManual by remember { mutableStateOf(false) }
+                // BACK UNWINDS ONE SETTINGS LEVEL (owner 2026-11-11: "hw back button should back
+                // out from all sub-setting and sub-sub settings screens until you get back to
+                // chat"): SettingsScreen reports whether it has anything to pop; while it does,
+                // the ring handler below disables and SettingsScreen's own BackHandler (composed
+                // inside the screen) wins the dispatcher.
+                val settingsCanUnwind = remember { mutableStateOf(false) }
+                LaunchedEffect(screen) { if (screen != Screen.Settings) settingsManual = false }
                 // FIRST-RUN / NEEDS_AUTH PAIR GATE (SPEC §4, "tailnet only, always"): an empty
                 // registry or any engine edge into NEEDS_AUTH routes the wrist to Settings —
                 // whose own collector lands the Pair page — instead of a chat with nothing to
@@ -482,6 +493,7 @@ class MainActivity : ComponentActivity() {
                             "sessions" -> Screen.Sessions
                             else -> Screen.Chat
                         }
+                        if (screen == Screen.Settings) settingsManual = true
                         WearApp.Graph.devScreen.value = null
                     }
                 }
@@ -566,7 +578,7 @@ class MainActivity : ComponentActivity() {
                                 "sessions" -> screen = Screen.Sessions
                                 "chats" -> screen = Screen.Chats
                                 "agents" -> { showAgents = true; uiScope.launch { agents.refresh() } }
-                                "settings" -> screen = Screen.Settings
+                                "settings" -> { screen = Screen.Settings; settingsManual = true }
                                 "new" -> { session.createChat(); screen = Screen.Chat }
                                 else -> session.ask(e.invocation)
                             }
@@ -598,7 +610,7 @@ class MainActivity : ComponentActivity() {
                         Lane.Mute -> speak.setVoiceEnabled(!voiceOut)
                         // ⚙ 3:00 — the owner's "settings is a little tough to get to": one drag
                         // straight to Settings (record_hi lives on as a remap lane, §12.1).
-                        Lane.Settings -> screen = Screen.Settings
+                        Lane.Settings -> { screen = Screen.Settings; settingsManual = true }
                         Lane.RecordHi -> sttStatus.value = "record→pc STT: branch 2 (§13.4)"
                         // 🧠 the model lane (owner: notes nobody used → "make that the model
                         // selector"). Always lands on the chat first: the pick is per-chat.
@@ -840,7 +852,7 @@ class MainActivity : ComponentActivity() {
                                 onOpen = openChatAndBack,
                                 onCreate = { session.createChat(); screen = Screen.Chat },
                                 onRename = { id, label -> session.renameChat(id, label) },
-                                onOpenSettings = { screen = Screen.Settings },
+                                onOpenSettings = { screen = Screen.Settings; settingsManual = true },
                             )
                         }
                         Screen.Sessions -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
@@ -886,7 +898,9 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         Screen.Settings -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
-                            SettingsScreen(context = context, settings = settings, speak = speak)
+                            SettingsScreen(context = context, settings = settings, speak = speak,
+                                openAtRoot = settingsManual,
+                                onUnwindChanged = { settingsCanUnwind.value = it })
                         }
                     }
                     }
@@ -959,9 +973,13 @@ class MainActivity : ComponentActivity() {
                 // THE RING (owner batch 6: *"chat to sessions to agents, then back to chat again —
                 // the app shouldn't really quit unless I hit the home button"*). With nothing open,
                 // physical back walks Chat → Sessions → Agents → Chat; the app never finishes from
-                // here (Chats/Settings rejoin at Chat). Composed last so it outranks the screens'
-                // own handlers; edge-swipe keeps its return-to-Chat meaning untouched.
-                androidx.activity.compose.BackHandler(enabled = !overlayOpen) {
+                // here (Chats/Settings rejoin at Chat). v0.10.1: while Settings has pages to pop
+                // (sub- or sub-sub-screen, enrollment open) the ring STANDS DOWN and Settings'
+                // own BackHandler unwinds exactly one level — sub → sub-parent → hub → chat —
+                // then the ring's Settings→Chat leg takes over. Edge-swipe keeps its
+                // return-to-Chat meaning untouched.
+                androidx.activity.compose.BackHandler(enabled = !overlayOpen &&
+                    !(screen == Screen.Settings && settingsCanUnwind.value)) {
                     when (BackRing.action(screen)) {
                         BackRing.Action.ToSessions -> screen = Screen.Sessions
                         BackRing.Action.ToAgents -> {
