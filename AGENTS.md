@@ -65,7 +65,7 @@ split -n l/14 -d app/build/outputs/apk/debug/app-debug.apk /tmp/hw/part-
 for p in /tmp/hw/part-*; do
   for i in 1 2 3; do adb -s "$SERIAL" push "$p" "/data/local/tmp/$(basename "$p")" && break || sleep 2; done
 done
-adb -s "$SERIAL" shell 'cat /data/local/tmp/part_* > /data/local/tmp/app.apk'
+adb -s "$SERIAL" shell 'cat /data/local/tmp/part-* > /data/local/tmp/app.apk'
 [ "$(adb -s "$SERIAL" shell md5sum /data/local/tmp/app.apk | cut -d' ' -f1 | tr -d '\r')" \
   = "$(md5sum app/build/outputs/apk/debug/app-debug.apk | cut -d' ' -f1)" ] \
   && adb -s "$SERIAL" shell pm install -r /data/local/tmp/app.apk
