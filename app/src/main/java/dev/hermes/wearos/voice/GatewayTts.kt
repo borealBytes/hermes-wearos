@@ -161,6 +161,19 @@ object GatewayTts {
         }
     }
 
+    /** Chunk mode as the gateway knows it (paragraph default; the doc is truth). */
+    val chunkMode: String
+        get() = prefsDoc.optJSONObject("global")?.optString("chunk", "paragraph")
+            ?.ifEmpty { "paragraph" } ?: "paragraph"
+
+    /** Write chunk mode into the canonical doc's global section (read-modify-write,
+     *  rev'd by the gateway; offline edit replays via the same PUT as speed). */
+    fun setChunk(mode: String): Boolean {
+        val g = JSONObject(prefsDoc.optJSONObject("global")?.toString() ?: "{}")
+            .put("chunk", mode)
+        return putPrefs(global = g)
+    }
+
     /** Ear-test on the gateway voice — the sliders' preview and the picker's ▶ use this. */
     fun preview(agent: String) {
         enqueue(dev.hermes.wearos.domain.TtsConfig.PREVIEW_TEXT, agent,

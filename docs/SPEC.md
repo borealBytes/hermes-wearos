@@ -1923,6 +1923,25 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   transcription at creation), never a multi-voice catalogue marketing claim.
   Enrollment proven live on gateway + pane + watch the same hour.
 
+- **2026-11-11 — CHUNK MODE: paragraph by default (owner ruling, verbatim:
+  "sentence lags too much between them and voice changes too much... let's
+  check paragraph by default"):** voice-out chunking is a gateway-canonical
+  pref `chunk: sentence | paragraph` (default **paragraph**, global section,
+  monotonic rev, offline replay like every other pref). One paragraph per
+  engine draw = one cache entry, steadier prosody, fewer audible boundaries;
+  a paragraph beyond `_PARA_CAP` (900) chars sentence-splits so no single draw
+  pins the engine (the #7 latency promise, kept honest); text without
+  blank-line breaks IS one paragraph and follows the same cap. `voiceout.
+  _sentences(text, mode=None)` falls back to the CONFIGURED mode (not the
+  constant) so every caller honors the pane; the watch lane is unchanged (it
+  just plays what the lane streams). Pane Voice-out card carries a
+  `sentence | paragraph` segmented toggle beside karaoke; dashboard
+  `POST /voice {action:"chunk_mode", value}`; `GET /voice/prefs` reports
+  `chunk`. `tests/test_chunk_mode.py` pins default/grouping/cap/refusal/
+  round-trip; the issue #7 sentence tests now pin their mode explicitly and a
+  latent async-audition race in them was fixed the same pass (the warm thread
+  could land a draw after the call-count snapshot — `_drain_audition()`).
+
 
 ## Appendix A — Landed slices (build log, newest first)
 

@@ -167,7 +167,7 @@ class WearKitGatewayProvider(TTSProvider):
         voice = self._resolve_voice(voice)
         eff = float(speed) if speed else \
             float((voiceout.read_prefs().get("global") or {}).get("speed") or 1.0)
-        for sent in voiceout._sentences(text):
+        for sent in voiceout._sentences(text, mode=voiceout.chunk_mode()):
             r = voiceout.synthesize(sent, "desktop", want_words=False,
                                     card_id=voice)
             if not r or not r.get("ok") or not r.get("audio"):

@@ -66,6 +66,14 @@ SEED_URL = ("https://github.com/borealBytes/hermes-wearos/releases/download/"
             "voiceout-seed-v1/seed-pack-v1.tar.gz")
 SEED_SHA256 = "PENDING"          # set when the pack is cut (tools/voiceout_seed_cut.py)
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
+# CHUNK MODE (owner ruling 2026-11-11): 'sentence' = the issue #7 sentence-by-
+# sentence lane; 'paragraph' (the DEFAULT) renders one paragraph per draw — the
+# owner's ear found sentence-sized draws lag between clips and shift timbre at
+# every boundary ("voice changes too much"); a paragraph is one prosodic unit,
+# one cache entry. A paragraph over _PARA_CAP chars falls back to sentence cuts
+# (latency honesty), and text with no blank-line breaks has no paragraphs to
+# respect — it follows the same cap rule.
+CHUNK_MODES, CHUNK_DEFAULT = ("sentence", "paragraph"), "paragraph"
 SCRIPTED_PROMPT = ("Your cron digest is ready: three farm alerts, no incidents, "
                    "sprayer window opens Thursday at six ten.")   # 17 words, for ref_rate
 WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'.\-]*")
@@ -75,7 +83,7 @@ def _default_prefs() -> dict:
     return {
         "rev": 1,
         "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "global": {"speed": SPEED_DEFAULT, "karaoke": True},
+        "global": {"speed": SPEED_DEFAULT, "karaoke": True, "chunk": CHUNK_DEFAULT},
         "modes": {},            # agent -> "gateway" | "watch" | "off"
         "voices": {},           # agent -> card_id ("" = system default)
         "cards": {},            # card_id -> {ref_rate, words_per_min, source, license, seeded}
@@ -172,6 +180,23 @@ def set_speed(speed: float) -> dict:
         p = read_prefs()
         p.setdefault("global", {})[("speed")] = round(s, 2)
         return _save_and_return(p)
+
+
+def set_chunk_mode(mode: str) -> dict:
+    """Watch/desktop voice-out chunking: 'sentence' (issue #7 original) or
+    'paragraph' (default since 2026-11-11). Unknown names are refused loudly —
+    the pane shows the refusal copy in its note line (never a silent no-op)."""
+    m = str(mode).strip().lower()
+    if m not in CHUNK_MODES:
+        return {"ok": False, "error": f"chunk mode must be one of {list(CHUNK_MODES)}"}
+    with LOCK:
+        p = read_prefs()
+        p.setdefault("global", {})["chunk"] = m
+        return _save_and_return(p)
+
+
+def chunk_mode() -> str:
+    return str((read_prefs().get("global") or {}).get("chunk", CHUNK_DEFAULT))
 
 
 def set_karaoke(on: bool) -> dict:
@@ -531,18 +556,14 @@ def _transcribe(wav_bytes: bytes, rate: int) -> str:
 
 
 _SENT_RE = __import__("re").compile(r"(?<=[.!?])\s+")
+_PARA_RE = __import__("re").compile(r"\n\s*\n+")
+_PARA_CAP = 900          # chars; longer paragraphs are sentence-cut for latency
 
 
-def _sentences(text: str, min_len: int = 24) -> list[str]:
-    """The server-side sentence cutter (owner ruling 2026-11-10, issue #7): long
-    replies synthesize SENTENCE BY SENTENCE in BOTH lanes — one mega-generation of a
-    'big old line of text' pins the engine for ages and caches as one giant blob;
-    segments are short draws, cache per sentence, and every repeated sentence across
-    all future replies replays from disk. Short texts stay one clip. Fragments under
-    *min_len* chars (a stray 'U.S.' abbreviation, a clipped '...') merge forward into
-    the following sentence so we never synthesize a 3-char gasp on its own."""
-    if len(text) <= 160:
-        return [text]
+def _sentence_split(text: str, min_len: int) -> list[str]:
+    """The issue #7 cutter: fragments under *min_len* chars (a stray 'U.S.'
+    abbreviation, a clipped '...') merge forward into the following sentence so
+    we never synthesize a 3-char gasp on its own."""
     parts = [p.strip() for p in _SENT_RE.split(text) if p.strip()]
     if len(parts) < 2:
         return [text]
@@ -555,6 +576,33 @@ def _sentences(text: str, min_len: int = 24) -> list[str]:
     if len(merged) > 1 and len(merged[-1]) < min_len:  # tail fragment joins the previous
         merged[-2] = merged[-2] + " " + merged.pop()
     return merged if len(merged) > 1 else [text]
+
+
+def _sentences(text: str, min_len: int = 24, mode: str | None = None) -> list[str]:
+    """The server-side chunk cutter, now MODE-aware (owner ruling 2026-11-11):
+    long replies synthesize in segments in BOTH lanes — segments are cache-keyed
+    draws and every repeated segment across all future replies replays from
+    disk; short texts stay one clip.
+    * 'sentence' — the issue #7 ruling: one sentence per draw (max first-audio
+      speed, but audible gaps/timbre steps between clips).
+    * 'paragraph' (default) — one paragraph per draw: fewer boundaries, steadier
+      prosody; a paragraph beyond _PARA_CAP chars is sentence-cut so no single
+      draw pins the engine for ages (the original #7 concern, kept honest).
+      Text with no blank-line break IS one paragraph: ≤ cap it rides as one
+      clip, over cap it sentence-splits."""
+    mode = (mode or chunk_mode()).strip().lower()
+    if len(text) <= 160:
+        return [text]
+    if mode == "paragraph":
+        paras = [p.strip() for p in _PARA_RE.split(text) if p.strip()]
+        segs: list[str] = []
+        for para in paras or [text]:
+            if len(para) <= _PARA_CAP:
+                segs.append(para)
+            else:
+                segs.extend(_sentence_split(para, min_len))
+        return segs if len(segs) > 1 else [text]
+    return _sentence_split(text, min_len)
 
 
 def _now_speed(p: dict) -> float:
@@ -675,7 +723,7 @@ def synthesize(text: str, agent: str, *, want_words: bool = True,
     # and each sentence renders as its own short, cache-keyed draw — no more single
     # mega-generation of a "big old line of text" ripping the CPU for minutes, and a
     # sentence that ever repeats in ANY future reply replays from disk.
-    segs = _sentences(text)
+    segs = _sentences(text, mode=(p.get("global") or {}).get("chunk", CHUNK_DEFAULT))
     parts = [_render_segment(s, card, card_id, want_words, speed) for s in segs]
     if len(parts) == 1:
         out = dict(parts[0])
@@ -769,6 +817,7 @@ def status() -> dict:
     return {"rev": p.get("rev", 1),
             "speed": (p.get("global") or {}).get("speed", SPEED_DEFAULT),
             "karaoke": (p.get("global") or {}).get("karaoke", True),
+            "chunk": (p.get("global") or {}).get("chunk", CHUNK_DEFAULT),
             "modes": p.get("modes") or {}, "voices": p.get("voices") or {},
             "cards": {cid: {k: v for k, v in m.items() if k != "sha256"}
                       for cid, m in cards.items()},
