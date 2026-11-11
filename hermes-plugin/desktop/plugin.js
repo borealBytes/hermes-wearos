@@ -370,7 +370,7 @@ async function voRecConfirm () {
   $voNote.set('sending your take… (compressed, then the gateway listens to it)')
   // A ✓ never answers with silence (doctrine): every failure mode of the
   // upload lands as a note line under the play button, not a dead row.
-  const gz = (_recBlob && window.CompressionStream && (_voice.get() || {}).revision)
+  const gz = (_recBlob && window.CompressionStream && ($voice.get() || {}).revision)
     ? await new Response(new Blob([_recBlob])
         .stream().pipeThrough(new window.CompressionStream('gzip'))).arrayBuffer()
     : null
