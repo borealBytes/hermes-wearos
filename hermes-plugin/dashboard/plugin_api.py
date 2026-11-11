@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -67,6 +69,16 @@ def _wearos():
 
 def _p():
     return _wearos()
+
+
+def _launch_profile() -> str:
+    """Name of the profile whose config mounted THIS plugin instance — the
+    pane's host. The gateway process's HERMES_HOME is its launch scope: the
+    root home is 'default', a profiles/<name> home is that named profile."""
+    home = str(Path(os.environ.get("HERMES_HOME",
+                                   str(Path.home() / ".hermes"))).resolve())
+    m = re.search(r"[\\/]profiles[\\/]([^\\/]+)$", home)
+    return m.group(1) if m else "default"
 
 
 # ── status ─────────────────────────────────────────────────────────────────────
@@ -156,6 +168,16 @@ def enable(body: dict):
     profile = str(body.get("agent") or body.get("profile", "")).strip().lower()
     if not profile:
         return {"error": "agent is required (no silent all-profiles default)"}
+    if not bool(body.get("enable", True)) and profile == _launch_profile():
+        # The pane's API IS this plugin instance in this profile (owner's
+        # fresh-person run 2026-11-11, twice bitten): unchecking the host's own
+        # box hot-unmounts the routes answering the pane — the checkbox grid
+        # freezes mid-click and the watch lane drops (the 'Plugin not found'
+        # 404). Refuse politely; the CLI stays the escape hatch.
+        return {"name": profile, "ok": False, "verb": "enable",
+                "detail": f"'{profile}' hosts this pane — unchecking it takes the pane and the "
+                          f"watch lane with it. Disable from a terminal instead: "
+                          f"hermes -p {profile} plugins disable wearos (and restart the gateway)"}
     res = _p().delegate_enablement(profile, bool(body.get("enable", True)))
     if res.get("ok"):
         # owner ruling 2026-11-10: enabling IS the whole decision — the grant
