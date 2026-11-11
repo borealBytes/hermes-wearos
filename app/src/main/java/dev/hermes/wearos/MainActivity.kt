@@ -897,7 +897,13 @@ class MainActivity : ComponentActivity() {
                                 onManage = { manageSheet = it },
                             )
                         }
-                        Screen.Settings -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
+                        Screen.Settings -> {
+                            // NO EDGE-SWIPE EXIT HERE (owner 2026-11-11, v0.10.2: "too easy to
+                            // accidentally click something that takes you back to the chat —
+                            // ONLY the hardware back should back out of settings/sub/sub-sub";
+                            // the dial-release near the edge could also bounce a just-opened
+                            // Settings, which read as 'settings doesn't open'). Chats/Sessions
+                            // keep ExitOnSwipeBack: those lists have no internal nav to confuse.
                             SettingsScreen(context = context, settings = settings, speak = speak,
                                 openAtRoot = settingsManual,
                                 onUnwindChanged = { settingsCanUnwind.value = it })
