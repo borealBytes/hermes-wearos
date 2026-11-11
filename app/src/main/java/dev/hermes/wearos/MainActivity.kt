@@ -41,7 +41,6 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateVelocity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -1193,31 +1192,34 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
 @Composable
 private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
     val slop = with(LocalDensity.current) { 40.dp.toPx() }
+    val flickSlop = with(LocalDensity.current) { 14.dp.toPx() }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(slop) {
-                val flingV = -1200f * density  // a clear leftward flick, ~1200 dp/s
                 awaitEachGesture {
-                    awaitFirstDown(pass = PointerEventPass.Initial)
-                    var total = 0f
+                    val down = awaitFirstDown(pass = PointerEventPass.Initial)
                     var taken = false
-                    var velocityPxPerS = 0f
                     while (true) {
                         val ev = awaitPointerEvent()
-                        val dx = ev.calculatePan().x
-                        total += dx
-                        velocityPxPerS = ev.calculateVelocity().x
+                        val ch = ev.changes.last()
+                        // displacement from the DOWN POINT, not accumulated deltas:
+                        // a parent scroller that consumes vertical (real thumbs arc)
+                        // zeroes the per-event pan, and curved flicks wobble the sum.
+                        val dx = ch.position.x - down.position.x
+                        val elapsed = ch.uptimeMillis - down.uptimeMillis
                         if (!taken) {
-                            // horizontally dominant, far enough OR flung hard leftward: claim.
-                            if (total <= -slop || (total < 0f && velocityPxPerS <= flingV)) {
+                            // Far enough (slow drag) OR far+fast (short thumb flick —
+                            // 220 ms covers the ~50 ms a finger takes past the slop
+                            // race; the injected-swipe 140 ms gate lost real thumbs).
+                            if (dx <= -slop || (dx <= -flickSlop && elapsed <= 220L)) {
                                 taken = true
-                            } else if (total >= slop) break // rightward: belongs to edge-back
+                            } else if (dx >= slop) break // rightward: belongs to edge-back
                         }
                         if (taken) ev.changes.forEach { it.consume() }
                         if (ev.changes.none { it.pressed }) break
                     }
-                    if (taken && (total <= -slop || velocityPxPerS <= flingV)) onForward()
+                    if (taken) onForward()
                 }
             },
     ) { content() }
