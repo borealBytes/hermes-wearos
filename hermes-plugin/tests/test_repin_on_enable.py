@@ -9,6 +9,7 @@ and says so in the detail (no silent upgrades either)."""
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 
 CANON = "d2bc4175604abc3dcc35da25e8907117e6ce1dea"
@@ -91,3 +92,53 @@ def test_pair_host_drops_the_dot_net_suffix(wearos, monkeypatch, tmp_path):
     info = wearos.tailnet_gateway_url(ttl=0)
     assert info["host"] == "tuxdesktop.tailb12aa5"
     assert info["gateway_url"] == "http://tuxdesktop.tailb12aa5.ts.net:8642"
+
+
+def test_self_disable_of_the_host_profile_is_refused(wearos, monkeypatch):
+    """'Plugin not found' after unchecking default (twice bitten): the pane's
+    API dies with its host, so the route must refuse that click with a note."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+    api_path = Path(__file__).resolve().parent.parent / "dashboard" / "plugin_api.py"
+    pytest.importorskip("fastapi")
+    spec = importlib.util.spec_from_file_location("wearos_plugin_api_rpin", api_path)
+    api = importlib.util.module_from_spec(spec)
+    sys.modules["wearos_plugin_api_rpin"] = api
+    spec.loader.exec_module(api)
+    try:
+        seen = []
+        monkeypatch.setattr(api, "_launch_profile", lambda: "default")
+        monkeypatch.setattr(wearos, "delegate_enablement",
+                            lambda p, e: seen.append((p, e)) or {"name": p, "ok": True})
+        monkeypatch.setattr(wearos, "refresh_inventory_row", lambda p: None)
+        out = api.enable({"agent": "default", "enable": False})
+        assert out["ok"] is False and not seen                  # never delegated
+        assert "hosts this pane" in out["detail"] and "disable" in out["detail"]
+        out2 = api.enable({"agent": "wear-demo", "enable": False})
+        assert out2.get("ok") is True and seen == [("wear-demo", False)]  # others pass
+        out3 = api.enable({"agent": "default", "enable": True})
+        assert out3.get("ok") is True                           # re-enable stays allowed
+    finally:
+        sys.modules.pop("wearos_plugin_api_rpin", None)
+
+
+def test_launch_profile_reads_the_home_scope(wearos, monkeypatch, tmp_path):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    pytest.importorskip("fastapi")
+    api_path = Path(__file__).resolve().parent.parent / "dashboard" / "plugin_api.py"
+    spec = importlib.util.spec_from_file_location("wearos_plugin_api_scope", api_path)
+    api = importlib.util.module_from_spec(spec)
+    sys.modules["wearos_plugin_api_scope"] = api
+    spec.loader.exec_module(api)
+    try:
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        assert api._launch_profile() == "default"
+        nested = tmp_path / "profiles" / "wear"
+        nested.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(nested))
+        assert api._launch_profile() == "wear"
+    finally:
+        sys.modules.pop("wearos_plugin_api_scope", None)
