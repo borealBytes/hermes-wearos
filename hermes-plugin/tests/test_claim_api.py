@@ -118,12 +118,11 @@ def test_giant_body_refused(door):
 
 def test_pending_polls_are_throttled_but_approval_breaks_through(wearos, door, monkeypatch):
     wearos.open_pairing()
-    begin(door)
+    _, knock = begin(door)
     assert poll(door, SECRET_A)[0] == 204
     assert poll(door, SECRET_A)[0] == 429          # per-secret floor (POLL_MIN_INTERVAL)
     # THE v1 bug inverted: an APPROVED pickup is never throttled, even mid-429:
-    code = wearos._engine().pending_list()[0]["code"]
-    wearos.approve_pair(code)
+    wearos.approve_pair(knock["code"])             # code via the watch's own knock only
     status, payload = poll(door, SECRET_A)
     assert status == 200 and payload["state"] == "ready"
 

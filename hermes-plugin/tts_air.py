@@ -500,10 +500,24 @@ def _sha_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _min_env(extra: "dict | None" = None) -> dict:
+    """Catalog review law (Nous #151546, 2026-11-10): never hand the inherited
+    gateway environment (every provider key) to third-party build/setup code.
+    Allowlist the basics, drop the rest. Mirrors stt_install._min_env."""
+    env = {k: v for k, v in os.environ.items()
+           if k in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP",
+                    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "XDG_CACHE_HOME",
+                    "http_proxy", "https_proxy", "no_proxy")}
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _run_proc(argv: list, phase: str) -> None:
     global _proc
     _proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True)
+                             text=True, env=_min_env())
     out = _proc.communicate(timeout=BUILD_TIMEOUT)[0] or ""
     if _proc.returncode != 0:
         raise RuntimeError(f"{phase} failed ({argv[0]} exit {_proc.returncode}): "
@@ -525,7 +539,8 @@ def _ensure_venv(venv: Path, setf) -> None:
     if not (venv / "bin" / "python").is_file():
         setf("venv", "creating the private venv")
         subprocess.run([_venv_python(), "-m", "venv", str(venv)],
-                       check=True, capture_output=True, timeout=300)
+                       check=True, capture_output=True, timeout=300,
+                       env=_min_env())
     if not (venv / ".neutts-installed").is_file():
         setf("runtime", "pip install (torch wheel + llama-cpp, minutes)")
         _run_proc([str(venv / "bin" / "python"), "-m", "pip", "install",
@@ -661,7 +676,8 @@ def build_cuda_gpu(idx: int) -> dict:
                     for extra in ("cmake", "ninja"):
                         subprocess.run([str(venv / "bin" / "python"), "-m", "pip",
                                         "install", "--no-input", "-q", extra],
-                                       check=True, capture_output=True, timeout=600)
+                                       check=True, capture_output=True, timeout=600,
+                                       env=_min_env())
                     r = subprocess.run(
                         [str(venv / "bin" / "python"), "-m", "pip", "install",
                          "--no-input", "-q", "--no-deps", "--no-binary", ":all:",
@@ -1094,8 +1110,19 @@ _NEXT = 0
 
 
 def _runner_env(device: Optional[str] = None) -> dict:
-    env = dict(os.environ, HF_HOME=str(_root() / "cache"),
-               HF_HUB_DISABLE_TELEMETRY="1", TMPDIR=str(_root()),
+    # Catalog review law (Nous #151546): NOTHING in this chain inherits the
+    # gateway environment — a pinned wheel's setup.py and the vendored neutts
+    # runtime must not see provider keys. Allowlist, then add what we require.
+    env = {k: v for k, v in os.environ.items()
+           if k in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP",
+                    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "XDG_CACHE_HOME",
+                    "http_proxy", "https_proxy", "no_proxy", "USER", "SHELL",
+                    "TERM", "TZ")}
+    env.update(HF_HOME=str(_root() / "cache"),
+               HF_HUB_DISABLE_TELEMETRY="1",
+               TMPDIR=str(_root()),
+               LD_LIBRARY_PATH=str(_root() / "cache"),
+               GIT_TERMINAL_PROMPT="0",
                # ONE worker, a bounded slice of the box (owner CPU-spike ruling
                # 2026-11-10): llama.cpp/torch default to ALL 32 threads and the
                # engine shares this host with sglang + the gateway itself.

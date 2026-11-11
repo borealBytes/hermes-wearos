@@ -455,11 +455,24 @@ class PairingEngine:
 
         def tx(doc: dict) -> list:
             self._prune(doc, now)
-            return [{"code": r["code"], "label": r["label"], "profile": r["profile"],
+            # Catalog review law (Nous #151546): the pending code is a SECRET
+            # until the human types it — pairing is public and first-caller-wins,
+            # so any surface that echoes a pending code lets the knock caller
+            # arrange its own approval. List WHAT waits, never WHICH code.
+            return [{"pair_id": r["id"], "label": r["label"], "profile": r["profile"],
                      "state": r["state"], "seconds_left": max(0, int(r["expires"] - now))}
                     for r in doc["pairs"].values() if r["state"] in ("pending", "approved")]
 
         return self.store.mutate(tx)
+
+    def state_of_code(self, code: str):
+        """Engine-internal: the state of the record with this RAW code (None if
+        absent). The display surface (pending_list) deliberately hides codes;
+        callers that already hold a human-typed code may still resolve it."""
+        for r in self.store.read()["pairs"].values():
+            if r.get("code") == code:
+                return r.get("state")
+        return None
 
     def claim_locked(self) -> dict:
         doc = self.store.read()

@@ -266,7 +266,8 @@ def _run() -> None:
         if not (venv / "bin" / "python").is_file():
             _set("bindings", "creating private venv + transcribe bindings")
             subprocess.run([sys.executable, "-m", "venv", str(venv)],
-                           check=True, capture_output=True, timeout=300)
+                           check=True, capture_output=True, timeout=300,
+                           env=_min_env())
             _pip(venv, ["install", "-q", str(src / "bindings" / "python")])
 
         if not model.is_file() or not _verify(model):
@@ -288,6 +289,23 @@ def _run() -> None:
         _proc = None
 
 
+def _min_env(extra: dict | None = None) -> dict:
+    """Catalog review law (Nous #151546, 2026-11-10): third-party build/setup
+    code must NOT run with the gateway's inherited environment — every provider
+    key would be in reach of a setup.py. Allowlist only what the chain reads:
+    PATH/HOME/LANG/TMPDIR/proxies, plus CMAKE_BUILD_PARALLEL_LEVEL; GIT_TERMINAL_PROMPT=0
+    so a credential prompt fails fast instead of hanging a build worker."""
+    env = {k: v for k, v in os.environ.items()
+           if k in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP",
+                    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "XDG_CACHE_HOME",
+                    "http_proxy", "https_proxy", "no_proxy")}
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", str(os.cpu_count() or 4))
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _checkout(src: Path) -> None:
     src.mkdir(parents=True, exist_ok=True)
     _run_proc(["git", "init", "-q", str(src)], "clone")
@@ -296,7 +314,8 @@ def _checkout(src: Path) -> None:
               "clone")
     _run_proc(["git", "-C", str(src), "checkout", "-q", "FETCH_HEAD"], "clone")
     head = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
-                          capture_output=True, text=True, timeout=10).stdout.strip()
+                          capture_output=True, text=True, timeout=10,
+                          env=_min_env()).stdout.strip()
     if head != COMMIT:
         raise RuntimeError(f"pinned checkout drifted: {head[:12]} != {COMMIT[:12]}")
 
@@ -316,7 +335,7 @@ def _pip(venv: Path, args: list) -> None:
 def _run_proc(argv: list, phase: str) -> None:
     global _proc
     _proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True)
+                             text=True, env=_min_env())
     out = _proc.communicate(timeout=BUILD_TIMEOUT)[0] or ""
     if _proc.returncode != 0:
         raise RuntimeError(f"{phase} failed ({argv[0]} exit {_proc.returncode}): "

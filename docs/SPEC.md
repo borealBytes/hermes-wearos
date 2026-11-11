@@ -2441,3 +2441,17 @@ Two provable halves of one ruling, both hardware-driven same evening:
   failures — buttons never silent) and the `wearos.bak-0.2.0` duplicate-id
   loader leftover removed. Locked by
   `test_cross_agent_bodies_key_the_target_as_agent`.
+
+- **2026-11-10 (catalog review round 3, Nous #151546 @ pin 628f28a2) — the
+  pending pairing code is a SECRET until a human types it.** Pairing is public
+  and first-caller-wins, so any gateway-side echo of a pending code lets the
+  knock caller arrange its own approval (and walk with tailnet key + API key).
+  `pending_list()` now carries `pair_id/label/profile/state/seconds_left` —
+  never the code; the code exists only on the watch's screen and in the
+  human-typed claim. Engine-internal `state_of_code()` serves surfaces that
+  already hold a typed code (`_await_pickup`). The CLI wizard prints
+  `watch waiting: <label>` and instructs reading the wrist. Locked by
+  `test_pending_surfaces_hide_the_code`. Companion laws from the same review:
+  STT/TTS build chains run on ALLOWLIST env (provider keys never inherited —
+  `test_env_hygiene.py`), and the README names `tailscale funnel` as a MUTATING
+  call and discloses the wrist-unpair key rotation + default-profile restart.

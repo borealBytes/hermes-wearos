@@ -537,8 +537,9 @@ function WearKitPane () {
           }),
           pending.map(p => jsx('div', {
             className: 'text-xs text-(--ui-text-secondary)',
-            children: `watch shows ${p.code} — ${p.label} [${p.state}]`
-          }, p.code)),
+            // the code is a secret: the watch SCREEN is its only display (Nous #151546)
+            children: `waiting: ${p.label} [${p.state}, ${p.seconds_left}s]`
+          }, p.pair_id)),
           jsxs('div', {
             className: 'flex items-center gap-1',
             children: [

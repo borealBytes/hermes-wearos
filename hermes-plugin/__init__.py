@@ -1137,13 +1137,13 @@ def _await_pickup(code: str, timeout: float) -> str:
     deadline = time.time() + timeout
     eng = _engine()
     while time.time() < deadline:
-        for rec in eng.pending_list():
-            if rec.get("code") == code:
-                if rec.get("state") == "pending":
-                    return "unknown"  # record vanished under the tombstone
-                break
-        else:
-            return "delivered"  # not in the live list anymore: retired or acked
+        st = eng.state_of_code(code)
+        if st is None:
+            return "delivered"  # retired or acked — no longer a live record
+        if st != "approved":
+            # still pending under a code we already claimed with: another
+            # client's minted first (the tombstone case the old list guarded)
+            return "unknown"
         time.sleep(1.0)
     return "waiting"
 
@@ -1434,7 +1434,7 @@ def _cmd_pair(raw_args: str, platform: str = "", **kw) -> str:
         lines = [f"pairing window: OPEN for {w['seconds_left']}s as agent {w['profile']}"
                  if w else "pairing window: CLOSED (this command opens it)"]
         for p in st["pending"]:
-            lines.append(f"  code {p['code']} → {p['label']!r} [{p['state']}, "
+            lines.append(f"  waiting: {p['label']!r} [{p['state']}, "
                          f"{p['seconds_left']}s]")
         lines.append("usage: /pair <6-digit code> — after tapping Pair on the watch")
         return "\n".join(lines)
@@ -1513,21 +1513,20 @@ def _cli_pair(args) -> None:
     print("waiting for the watch to show its code (ctrl-c stops this; the window stays "
           "open; re-run to see it):")
     deadline = time.time() + 45
-    shown = ""
+    shown_ids = set()
     while time.time() < deadline:
-        for rec in eng.pending_list():
-            if rec["state"] == "pending" and rec["code"] != shown:
-                shown = rec["code"]
-                print(f"  code on the watch: {shown}  ({rec['label']!r})")
-            elif rec["state"] == "approved" and rec["code"] == shown:
-                print(f"  ✓ {shown} approved — waiting for pickup…")
-                shown = ""
-        if not shown and not eng.pending_list():
+        for rec in eng.pending_list():   # codes stay invisible here (Nous #151546)
+            if rec["state"] == "pending" and rec["pair_id"] not in shown_ids:
+                shown_ids.add(rec["pair_id"])
+                print(f"  watch waiting: {rec['label']!r} — read the code off "
+                      f"the watch, then: hermes watch pair <code>")
+            elif rec["state"] == "approved" and rec["pair_id"] in shown_ids:
+                print("  ✓ approved — waiting for pickup…")
+                shown_ids.discard(rec["pair_id"])
+        if not shown_ids and not eng.pending_list():
             time.sleep(1.0)
             continue
         time.sleep(1.0)
-    if shown:
-        print(f"if the watch is showing {shown}: hermes watch pair {shown}")
 
 
 def _cli_devices(args) -> None:

@@ -173,17 +173,36 @@ def test_begin_flood_hits_the_public_caps(wearos):
     pending cap) — and the approval side stays untouched: already-issued codes are
     always approvable."""
     ok = 0
+    minted = []
     for i in range(10):
         wearos.open_pairing()
         try:
-            wearos.door_begin(f"{i:064x}", f"Watch {i}")
+            minted.append(wearos.door_begin(f"{i:064x}", f"Watch {i}"))
             ok += 1
         except wearos.pairing.PairingError as exc:
             assert exc.outcome == "hot"
     assert ok == wearos.pairing.BEGIN_PER_MINUTE
-    codes = [p["code"] for p in wearos._engine().pending_list()]
-    wearos.approve_pair(codes[0])           # flood can't slow a human down
+    wearos.approve_pair(minted[0]["code"])      # flood can't slow a human down
     assert not wearos._engine().claim_locked()["locked"]
+
+
+def test_pending_surfaces_hide_the_code(wearos):
+    """Catalog review law (Nous #151546): a pending code is a SECRET — the
+    watch's own knock response carries it, and NOTHING listing pending pairs
+    may echo it (pairing is public; an outside client must not get its own
+    code printed back for a friendly approval)."""
+    import json as _json
+    import re as _re
+    wearos.open_pairing()
+    code = wearos.door_begin("b" * 64, "Leaky Watch")["code"]
+    assert _re.fullmatch(r"[0-9]{6}", code)          # the watch still gets its code
+    pend = wearos._engine().pending_list()
+    assert pend and all("code" not in rec for rec in pend)
+    assert code not in _json.dumps(pend)             # nowhere nested either
+    assert pend[0]["label"] == "Leaky Watch"         # WHAT waits, not WHICH code
+    eng = wearos._engine()
+    assert eng.state_of_code(code) == "pending"      # typed codes still resolve
+    assert eng.state_of_code("000000") is None
 
 
 def test_public_traffic_cannot_trip_the_claim_lockout(wearos):

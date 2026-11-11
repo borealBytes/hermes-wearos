@@ -49,9 +49,11 @@ Agents`.
 tailnet node (admin API; id captured at bootstrap from whois, not from the watch), invalidates the
 device token and clears its outbox queue, and rotates the agent's `API_SERVER_KEY` through Hermes.
 For a **named profile** the rotation is hot — no restart. For the `default` profile the key is
-cached at startup, so the plugin warns and asks; run the restart when it says so. A watch unpaired
-from the wrist (`Settings ▸ Gateways ▸ Forget`) posts `/watch/<agent>/forget` over its own lane and
-wipes itself either way.
+cached at startup, so the plugin warns and asks; run the restart when it says so — for
+`default` this means the **whole gateway restarts** (every profile on it blinks once). A watch
+unpaired from the wrist (`Settings ▸ Gateways ▸ Forget`) posts `/watch/<agent>/forget` over its
+own lane: same key rotation and, for the `default` profile, the same gateway restart — disclosed
+here so nobody reads it as the watch "rebooting the server on its own".
 
 ## What you get installed
 
@@ -111,8 +113,12 @@ restricted to the watch tag); an Owner/Admin API token also works — the wizard
 which is which.
 
 Outbound hosts (nothing else): `api.tailscale.com` (key mint/tag/expiry + node DELETE),
-`github.com` / `huggingface.co` / `pypi.org` (STT installer only), and `tailscale` CLI calls
-(status/whois/funnel, read-only). **No telemetry.**
+`github.com` / `huggingface.co` / `pypi.org` (STT installer only), and `tailscale` CLI calls —
+`status`/`whois` read-only, but **not** `funnel`: `hermes watch setup --fix serve` runs
+`tailscale funnel --bg --https=443`, which MUTATES your tailnet's Funnel route (it is shown
+in the wizard's consent card first). **No telemetry.** Third-party build chains (STT/TTS
+installers) run with an allowlisted environment — the gateway's provider keys are never
+inherited into a vendored `setup.py`.
 
 ## The STT installer (pane button, pinned + checksummed)
 
