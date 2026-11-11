@@ -437,6 +437,12 @@ class MainActivity : ComponentActivity() {
                 val slash by settings.commandUsage.collectAsState()
                 val catalogJson by settings.slashCatalogJson.collectAsState()
                 var commandsOpen by remember { mutableStateOf(false) }
+                // Stale-lift guard (#24): the pointer UP that ends the dial commit lands on the
+                // scrim of the sheet the lane JUST opened and dismisses it inside the first
+                // ~50 ms — the "commands opened nothing" flash. Sheets ignore dismissal for
+                // 350 ms after they appear. (remembered holder: survives recomposition, composes
+                // nothing — the guard must never itself trigger a redraw.)
+                val sheetsOpenedAt = remember { longArrayOf(0L) }
                 var slashPrefill by remember { mutableStateOf<String?>(null) }
                 // Dev hook `-e commands 1`: open the SLASH OVERLAY without a dial drag to 6:00 —
                 // same capture-rig reason as dial_preview/model_picker (a synthetic release is
@@ -567,6 +573,7 @@ class MainActivity : ComponentActivity() {
                 )
                 fun openCommands(prefill: String?) {
                     slashPrefill = prefill
+                    sheetsOpenedAt[0] = android.os.SystemClock.elapsedRealtime()
                     commandsOpen = true
                     uiScope.launch { settings.refreshSlashCatalog(profile) }
                 }
@@ -617,6 +624,16 @@ class MainActivity : ComponentActivity() {
                 // Settings ▸ Interface, all of them lands here. Lanes the branch-2 voice work owns
                 // say so plainly instead of silently doing nothing.
                 fun handleLane(lane: Lane) {
+                    // LET-GO-ON-THE-WORD-YOU-SEE = YOU GET IT (owner #21/#23/#24 saga):
+                    // every dialog the dial can sit behind must be cleared BEFORE the lane
+                    // lands, or the lane commits faithfully into a hidden Z-order — the
+                    // owner's "sessions took me to agents" (agents sheet still up) and
+                    // "settings didn't work" (slash overlay still up) were both exactly this.
+                    showAgents = false; showModels = false; approvalsOpen = false
+                    commandsOpen = false; promptSheet = null; manageSheet = null
+                    // Stamp AFTER the sweep: whatever the lane opens is "young" and may not be
+                    // dismissed by this gesture's own lifting finger.
+                    sheetsOpenedAt[0] = android.os.SystemClock.elapsedRealtime()
                     when (lane) {
                         Lane.Keyboard -> {
                             // The drag-up that already shipped, now slot 0 of the dial.
@@ -879,7 +896,7 @@ class MainActivity : ComponentActivity() {
                                 onVoiceStop = { endListening() },
                                 onPick = { e -> runCommand(e) },
                                 onPrompt = { t -> commandsOpen = false; submitMaybeSlash(t) },
-                                onDismiss = { commandsOpen = false },
+                                onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) commandsOpen = false },
                             ),
                         )
                         Screen.Chats -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
@@ -1071,7 +1088,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        onDismiss = { showAgents = false; screen = Screen.Chat },
+                        onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { showAgents = false; screen = Screen.Chat } },
                     )
                 }
                 if (showModels) {
@@ -1095,7 +1112,7 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                         },
-                        onDismiss = { showModels = false; screen = Screen.Chat },
+                        onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { showModels = false; screen = Screen.Chat } },
                     )
                 }
                 if (approvalsOpen) {
@@ -1115,7 +1132,7 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                         },
-                        onDismiss = { approvalsOpen = false; screen = Screen.Chat },
+                        onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { approvalsOpen = false; screen = Screen.Chat } },
                     )
                 }
                 promptSheet?.let { msg ->
@@ -2054,3 +2071,15 @@ private fun HermesScaffold(
         }
     }
 }
+
+/**
+ * THE STALE-LIFT RULE (#24, owner saga 2026-11-11): the same finger that COMMITTED a dial lane
+ * keeps traveling after release and its motion stream touches the scrim of the sheet the lane
+ * just opened — dismissOnClickOutside treats that ghost as a tap-outside, so commands flashed
+ * and the agents/model/approval sheets kicked `screen = Chat` behind the owner's back.
+ * A sheet ignores dismissal for 350 ms after its opening stamp; a human's real "get me out of
+ * here" tap always takes longer than that. The stamp is a longArrayOf holder (remembered,
+ * never composed) so guarding costs zero recompositions.
+ */
+internal fun staleSheetLift(sheetsOpenedAtMs: LongArray): Boolean =
+    android.os.SystemClock.elapsedRealtime() - sheetsOpenedAtMs[0] < 350L
