@@ -288,7 +288,9 @@ async function voRecStart () {
   }
   _recBlob = null
   const chunks = []
-  _recMR = new window.MediaRecorder(stream)
+  const mime = window.MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus' : ''
+  _recMR = new window.MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
   _recMR.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data) }
   _recMR.onstop = async () => {
     stream.getTracks().forEach(t => t.stop())
@@ -303,7 +305,7 @@ async function voRecStart () {
       $recPhase.set('idle')
     }
   }
-  _recMR.start()
+  _recMR.start(250)     // timeslice: data lands even if the stream ends abruptly
   $recPhase.set('rec')
   $recSecs.set(0)
   clearInterval(_recT)
@@ -316,6 +318,16 @@ async function voRecStart () {
 function voRecStop () {
   clearInterval(_recT)
   if (_recMR && _recMR.state !== 'inactive') _recMR.stop()
+  // Watchdog (owner 2026-11-11: auto-stop at 12.5 s left the row frozen in
+  // 'recording' with no confirm buttons — the take never came back and
+  // nothing said why). If the recorder's onstop hasn't landed in 2 s, the
+  // row says so and frees itself.
+  setTimeout(() => {
+    if ($recPhase.get() === 'rec') {
+      $voNote.set('the recorder never handed the take back (mic or codec hiccup) — ↺ try again')
+      $recPhase.set('idle'); $recSecs.set(0); _recBlob = null
+    }
+  }, 2000)
 }
 function voRecPlay () {
   if (!_recBlob) return
@@ -337,7 +349,8 @@ async function voRecConfirm () {
     $voNote.set('too short — talk for 3–12 seconds'); return
   }
   $recPhase.set('send')
-  // A ✕ never answers with silence (doctrine): every failure mode of the
+  $voNote.set('sending your take…')
+  // A ✓ never answers with silence (doctrine): every failure mode of the
   // upload lands as a note line under the play button, not a dead row.
   await voiceAct(async () => {
     const out = await rest('/voice', {
