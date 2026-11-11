@@ -1033,8 +1033,12 @@ def tailnet_gateway_url(ttl: float = 60.0) -> dict:
             self_node = (json.loads(txt).get("Self") or {}) if done.returncode == 0 else {}
             fqdn = str(self_node.get("DNSName") or "").strip().rstrip(".")
             if fqdn:
+                # minimal-input law (owner 2026-11-11, fresh-person test): the
+                # pair host the pane shows drops the trailing '.ts.net' — the
+                # MagicDNS-relative form (device.tailnet) resolves inside the
+                # tailnet and is what belongs on the watch's keyboard.
                 out = {"gateway_url": f"http://{fqdn.lower()}:8642",
-                       "host": fqdn.lower()}
+                       "host": fqdn.lower().removesuffix(".ts.net")}
             else:
                 out = {"reason": "not-logged-in"}
         except (OSError, ValueError, subprocess.SubprocessError):
@@ -1054,6 +1058,19 @@ def _install_source_ref() -> tuple[str, str]:
         return str(row.get("source") or ""), str(row.get("revision") or "")
     except (OSError, ValueError):
         return "", ""
+
+
+def _profile_pin(profile: str) -> str:
+    """40-hex revision the TARGET profile has wearos pinned at ('' when it has
+    no install metadata). default lives at <home>/plugins, named profiles at
+    <home>/profiles/<p>/plugins — same file core writes on install."""
+    home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+    base = home / "plugins" if profile in ("", "default") else home / "profiles" / profile / "plugins"
+    try:
+        meta = json.loads((base / ".install-metadata.json").read_text("utf-8"))
+        return str((meta.get("wearos") or {}).get("revision") or "")
+    except (OSError, ValueError):
+        return ""
 
 
 def delegate_enablement(profile: str, enable: bool) -> dict:
@@ -1082,6 +1099,7 @@ def delegate_enablement(profile: str, enable: bool) -> dict:
     except (subprocess.SubprocessError, OSError) as exc:
         return {"name": profile, "error": f"{verb} failed: {exc}"}
     text = ((out.stdout or "") + (out.stderr or "")).strip()
+    _note = ""
     if verb == "enable" and out.returncode != 0 and "No plugin named" in text:
         repo, ref = _install_source_ref()
         if repo and re.fullmatch(r"[0-9a-f]{40}", ref or ""):
@@ -1106,8 +1124,38 @@ def delegate_enablement(profile: str, enable: bool) -> dict:
                 return {"name": profile, "ok": False, "verb": "install",
                         "detail": ("auto-install failed: "
                                    + ((inst.stdout or "") + (inst.stderr or "")).strip()[-400:])}
+    if verb == "enable" and out.returncode == 0:
+        # Drift re-pin (owner fresh-person test 2026-11-11): 'enable' flips a
+        # flag on whatever bytes the profile ALREADY has — one box held five
+        # different wearos revisions, and the catalog pin can lag the release
+        # while its PR is open. The checkbox means "run the current plugin",
+        # so after a successful enable we force-sync the target to THIS pane's
+        # exact revision when it differs. Honest note rides the response.
+        _note = ""
+        _, canonical = _install_source_ref()
+        if re.fullmatch(r"[0-9a-f]{40}", canonical or ""):
+            was = _profile_pin(profile)
+            if was and was != canonical:
+                try:
+                    repin = subprocess.run(
+                        prefix + ["plugins", "install",
+                                  "https://github.com/borealBytes/hermes-wearos-plugin.git",
+                                  "--force", "--ref", canonical, "--yes"],
+                        capture_output=True, text=True, timeout=180,
+                        stdin=subprocess.DEVNULL, env=_clean_env())
+                except (subprocess.SubprocessError, OSError) as exc:
+                    return {"name": profile, "ok": False, "verb": "enable",
+                            "detail": f"enabled but re-pin failed: {exc} — "
+                                      f"{profile} runs stale wearos"}
+                if repin.returncode != 0:
+                    return {"name": profile, "ok": False, "verb": "enable",
+                            "detail": "enabled but re-pin failed: "
+                                      + ((repin.stdout or "") + (repin.stderr or "")).strip()[-300:]}
+                _note = f" (re-pinned {was[:7]}→{canonical[:7]})"
+            elif not was:
+                _note = " (no install metadata to verify)"
     return {"name": profile, "ok": out.returncode == 0, "verb": verb,
-            "detail": text[-600:] or ("done" if out.returncode == 0 else "failed")}
+            "detail": (text[-600:] or ("done" if out.returncode == 0 else "failed")) + _note}
 
 
 # ── claim door lifecycle ───────────────────────────────────────────────────────

@@ -9,6 +9,18 @@ enrollment, the private lane the watch calls home on, and the Wear Kit pane in H
 hermes plugins install wearos        # catalog entry, pinned reviewed SHA
 ```
 
+## Getting started (30 seconds, the shape the first-run test forced)
+
+1. **Install** the plugin (above), open the **Wear Kit** tab in Hermes Desktop.
+2. On the watch: install the app from [releases](https://github.com/borealBytes/hermes-wearos/releases/latest),
+   open Settings ▸ Gateways ▸ Tailnet, paste your reusable tailnet authkey once.
+3. **Type the host the pane shows you** — the bare `machine.tailnet` name under
+   "wear kit host" (no `http://`, no port: the app completes those; the name resolves
+   inside the tailnet without the `.ts.net` suffix).
+4. **Knock** on the watch, **approve** the 6-digit code in the pane. Done — the watch answers.
+5. Per-agent voice: tick an agent's box in the pane; the enable also syncs that agent's plugin
+   bytes to the current release (checkbox = current code, not whatever an old install left behind).
+
 ## How pairing works (v2 — the shape a review forced)
 
 The 6-digit **pairing code is minted by the gateway, never by the watch, and it never passes
