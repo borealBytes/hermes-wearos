@@ -3,6 +3,10 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-11 ~15:50 — v0.3.3 SHIPPED (checkbox = watch presence) + APK v0.10.2 (no swipe-exit on Settings; gear opens reliably)
+- v0.3.3: owner ruling supersedes the v0.3.2 refusal — host uncheck revokes ONLY the grant, Wear Kit keeps hosting pane+lane; mirror 68826ff, tag+release cut, catalog PR head 1e79644e3 pins it. Default grant restored in the live store (owner unchecked during the guard demo).
+- v0.10.2: Screen.Settings loses its ExitOnSwipeBack wrapper — the dial-release near the edge bounced a just-mounted Settings back to chat (owner: "settings doesn't open... too easy to accidentally go back"). Hardware back (one level at a time, v0.10.1) is the ONLY settings exit; Chats/Sessions keep swipe-back.
+
 ## 2026-11-11 ~14:45 — plugin v0.3.2 SHIPPED (self-disable guard) + APK v0.10.1 slice IN FLIGHT
 - v0.3.2: the pane's host-profile checkbox is REFUSED at the route (unchecking `default` hot-unmounts the pane API + watch lane — the owner's "404 Plugin not found" and frozen checkboxes were this). Escape hatch named in the note. Merged, mirror `c32b58e`, tag/release v0.3.2, ALL local profiles force-synced, gateway restarted; lane live on tailnet :42654 (403 = who-is gate, healthy).
 - CATALOG TRAP FOUND: `gh api PUT /contents` WITHOUT `"branch"` commits to the fork's DEFAULT branch — my 0.3.1 re-pin "succeeded" onto fork main and the PR branch never moved. Fixed: PR head `8fc075e1e` pins c32b58e/0.3.2; stray file deleted from fork main; PR body + media comment re-stamped. PR #151546 still open awaiting their human review.
