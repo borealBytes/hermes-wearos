@@ -3,6 +3,13 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-11 ~18:1x — v0.10.5 ON WATCH: gear freeze root-caused (#21), ricky-tpb ships, splash hardware-proven
+- SPLASH #17 closed on hardware: `intro: splash reveal on moving frame at pos=2256ms` off the real SM-L705U (PR #20, merged, tag lane).
+- GEAR #21 (owner: "sometimes it works, sometimes it doesn't"): watch logcat trace showed `dial lane=settings slot=2` on 6/6 attempts — gesture + router healthy. Culprit: LaunchedEffect(pairNow) hand-back (`else if (pairTookOver) screen = Chat`) firing on the falling edge of pairing/auth BLIPS (v0.3.1 enable-time re-pin rewrites agent keys at boot → 401 window; restarts today aplenty). Fix: takeover + hand-back both respect settingsManual; no-lit-slot dial release now logs. PR #22, tag v0.10.5, chunked-push installed, `-r` kept pairing.
+- SHIP SET amended (owner ruling): clay-synth + **ricky-tpb** (fresh pane-record ricky-f18cbd6c, wav verified; my rename collision with his live pane write sorted at rev 220 — old politician card restored to its label). Seed-pack v2 cuts exactly these two.
+- PENDING owner acks: gear retest (chat → orb-drag 3:00 → Settings stays), splash cold-start feel. THEN demo staging (docs/DEMO.md re-shoot wave). Catalog PR re-pin to 0.3.5 = tomorrow.
+
+
 ## 2026-11-11 ~17:5x — SPLASH #17 REWORK + PLUGIN v0.3.5 (TTS default seeds itself)
 - SPLASH: AVD repro proved the icon-marinate is the first-launch permission dialog (focus-paused media3, 12 s no frame) + the Pair wizard behind the film. Fixed with three pure gates (Onboarding skip / deferred ask / 3 s owner cap) — SPEC §19.4. v0.10.4 assembleRelease green → PR → tag lane → install on SM-L705U (needs fresh wireless-debug port from the owner's watch screen — the old serial rotated).
 - v0.3.5: plugin seeds `tts.provider=wearkit-gateway` at load when the profile has no explicit pick (dropdown guarantee rides core's active-name rule). All four granted profiles verified on; wear/weardev stale edge seeds re-ruled to wearkit per owner. Per-profile schema slice = core bug, upstream PR later; the dropdown needs a FULL desktop kill (SingletonLock pid), react-query caches 5 min.
