@@ -41,6 +41,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateVelocity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -1182,32 +1183,41 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
 }
 
 /** Forward leg of the ring under a FINGER (owner 2026-11-10): a horizontal drag leftward past
- *  [slop] anywhere in the body calls [onForward] once on release; a rightward drag CANCELLATES
+ *  [slop] anywhere in the body calls [onForward] once on release — and so does a LEFTWARD
+ *  FLING that never travels far (owner 2026-11-10, real finger on real glass: short thumb
+ *  flicks fell under the displacement threshold and the ring never advanced; injected
+ *  full-screen swipes had masked it). A rightward drag CANCELLATES
  *  early so the system edge-back keeps its gesture. Vertical lists are untouched — a scrolling
  *  child consumes the stream and this detector bows out with it. Pure gesture, no state: the
  *  where-to logic stays in BackRing (unit-tested) beside the physical-back handler. */
 @Composable
 private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
-    val slop = with(LocalDensity.current) { 56.dp.toPx() }
+    val slop = with(LocalDensity.current) { 40.dp.toPx() }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(slop) {
+                val flingV = -1200f * density  // a clear leftward flick, ~1200 dp/s
                 awaitEachGesture {
                     awaitFirstDown(pass = PointerEventPass.Initial)
                     var total = 0f
                     var taken = false
+                    var velocityPxPerS = 0f
                     while (true) {
                         val ev = awaitPointerEvent()
-                        total += ev.calculatePan().x
+                        val dx = ev.calculatePan().x
+                        total += dx
+                        velocityPxPerS = ev.calculateVelocity().x
                         if (!taken) {
-                            if (total <= -slop) taken = true
-                            else if (total >= slop) break // rightward: belongs to edge-back
+                            // horizontally dominant, far enough OR flung hard leftward: claim.
+                            if (total <= -slop || (total < 0f && velocityPxPerS <= flingV)) {
+                                taken = true
+                            } else if (total >= slop) break // rightward: belongs to edge-back
                         }
                         if (taken) ev.changes.forEach { it.consume() }
                         if (ev.changes.none { it.pressed }) break
                     }
-                    if (taken && total <= -slop) onForward()
+                    if (taken && (total <= -slop || velocityPxPerS <= flingV)) onForward()
                 }
             },
     ) { content() }

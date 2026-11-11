@@ -328,6 +328,15 @@ def test_own_agent_key_always_flows_cross_needs_grant(wearos):
         wearos._engine().resolve_key("default", name, lambda p: "sk-new")
 
 
+def test_no_agent_is_granted_until_the_owner_checks_the_box(wearos):
+    """Fresh-install law (owner 2026-11-10): nobody is enabled by default. The
+    store seeds `grants:{}` (pairing.py:117), pairing/claim never grants, and
+    the ONLY writers of grants are /enable (enable=grant) and /grants."""
+    assert wearos._engine().grants() == {}
+    _enrolled(wearos)                       # a full pair+claim ceremony…
+    assert wearos._engine().grants() == {}, "pairing must not pre-grant anyone"
+
+
 # ── the tools' contract ─────────────────────────────────────────────────────────
 def test_watch_pair_takes_no_arguments(wearos):
     out = json.loads(wearos._tool_watch_pair({}))
