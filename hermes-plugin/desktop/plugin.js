@@ -990,16 +990,25 @@ function WearKitPane () {
                     }, cid) : jsxs('div', {
                       className: 'flex items-center justify-between gap-1 text-xs',
                       children: [
+                        // DEFAULT PICKER (owner: "I need a checkbox to select default
+                        // model — that went away"): same /voice action with the
+                        // __default__ agent key = the Voice-out default every
+                        // dropdown-less agent speaks with.
+                        jsx('input', {
+                          type: 'checkbox', disabled: busy,
+                          checked: (((voicing && voicing.voices) || {}).__default__) === cid,
+                          title: 'Voice-out default (agents without their own pick speak this one)',
+                          onChange: () => setAgentVoice('__default__', cid)
+                        }),
+                        // The NAME IS THE RENAME HANDLE (owner: "click on a model or a
+                        // voice sample name, rename it right there") — no separate
+                        // pencil, one control per concern.
                         jsxs('span', {
-                          className: 'text-(--ui-text-secondary)',
+                          className: 'min-w-0 flex-1 cursor-pointer truncate text-(--ui-text-secondary)',
+                          title: 'click to rename (the id never changes)',
+                          onClick: () => voRenameStart(cid, m.label || ''),
                           children: [m.label || cid.slice(0, 8),
                                      m.ref_rate ? ` · ${Math.round(m.ref_rate)} wpm` : '']
-                        }),
-                        jsx('button', {
-                          className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
-                          type: 'button', disabled: busy, title: 'rename (the id never changes)',
-                          onClick: () => voRenameStart(cid, m.label || ''),
-                          children: '✎'
                         }),
                         jsx('button', {
                           className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
