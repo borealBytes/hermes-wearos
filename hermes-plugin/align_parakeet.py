@@ -78,7 +78,13 @@ def main():
                 rows.append({"text": wrow.text,
                              "start": wrow.t0_ms / 1000.0,
                              "end": wrow.t1_ms / 1000.0})
-    json.dump({"words": rows}, sys.stdout)
+    out = {"words": rows}
+    if len(sys.argv) > 4 and sys.argv[4] == "asr":
+        # SAME engine run, transcription mode: the TDT head's own words —
+        # this is what turns a freeform enrollment take into a real
+        # reference transcript (owner 2026-11-11).
+        out["text"] = " ".join(r["text"].strip() for r in rows).strip()
+    json.dump(out, sys.stdout)
 
 
 main()
@@ -165,6 +171,31 @@ def align(wav_bytes: bytes, rate: int, text: str) -> list:
     finally:
         tmp.unlink(missing_ok=True)
     return _fit_to_script(rows, text, len(wav_bytes) // 2 / max(1, rate))
+
+
+def transcribe(wav_bytes: bytes, rate: int) -> str:
+    """voiceout.register_transcriber target: freeform take in, spoken words
+    out (Parakeet TDT's own hypothesis — no script, no guessing)."""
+    if not engine_ready():
+        raise RuntimeError("Parakeet not installed (Voice-in ▸ streaming STT ▸ install)")
+    if wav_bytes[:4] != b"RIFF":
+        wav_bytes = _wrap_pcm(wav_bytes, rate)
+    venv_py = _stt_root() / "venv" / "bin" / "python"
+    lib = _stt_root() / "transcribe-src" / "build-shared" / "src" / "libtranscribe.so"
+    runner = write_runner()
+    tmp = _stt_root() / "asr_in.wav"
+    tmp.write_bytes(wav_bytes)
+    try:
+        proc = subprocess.run(
+            [str(venv_py), str(runner), str(tmp), str(_model_path()),
+             str(lib), "asr"],
+            capture_output=True, text=True, timeout=ALIGN_TIMEOUT)
+        if proc.returncode != 0:
+            raise RuntimeError("transcriber failed: " + (proc.stderr or "")[-400:])
+        import json
+        return json.loads(proc.stdout or "{}").get("text", "")
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _wrap_pcm(pcm: bytes, rate: int) -> bytes:
@@ -263,4 +294,8 @@ def register_if_ready() -> bool:
     if not engine_ready():
         return False
     _voiceout().register_aligner("parakeet", align)
+    # one model, both heads: karaoke alignment AND freeform-enrollment
+    # transcription come from the same pinned Parakeet build — voice-in
+    # free make transcripts free (owner 2026-11-11).
+    _voiceout().register_transcriber("parakeet", transcribe)
     return True

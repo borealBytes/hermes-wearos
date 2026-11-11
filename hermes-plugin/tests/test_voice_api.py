@@ -161,6 +161,20 @@ def test_card_create_wav_and_delete_round_trip(vlane):
                     {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
                      "label": "scripted", "transcript": "one two three four"})
     assert st == 200 and meas["rate_source"] == "measured"
+    # ...but when an ASR adapter can HEAR the take, the card stores the REAL
+    # words (owner 2026-11-11: don't guess the reference — Parakeet has it):
+    vo.register_transcriber("fake",
+                            lambda b, r: "sprayer window opens thursday six ten")
+    try:
+        st, heard = http(vlane["base"], "POST", "/voice/card_create",
+                         {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
+                          "label": "heard", "transcript": ""})
+    finally:
+        vo._TRANSCRIBERS.pop("fake", None)
+    assert st == 200
+    assert heard["transcript"] == "sprayer window opens thursday six ten"
+    assert heard["rate_source"] == "measured"        # exact word count, no estimate
+    http(vlane["base"], "POST", "/voice/card_delete", {"card_id": heard["card_id"]})
     # NAME IS DISPLAY TEXT: rename swaps the label, the id never moves.
     st, doc = http(vlane["base"], "POST", "/voice/card_rename",
                    {"card_id": cid, "label": "  dad  "})

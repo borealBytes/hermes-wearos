@@ -354,6 +354,11 @@ def create_card(wav_bytes: bytes, label: str, source: str = "watch-record",
         root = _root() / CARDS_DIR
         root.mkdir(parents=True, exist_ok=True)
         (root / f"{card_id}.wav").write_bytes(wav_bytes)
+        if transcript == "":                # freeform enrollment lane
+            rate0, _ = _wav_parse(wav_bytes)
+            got = _transcribe(wav_bytes, rate0)
+            if len(got.split()) >= 2:       # real words beat any estimate
+                transcript = got[:600]
         meta = measure_ref_rate(wav_bytes, transcript)
         p.setdefault("cards", {})[card_id] = {
             "label": label[:48], "source": source, "license": license_,
@@ -444,6 +449,30 @@ def register_synth(name: str, fn: Callable) -> None:
 
 def register_aligner(name: str, fn: Callable) -> None:
     _ALIGN[name] = fn
+
+
+_TRANSCRIBERS: "dict[str, Callable]" = {}
+
+
+def register_transcriber(name: str, fn: Callable) -> None:
+    """ASR adapters that can turn a freeform enrollment take into words.
+    Owner law 2026-11-11: zero-shot freeform takes should NOT guess the
+    reference words — the gateway already ships Parakeet for voice-in, so
+    the same model HEARS what the wearer said and the card stores the real
+    transcript (exact ref_rate, honest audition). Absent engine, the
+    syllable-envelope estimate stands; nothing is ever invented."""
+    _TRANSCRIBERS[name] = fn
+
+
+def _transcribe(wav_bytes: bytes, rate: int) -> str:
+    for fn in _TRANSCRIBERS.values():
+        try:
+            txt = (fn(wav_bytes, rate) or "").strip()
+            if txt:
+                return txt
+        except Exception:
+            continue                    # busy engine — next adapter / estimate
+    return ""
 
 
 _SENT_RE = __import__("re").compile(r"(?<=[.!?])\s+")
