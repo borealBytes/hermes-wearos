@@ -301,6 +301,9 @@ fun SettingsScreen(
             //  scrolling"): it DID circle — at the chat's reading gear, ~50 px a real-finger
             //  stroke, invisible on a button list. Dense surfaces circle at 2f, like Sessions.
             .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.edgeScrollWalk(total) } },
+        // Owner on-device note (v0.10.10): the page OPENED parked at About — auto-centering was
+        // pulling the tall single item up. The list starts at the TOP and scrolls down from there.
+        autoCentering = null,
         // Scaling params at DEFAULT (Sessions idiom): the system-settings fisheye the owner
         // asked for comes free — center row full size, edges shrink+fade toward the rim.
     ) {
