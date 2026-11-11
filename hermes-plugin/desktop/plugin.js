@@ -213,8 +213,9 @@ const voSpeed = e => {
 }
 const voKaraoke = e => voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'karaoke', karaoke: e.target.checked } }))
-const voDelete = cid => voiceAct(() => rest('/voice', {
-  method: 'POST', body: { action: 'card_delete', card: cid } }))
+const $confirmDel = atom('')      // card_id armed for delete ('' = none)
+const voDelete = cid => { $confirmDel.set(''); voiceAct(() => rest('/voice', {
+  method: 'POST', body: { action: 'card_delete', card: cid } })) }
 // Rename is label-only: the card_id (uuid-ish slug) is the identity every
 // binding speaks; the name you see is display text and can change forever.
 const voRenameStart = (cid, label) => { $renaming.set(cid); $renamingVal.set(label) }
@@ -452,16 +453,40 @@ function WearKitPane () {
   const setAgentVoice = (name, card) => voiceAct(() => rest('/voice', {
     method: 'POST', body: { action: 'voice', agent: name, card } }))
 
-  const lights = Object.entries(checks).map(([name, check]) =>
-    jsx('div', {
+  // Health row, humanized (owner 2026-11-11: "explain them to me, aligned with
+  // the open-window button"). Raw keys were internals leaking into UI. Each row
+  // says what it MEANS; the pairing row carries the WINDOW truth, not the
+  // always-on door truth — closed is the healthy default, so it is a calm grey,
+  // never a red alarm. The button above opens it; this row now tells the truth
+  // about that exact state.
+  const LIGHT = {
+    tailscaled: ['tailscale daemon', 'the private network this kit runs on'],
+    claim_door: ['pairing window', 'new watches can pair only while this is open (~5 min, from the Pair button)'],
+    private_lane: ['private lane', 'the watch-only door (42654): audio + pairing, never public'],
+    funnel: ['tailscale funnel', 'https front that lets a watch reach the pairing door'],
+    devices: ['paired watches', 'watches with a live pairing on this gateway'],
+  }
+  const lights = Object.entries(checks).map(([name, check]) => {
+    const [label, tip] = LIGHT[name] || [name, '']
+    if (name === 'claim_door')
+      return jsxs('div', {
+        className: 'flex items-center justify-between gap-2 text-sm',
+        children: [
+          jsxs('span', { title: tip, className: 'text-(--ui-text-secondary)',
+                         children: [windowOpen ? '✅ ' : '⬜ ', label] }),
+          jsx('span', { className: 'text-[10px] text-(--ui-text-tertiary)',
+                        children: windowOpen ? `open — ${(pairing.window.seconds_left||0)}s left` : 'closed (normal)' })
+        ]
+      }, name)
+    return jsx('div', {
       className: 'flex items-center justify-between gap-2 text-sm',
       children: jsxs('span', {
-        // owner ruling 2026-11-10: glanceable green/red — an emoji checkbox, not
-        // a grey dot you have to squint at. Failure keeps the reason inline.
+        title: tip,
         className: check.ok ? 'text-(--ui-text-secondary)' : 'text-(--ui-text-danger)',
-        children: [check.ok ? '✅ ' : '❌ ', name, check.ok ? '' : ` — ${check.detail}`]
+        children: [check.ok ? '✅ ' : '❌ ', label, check.ok ? '' : ` — ${check.detail}`]
       })
-    }, name))
+    }, name)
+  })
 
   return jsxs('div', {
     className: 'flex h-full flex-col gap-2 overflow-y-auto p-3 text-sm',
@@ -1011,9 +1036,18 @@ function WearKitPane () {
                                      m.ref_rate ? ` · ${Math.round(m.ref_rate)} wpm` : '']
                         }),
                         jsx('button', {
-                          className: 'rounded border border-(--ui-border) px-1 py-0.5 text-[10px] disabled:opacity-50',
-                          type: 'button', disabled: busy, onClick: () => voDelete(cid),
-                          children: '✕'
+                          // A voice is irreplaceable audio — the ✕ asks first
+                          // (owner 2026-11-11): one tap arms, the next deletes.
+                          className: `rounded border px-1 py-0.5 text-[10px] disabled:opacity-50 ${
+                            $confirmDel.get() === cid
+                              ? 'border-(--ui-text-danger) text-(--ui-text-danger)'
+                              : 'border-(--ui-border)'}`,
+                          type: 'button', disabled: busy,
+                          title: $confirmDel.get() === cid ? 'tap again to really delete'
+                                                            : 'delete this voice',
+                          onClick: () => $confirmDel.get() === cid ? voDelete(cid)
+                                                                    : $confirmDel.set(cid),
+                          children: $confirmDel.get() === cid ? 'sure?' : '✕'
                         })
                       ]
                     }, cid))

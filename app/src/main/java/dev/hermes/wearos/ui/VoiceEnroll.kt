@@ -86,7 +86,7 @@ fun VoiceEnrollDialog(onClose: () -> Unit) {
 }
 
 @Composable
-fun VoiceEnroll(onClose: () -> Unit) {
+fun VoiceEnroll(onClose: () -> Unit, agent: String = "default") {
     val ctx = LocalContext.current
     val ime = LocalSoftwareKeyboardController.current
     val recThread = remember { AtomicReference<Thread?>(null) }
@@ -235,7 +235,22 @@ fun VoiceEnroll(onClose: () -> Unit) {
                                     if (err != null) {
                                         Log.w(TAG, "enrollment refused: $err")
                                         error = err; step = Step.REVIEW
-                                    } else onClose()
+                                    } else {
+                                        // THE PROOF IS THE CLONE, NOT THE TAPE
+                                        // (owner 2026-11-11: freeform takes play back
+                                        // as whatever you said — that proves the mic,
+                                        // not the voice). After accept, the card goes
+                                        // through the real pipeline and speaks the
+                                        // audition line in YOUR cloned voice; that clip
+                                        // is what you hear as the dialog closes.
+                                        if (GatewayTts.lastCardId.isNotEmpty()) try {
+                                            GatewayTts.previewCard(
+                                                GatewayTts.lastCardId, agent)
+                                        } catch (e: Exception) {
+                                            Log.w(TAG, "audition failed: ${e.message}")
+                                        }
+                                        onClose()
+                                    }
                                 }.start()
                             }
                         },

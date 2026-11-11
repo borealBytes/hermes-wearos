@@ -1498,7 +1498,7 @@ fun SettingsScreen(
         // this watch it stays mute (proven twice, 2026-11-11).
         if (enrolling && page == SettingsPage.Voice) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
-                VoiceEnroll(onClose = { enrolling = false; gwProbe++ })
+                VoiceEnroll(onClose = { enrolling = false; gwProbe++ }, agent = agentNow)
             }
         }
     } // Box (batch-5 #18 edge-scroll host)

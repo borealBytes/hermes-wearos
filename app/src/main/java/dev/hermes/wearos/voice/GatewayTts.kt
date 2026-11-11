@@ -210,6 +210,10 @@ object GatewayTts {
         "opens Thursday at six ten."
         private set
 
+    /** card_id of the most recent successful enrollment (post-accept audition). */
+    @Volatile var lastCardId: String = ""
+        private set
+
     /**
      * ➕ New voice: POST the recorded prompt wav to the lane. The gateway validates
      * (3–60 s, size, silence) and files the card with the scripted transcript — the
@@ -230,7 +234,7 @@ object GatewayTts {
                 val o = JSONObject(resp.body?.string().orEmpty().ifEmpty { "{}" })
                 if (!resp.isSuccessful || o.optString("error").isNotEmpty())
                     o.optString("error").ifEmpty { "lane said ${resp.code}" }
-                else null
+                else { lastCardId = o.optString("card_id"); null }
             }
         } catch (e: Exception) {
             Log.w(TAG, "voice enrollment failed: ${e.message}")
