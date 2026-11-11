@@ -3,6 +3,13 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-10 ~22:45 — boot-crash fix + promo screenshots on the catalog PR
+- **APK boot-crash (owner: "starts the video then dies")**: `TailnetService.kt:98` NPE — `runCatching{URI(base).host}.getOrDefault("")` passes a null RESULT (getOrDefault guards exceptions only; URI.host is null for opaque bases) into phase()'s non-null gatewayHost; the service killed the process at first status emit after the 22:29 restart. Fix = `getOrNull() ?: ""` (`b612274`). Hardware-proven: boot clean, tunnel ACTIVE, endpoints re-picked to the completed http://<host>:8642 (bare-host minimal input works on glass).
+- **Mirror**: no-op for this fix (Kotlin-only; mirror carries hermes-plugin/).
+- **Catalog PR #151546**: marked ready-for-review (gh pr ready — the REST /ready endpoint 404s on this token); promo comment posted (https://github.com/NousResearch/hermes-agent/pull/151546#issuecomment-6786346400) with 3 privacy-passed screenshots + voice-out/voice-cloning/HF-token narrative. Shots live in repo `docs/promo/2026-11-10/` (jpg + privacy_pass.py reproducible). Privacy pass: unchecked agent names mosaic'd, my-agent rows (default/wear/wear-demo/weardev/weather) kept crisp with amber ring on the clay-synth row; settings shot mosaic'd Applies-to chips + secret fields, amber ring on the HF-token row; plugins shot mosaic'd foreign sidebar rows. Uploads to api.github.com assets = 404 on our token (no upload scope) → raw.githubusercontent from our own repo instead.
+- Watch: APK 22:38 build (boot fix + minimal-input normalize + mirror-law), paired sm-l705u, adb 192.168.10.159:35271.
+- Next: owner reopens desktop app → new pane (wear kit host row + tooltips); demo clip optional; hackathon video <90s; Typeform.
+
 ## 2026-11-10 (night) boundary — PR #8 MERGED; fresh-install ceremony done; enable law reaches the watch (SPEC §19.4(o))
 
 - **PR #8 merged** into `feat/hermes-plugin` @ `cc92c61` (ledger `28e8ead` on top); worktree `hermes-wearos-plugin` is the new floor. Mirror `borealBytes/hermes-wearos-plugin` pr-8 = content-identical; pane pin refreshed via `plugins install --force --ref` (pipeline in this file's Deploy traps).
