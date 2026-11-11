@@ -136,13 +136,13 @@ def test_revoke_requires_a_name_and_reports(wearos, api, monkeypatch):
 
 
 def test_grants_and_alerts_routes(wearos, api):
-    assert api.grants({"profile": "research", "allow": True})["grants"] == \
+    assert api.grants({"agent": "research", "allow": True})["grants"] == \
         {"research": {"granted_at": pytest.approx(wearos.time.time(), abs=5)}}
-    assert api.grants({"profile": "research", "allow": False})["grants"] == {}
-    assert api.alerts({"profile": "wear", "pref": "fail"}) == {"profile": "wear",
-                                                               "pref": "fail"}
-    assert api.alerts({"profile": "", "pref": "bogus"}) == {
-        "error": "profile and pref (all|fail|off) are required"}
+    assert api.grants({"agent": "research", "allow": False})["grants"] == {}
+    assert api.alerts({"agent": "wear", "pref": "fail"}) == {"agent": "wear",
+                                                             "pref": "fail"}
+    assert api.alerts({"agent": "", "pref": "bogus"}) == {
+        "error": "agent and pref (all|fail|off) are required"}
 
 
 def test_enable_delegates_to_the_manage_cli(wearos, api):
@@ -162,8 +162,23 @@ def test_enable_delegates_to_the_manage_cli(wearos, api):
     assert mut[-1][-2:] == ["disable", "wearos"]
     assert not wearos._engine().grants().get("chef"), "disable must revoke"
     assert "--yes" not in mut[-1]                  # never --yes (review, rule 12)
-    assert api.enable({"enable": True}) == {"error": "profile is required (no silent "
+    assert api.enable({"enable": True}) == {"error": "agent is required (no silent "
                                                      "all-profiles default)"}
+
+
+def test_cross_agent_bodies_key_the_target_as_agent(wearos, api):
+    """The desktop's native proxy (dashboard_auth/native_http._own_profile)
+    403s any body whose `profile` key names another profile — and this pane
+    drives OTHER agents from the default session (owner's checkbox 403s,
+    2026-11-10 19:2x). Cross-agent bodies therefore use `agent`; `profile`
+    remains accepted for direct/curl back-compat but must never be the
+    documented spelling."""
+    fake = wearos._INVENTORY_CACHE["fake"]
+    fake.rows = []
+    assert api.enable({"agent": "chef", "enable": True}).get("ok")
+    assert api.enable({"profile": "chef", "enable": True}).get("ok")   # back-compat
+    assert api.grants({"agent": "farmer", "allow": True})["grants"].get("farmer")
+    assert api.grants({"profile": "silo", "allow": True})["grants"].get("silo")
 
 
 def test_enable_row_is_true_in_the_very_next_status(wearos, api):
@@ -180,11 +195,11 @@ def test_enable_row_is_true_in_the_very_next_status(wearos, api):
                   "description": "d", "source": "user", "removed": None}]
     assert api.enable({"profile": "default", "enable": True}).get("ok")
     assert api.status()["profiles"][0]["enabled"] is True
-    assert api.enable({"profile": "default", "enable": False}).get("ok")
+    assert api.enable({"agent": "default", "enable": False}).get("ok")
     # disable answers from the fresh read too (the CLI above flipped back):
     fake.rows = [{"name": "wearos", "status": "disabled", "version": "0.2.0",
                   "description": "d", "source": "user", "removed": None}]
-    assert api.enable({"profile": "default", "enable": False}).get("ok")
+    assert api.enable({"agent": "default", "enable": False}).get("ok")
     assert api.status()["profiles"][0]["enabled"] is False
 
 

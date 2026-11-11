@@ -217,13 +217,16 @@ const voDelete = cid => voiceAct(() => rest('/voice', {
 async function act (fn) {
   haptic('tap')
   $busy.set(true)
-  try { await fn(); await refresh() } finally { $busy.set(false) }
+  // A failed call must never be silent (pane doctrine): surface it in the
+  // card's own error line before refresh() has a chance to overwrite it.
+  try { await fn() } catch (e) { $error.set(`wearos: ${String((e && e.message) || e)}`) }
+  try { await refresh() } finally { $busy.set(false) }
 }
 
 // One checkbox = one POST = one fixed-argv `hermes -p <profile> plugins enable|disable`
 async function toggle (profile, on) {
   await act(async () => {
-    const out = await rest('/enable', { method: 'POST', body: { profile, enable: on } })
+    const out = await rest('/enable', { method: 'POST', body: { agent: profile, enable: on } })
     if (out && out.ok === false) {
       host.notify({ kind: 'error', message: `wearos: ${out.detail || out.error}` })
     }
@@ -284,7 +287,7 @@ async function revoke (name, label, profile) {
 }
 
 async function setAlerts (profile, pref) {
-  await act(() => rest('/alerts', { method: 'POST', body: { profile, pref } }))
+  await act(() => rest('/alerts', { method: 'POST', body: { agent: profile, pref } }))
 }
 
 // STT install consent (sudo law, D16 rework): the button opens an APPROVAL CARD that
@@ -426,7 +429,7 @@ function WearKitPane () {
   const allEnabled = profiles.length > 0 && profiles.every(p => p.enabled)
   const enableAll = on => act(async () => {
     for (const p of profiles.filter(q => !!q.enabled !== on)) {
-      const out = await rest('/enable', { method: 'POST', body: { profile: p.name, enable: on } })
+      const out = await rest('/enable', { method: 'POST', body: { agent: p.name, enable: on } })
       if (out && out.ok === false) {
         host.notify({ kind: 'error', message: `wearos ${p.name}: ${out.detail || out.error}` })
       }

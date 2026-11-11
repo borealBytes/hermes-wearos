@@ -123,31 +123,37 @@ def devices_revoke(body: dict):
 
 
 # ── per-agent key grants (D17) ─────────────────────────────────────────────────
+# NOTE body-key law (owner pane 403s, 2026-11-10): the desktop's native proxy
+# (dashboard_auth/native_http._own_profile) 403s ANY JSON body whose `profile`
+# key names a profile other than the session's scope — and this pane drives
+# OTHER agents from the default session. Cross-agent bodies therefore key the
+# target as `agent`; `profile` is still accepted for back-compat (direct curl,
+# older panes), never preferred.
 @router.post("/grants")
 def grants(body: dict):
-    profile = str(body.get("profile", "")).strip().lower()
+    profile = str(body.get("agent") or body.get("profile", "")).strip().lower()
     if not profile:
-        return {"error": "profile is required"}
+        return {"error": "agent is required"}
     return {"grants": _p()._engine().set_grant(profile, bool(body.get("allow", True)))}
 
 
 # ── cron alerts (D14) ──────────────────────────────────────────────────────────
 @router.post("/alerts")
 def alerts(body: dict):
-    profile = str(body.get("profile", "")).strip().lower()
+    profile = str(body.get("agent") or body.get("profile", "")).strip().lower()
     pref = str(body.get("pref", "all")).strip().lower()
     if not profile or pref not in ("all", "fail", "off"):
-        return {"error": "profile and pref (all|fail|off) are required"}
-    return {"profile": profile, "pref": _p()._engine().set_alert_pref(profile, pref)}
+        return {"error": "agent and pref (all|fail|off) are required"}
+    return {"agent": profile, "pref": _p()._engine().set_alert_pref(profile, pref)}
 
 
 # ── enablement (review fix: delegate to `hermes -p <profile> plugins enable`,
 #    never a hand-rolled config.yaml editor) ────────────────────────────────────
 @router.post("/enable")
 def enable(body: dict):
-    profile = str(body.get("profile", "")).strip().lower()
+    profile = str(body.get("agent") or body.get("profile", "")).strip().lower()
     if not profile:
-        return {"error": "profile is required (no silent all-profiles default)"}
+        return {"error": "agent is required (no silent all-profiles default)"}
     res = _p().delegate_enablement(profile, bool(body.get("enable", True)))
     if res.get("ok"):
         # owner ruling 2026-11-10: enabling IS the whole decision — the grant
