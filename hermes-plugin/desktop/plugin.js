@@ -951,6 +951,13 @@ function WearKitPane () {
             className: 'flex items-center justify-between',
             children: [
               jsx('span', { className: 'font-medium', children: '🔊 Voice-out' }),
+              // build stamp (owner debugging law 2026-11-11): the pane must
+              // SAY which copy it is running — no more 'did my reopen take?'
+              jsx('span', {
+                className: 'text-[9px] text-(--ui-text-tertiary)',
+                title: 'pane build — if this is older than the latest commit, quit and reopen',
+                children: '· 7a2129'
+              }),
               air.installed && (air.model_verified || air.verified_pending)
                 ? (air.engine || {}).phase === 'warm'
                   ? jsx('span', { className: 'text-xs text-(--ui-text-success, --ui-text-secondary)', children: '✓ model loaded — ready' })
