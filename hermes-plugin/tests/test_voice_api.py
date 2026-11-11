@@ -127,6 +127,7 @@ def test_stale_rev_watch_cannot_clobber(vlane):
 # ---------------------------------------------------------------- cards
 
 def test_card_create_wav_and_delete_round_trip(vlane):
+    import voiceout as vo
     wav = mkwav(4.0)
     st, card = http(vlane["base"], "POST", "/voice/card_create",
                     {"wav_b64": base64.b64encode(wav).decode(),
@@ -141,8 +142,17 @@ def test_card_create_wav_and_delete_round_trip(vlane):
     assert st == 200 and ctype == "audio/wav" and raw == wav
     st, snap = http(vlane["base"], "GET", "/voice/cards")
     assert cid in snap["cards"]                      # mirror snapshot lists it
+    # the enroll screen renders the SERVER's script — one source for the words.
+    assert snap["prompt"] == vo.SCRIPTED_PROMPT
+    st, auto = http(vlane["base"], "POST", "/voice/card_create",
+                    {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
+                     "label": "no transcript sent"})
+    assert st == 200 and auto["transcript"] == vo.SCRIPTED_PROMPT   # auto-fill law
     st, doc = http(vlane["base"], "POST", "/voice/card_delete", {"card_id": cid})
     assert st == 200 and cid not in doc.get("cards", {})
+    st, doc2 = http(vlane["base"], "POST", "/voice/card_delete",
+                    {"card_id": auto["card_id"]})
+    assert st == 200
     st, raw, _ = http(vlane["base"], "GET",
                       f"/voice/card_wav?card_id={cid}", raw=True)
     assert st == 404

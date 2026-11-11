@@ -72,4 +72,24 @@ class CodecMuxersTest {
         assertEquals(8, Adts.SF_16000)
         assertEquals(960, CodecMuxers.GRANULE_PER_FRAME_48K) // 20 ms @ 48 kHz — RFC 7845
     }
+
+    @Test fun `wav header wraps pcm for the enrollment lane`() {
+        val pcm = ByteArray(16000 * 2 * 5)          // exactly 5 s @ 16k mono
+        val w = CodecMuxers.wav(pcm)
+        assertEquals("RIFF", String(w.copyOfRange(0, 4)))
+        assertEquals("WAVE", String(w.copyOfRange(8, 12)))
+        assertEquals("fmt ", String(w.copyOfRange(12, 16)))
+        assertEquals("data", String(w.copyOfRange(36, 40)))
+        val chunkLen = java.nio.ByteBuffer.wrap(w, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        assertEquals(36 + pcm.size, chunkLen)
+        val dataLen = java.nio.ByteBuffer.wrap(w, 40, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        assertEquals(pcm.size, dataLen)
+        assertEquals(16, w.copyOfRange(16, 20)[0].toInt() and 0xFF)  // fmt chunk size = 16
+        assertEquals(1, w[20].toInt() and 0xFF)                                  // PCM
+        assertEquals(1, w[22].toInt() and 0xFF)                                  // mono
+        val rate = java.nio.ByteBuffer.wrap(w, 24, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        assertEquals(16000, rate)
+        assertEquals(16, w[34].toInt() and 0xFF)                                 // 16-bit
+        assertArrayEquals(pcm, w.copyOfRange(44, w.size))
+    }
 }

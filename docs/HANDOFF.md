@@ -3,6 +3,11 @@
 **As of:** 2026-11-09 (later) · **From:** weardev desk (slices 2a–3 shipped; TTS bring-up deep-dive below) · **To:** next session of weardev
 **You pick up here.** If this file disagrees with your memory, this file loses to the branch's `docs/SPEC.md` §19, which loses only to a fresher `git fetch`.
 
+## 2026-11-10 ~23:00 — ➕ new voice enrollment ON THE WATCH (SPEC §19.5)
+- Owner ruling: a screen under the voices list — name, ONE scripted take, hear it back, retry or accept. Built: VoiceEnroll.kt (full-bleed Dialog, wear-M2, live mic meter via MicLevel, 12 s cap), GatewayTts.enroll() → lane POST /voice/card_create (already existed and was tested), CodecMuxers.wav() PCM→RIFF (JVM-tested), voiceout.status() now serves `prompt` = SCRIPTED_PROMPT (single source; test_voice_api pins prompt-in-snapshot + transcript auto-fill law). JVM 523/523; python 149 pass / 1 known fixture drift.
+- Deploy note: voiceout.py changed → gateway restart needed for the live lane (detached systemd-run trick); plugin dir + dashboard refreshed.
+- Hardware proof pending owner's voice: open Settings ▸ Voice out (gateway source) → ➕ new voice → record → ✓ → new card appears in the list (mine: clay-synth row + fresh card).
+
 ## 2026-11-10 ~22:45 — boot-crash fix + promo screenshots on the catalog PR
 - **APK boot-crash (owner: "starts the video then dies")**: `TailnetService.kt:98` NPE — `runCatching{URI(base).host}.getOrDefault("")` passes a null RESULT (getOrDefault guards exceptions only; URI.host is null for opaque bases) into phase()'s non-null gatewayHost; the service killed the process at first status emit after the 22:29 restart. Fix = `getOrNull() ?: ""` (`b612274`). Hardware-proven: boot clean, tunnel ACTIVE, endpoints re-picked to the completed http://<host>:8642 (bare-host minimal input works on glass).
 - **Mirror**: no-op for this fix (Kotlin-only; mirror carries hermes-plugin/).

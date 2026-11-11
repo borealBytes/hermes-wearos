@@ -20,6 +20,21 @@ import java.util.Random
  * watch keeps working — format negotiation is the first bytes on the socket, no handshake field.
  */
 internal object CodecMuxers {
+    /**
+     * Standard 44-byte RIFF/WAVE header for mono PCM16LE + the data — pure JVM. The
+     * enroll screen wraps its AudioRecord buffer in this before POSTing: the lane's
+     * create_card validates THIS header (3–60 s floors are proven gateway-side).
+     */
+    fun wav(pcm: ByteArray, rate: Int = 16000): ByteArray {
+        fun i32(v: Int) = byteArrayOf(v.toByte(), (v shr 8).toByte(),
+                                      (v shr 16).toByte(), (v shr 24).toByte())
+        fun i16(v: Int) = byteArrayOf(v.toByte(), (v shr 8).toByte())
+        val data = pcm.size
+        return "RIFF".toByteArray() + i32(36 + data) + "WAVE".toByteArray() +
+            "fmt ".toByteArray() + i32(16) + i16(1) + i16(1) + i32(rate) +
+            i32(rate * 2) + i16(2) + i16(16) + "data".toByteArray() + i32(data) + pcm
+    }
+
     const val SAMPLE_RATE = 16_000
     /** Opus granule positions are always on a 48 kHz clock, whatever the capture rate (RFC 7845). */
     const val GRANULE_PER_FRAME_48K = 960 // one 20 ms Opus frame

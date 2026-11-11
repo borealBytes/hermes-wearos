@@ -1904,6 +1904,18 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   Demo-machine consequence: this box's desktop app has the fix; a clean `hermes update`
   reverts the renderer to vanilla behavior until the core PR merges — reapply from the
   branch or rebuild before filming.
+- **2026-11-10 (owner ruling, §19.5 — enrollment moves to the wrist)** — "we need a
+  screen": the gateway voice-out page gains ➕ NEW VOICE under the voices list (shown
+  even when the list is empty). One scripted take, not three: name → read the gateway's
+  OWN prompt line (served as `prompt` in the /voice/cards snapshot — the same string
+  create_card stores server-side, so the transcript auto-fill can never drift) → live
+  mic meter + elapsed (proof of life, never a bare spinner) → ▶ hear-it-back → ↻ retry
+  or ✓ accept. ONE take is enough because the wearer judges the clip they just heard
+  and the encoder re-uses the best window; three takes would only triple the round
+  glass's wait. 3 s floor is pre-checked on the watch and PROVEN again gateway-side
+  (test_voice_api pins the snapshot prompt + the auto-fill law). PCM16@16k mono, the
+  lane's canonical rate; the 44-byte RIFF wrapper is JVM-tested (CodecMuxers.wav).
+
 ## Appendix A — Landed slices (build log, newest first)
 
 -- **Batch 7 — the tunnel IS the transport, agents key themselves, A/V plays on the wrist

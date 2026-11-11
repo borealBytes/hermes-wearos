@@ -1088,6 +1088,17 @@ fun SettingsScreen(
                     }
                 }
             }
+            // ➕ NEW VOICE (owner 2026-11-10): enrollment lives on the WATCH, right under
+            // the voices it extends — name, one scripted take, hear it, retry or accept.
+            // Shows even when the library is EMPTY (a dead list gets its first voice here).
+            var enrolling by androidx.compose.runtime.remember { mutableStateOf(false) }
+            Button(
+                onClick = { enrolling = true },
+                modifier = Modifier.size(width = 140.dp, height = 36.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.4f)),
+            ) { Text("➕ new voice", style = MaterialTheme.typography.button, maxLines = 1) }
+            if (enrolling) VoiceEnrollDialog(onClose = { enrolling = false; gwProbe++ })
         }
         // SPEECH INPUT lives on its own nested page now (batch-4 #13: Settings ▸ Voice in) —
         // the owner asked for the orb's default engine to be settable the same way voice-out

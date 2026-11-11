@@ -186,6 +186,9 @@ object GatewayTts {
             }
         }
         transcripts = tmap
+        // the enrollment script, single-sourced from the gateway: the watch renders
+        // THIS so create_card's server-side transcript auto-fill stays true.
+        if (o.has("prompt")) prompt = o.getString("prompt")
         note = when {
             !engineReady -> "engine not installed on the gateway"
             cards.isEmpty() -> "no voice cards yet — record one on the pane"
@@ -200,6 +203,41 @@ object GatewayTts {
     /** Card id → its reference transcript (the ▶ audition line, served by the snapshot). */
     @Volatile var transcripts: Map<String, String> = emptyMap()
         private set
+
+    /** The one line every enrollment must speak (kept in step with voiceout.SCRIPTED_PROMPT). */
+    @Volatile var prompt: String =
+        "Your cron digest is ready: three farm alerts, no incidents, sprayer window " +
+        "opens Thursday at six ten."
+        private set
+
+    /**
+     * ➕ New voice: POST the recorded prompt wav to the lane. The gateway validates
+     * (3–60 s, size, silence) and files the card with the scripted transcript — the
+     * watch never claims words it didn't serve. Returns null on success, else the
+     * human-readable refusal (a button never answers silence).
+     */
+    fun enroll(label: String, wav: ByteArray): String? {
+        val base = laneBase()
+        if (base.isEmpty()) return "no gateway endpoint set"
+        val err = try {
+            val body = JSONObject()
+                .put("label", label.trim().ifEmpty { "watch voice" })
+                .put("wav_b64", Base64.getEncoder().encodeToString(wav))
+            val req = Request.Builder().url("$base/voice/card_create")
+                .post(body.toString().toRequestBody(JSON)).build()
+            http.newCall(req).execute().use { resp ->
+                val o = JSONObject(resp.body?.string().orEmpty().ifEmpty { "{}" })
+                if (!resp.isSuccessful || o.optString("error").isNotEmpty())
+                    o.optString("error").ifEmpty { "lane said ${resp.code}" }
+                else null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "voice enrollment failed: ${e.message}")
+            "enrollment failed (${e.javaClass.simpleName})"
+        }
+        if (err == null) refresh()   // the list shows the new card, not a promise
+        return err
+    }
 
     /**
      * ▶ on a voice row: audition THAT card through the real pipeline — global dial speed,

@@ -627,4 +627,7 @@ def status() -> dict:
             "modes": p.get("modes") or {}, "voices": p.get("voices") or {},
             "cards": {cid: {k: v for k, v in m.items() if k != "sha256"}
                       for cid, m in cards.items()},
+            # the EXACT line every enrollment must speak — the watch renders THIS
+            # string so server-side transcript auto-fill stays true (single source).
+            "prompt": SCRIPTED_PROMPT,
             "engine": bool(_SYNTH), "aligner": bool(_ALIGN)}
