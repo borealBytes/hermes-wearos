@@ -193,6 +193,7 @@ fun PromptActionSheet(
     onEdit: () -> Unit,
     onCopy: () -> Unit,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,  // #24 stale-lift guard
 ) {
 
     // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
@@ -202,7 +203,7 @@ fun PromptActionSheet(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
                 .background(Color.Black)
                 .padding(top = 32.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),

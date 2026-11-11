@@ -42,6 +42,7 @@ fun AgentPickerDialog(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
     gateway: String = "",  // selected gateway label (SPEC §11) — small header line
+    modifier: Modifier = Modifier,  // #24 stale-lift guard (chat screen passes staleGestureGuard)
 ) {
 
     // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
@@ -56,8 +57,7 @@ fun AgentPickerDialog(
         // the column node is content-tall, so the ring ellipse was computed against the wrong
         // box and edge circles died below the top rim (see SettingsScreen for the full why).
         Box(
-            modifier = Modifier
-                .fillMaxSize()
+            modifier = modifier.fillMaxSize()
                 // BATCH-6 #29: button lists circle at 2f (see SettingsScreen).
                 .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch {
                     // APPLY TELEMETRY (#28): the stroke lands here; if it does nothing visible,

@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.material.Button
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -279,31 +280,31 @@ fun SettingsScreen(
     fun settingsGwHost(): String =
         runCatching { android.net.Uri.parse(baseUrl).host.orEmpty() }.getOrDefault("")
 
-    val settingsScroll = androidx.compose.foundation.rememberScrollState()
+    // OWNER 2026-11-11, post-research (SLC law): the settings surface IS a ScalingLazyColumn
+    // now — the same viewport-sized list Chat/Sessions use, so the #18 geometry problem above
+    // is structurally gone (node = viewport, ring math correct at every scroll depth), blank
+    // air scrolls (the "box around everything" law), and the touch bezel rides the SAME
+    // edgeScrollWalk the chat transcript uses. scalingParams pinned to identity ON PURPOSE:
+    // today the page emits its rows as one item of a hand-shaped Column; edge-scaling the
+    // block would shrink headers mid-scroll and read as a glitch. The row-itemized follow-up
+    // (each nav row its own item, system-settings fisheye live) is the post-deadline polish.
+    val settingsScroll = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
     val edgeScope = rememberCoroutineScope()
-    // BATCH-5 #18 (owner: *"it's not working on the agent screen… let me check the settings
-    // screens… it's not working there… voice out has a really long list… not working there
-    // either"*): the gesture lived ON the scrolled Column, whose layout node measures as tall
-    // as its CONTENT — the ring geometry then computed a ~480×900 ellipse on a 480 px face, so
-    // only touches near the TOP rim ever counted, and they drifted further off the deeper the
-    // page scrolled (positions ride the node origin, which scrolls away). Chat/Sessions kept
-    // working because a ScalingLazyColumn node IS viewport-sized. The gesture now rides a
-    // viewport-sized wrapper: ring = the real round face, every page, every scroll position.
-    Box(
+    // Parent frame: the list is the page; the enrollment overlay (IME law) draws ON TOP of it,
+    // same visual stack the old Box host had.
+    Box(modifier = Modifier.fillMaxSize()) {
+    ScalingLazyColumn(
+        state = settingsScroll,
         modifier = Modifier
             .fillMaxSize()
             // BATCH-6 #29 (owner: "the main settings screen… does not work with the bezel
             //  scrolling"): it DID circle — at the chat's reading gear, ~50 px a real-finger
             //  stroke, invisible on a button list. Dense surfaces circle at 2f, like Sessions.
-            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.scrollBy(total) } }
-            // OWNER 2026-11-11 (the "box around everything" law, system-settings pattern): the
-            // scroll modifier lives on the VIEWPORT-sized Box, not the content Column. On the
-            // Column, blank air beside/below a row belonged to no scrollable node — the finger
-            // had to hunt a widget to scroll, and an accidental no-effect drag read as a swipe
-            // that did nothing. Now every pixel of the face scrolls (tap-only children still
-            // win taps; sliders keep their axis), exactly like the Wear system settings box.
-            .verticalScroll(settingsScroll),
+            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.edgeScrollWalk(total) } },
+        // Scaling params at DEFAULT (Sessions idiom): the system-settings fisheye the owner
+        // asked for comes free — center row full size, edges shrink+fade toward the rim.
     ) {
+    item {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1527,16 +1528,19 @@ fun SettingsScreen(
             StatusLine("author", "Clayton Young")
         }
     }
+    } // item
+    } // ScalingLazyColumn
         // ENROLLMENT OVERLAY (owner IME law): rendered in the ACTIVITY window as a
         // full-screen sheet over the settings surface — the Wear floating keyboard
         // rises here exactly as it does in chat; inside androidx Dialog windows on
-        // this watch it stays mute (proven twice, 2026-11-11).
+        // this watch it stays mute (proven twice, 2026-11-11). Lives in the PARENT Box
+        // scope (after the list closes) so it paints over the list, SLC-legal.
         if (enrolling && page == SettingsPage.Voice) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
                 VoiceEnroll(onClose = { enrolling = false; gwProbe++ }, agent = agentNow)
             }
         }
-    } // Box (batch-5 #18 edge-scroll host)
+    } // parent Box (SLC frame + enrollment overlay on top)
 }
 
 /**
