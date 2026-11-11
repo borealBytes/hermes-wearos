@@ -216,10 +216,26 @@ def _voice_mods(ensure: bool = False):
             importlib.import_module(w.__name__ + ".align_parakeet"))
 
 
+def _installed_revision() -> str:
+    """The revision the gateway ACTUALLY loaded (install-metadata pin), so the
+    pane header can stamp truth instead of a build-time string that lies after
+    the next commit (owner 2026-11-11: 'I still see 7A2129' — static stamps do
+    that)."""
+    try:
+        import json, os
+        p = os.path.join(os.path.expanduser("~"), ".hermes", "plugins",
+                         ".install-metadata.json")
+        with open(p, encoding="utf-8") as f:
+            return str(json.load(f).get("wearos", {}).get("revision", ""))[:8]
+    except Exception:
+        return ""
+
+
 @router.get("/voice")
 def voice():
     vo, ta, al = _voice_mods(ensure=True)
-    return {"voice": vo.status(),
+    return {"revision": _installed_revision(),
+            "voice": vo.status(),
             "air": ta.status() | {"sources": ta.sources_menu(), "slots": ta._slots(),
                                   "preview": ta.preview(), "engine": ta.engine_state(),
                                   "devices": ta.devices()},

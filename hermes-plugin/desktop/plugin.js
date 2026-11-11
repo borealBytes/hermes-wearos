@@ -245,17 +245,14 @@ const voRename = cid => {
 const $enrolling = atom(false)
 const $recPhase = atom('idle')          // idle | rec | ready | send
 const $recSecs = atom(0)
-let _recMR = null, _recT = null, _recBlob = null, _recUrl = '', _recName = ''
-function _toWav16k (ab) {               // AudioBuffer -> 16k mono PCM16 WAV bytes
-  const rate = 16000, n = Math.round(ab.duration * rate)
-  const chans = []
-  for (let c = 0; c < ab.numberOfChannels; c++) chans.push(ab.getChannelData(c))
-  const f = new Float32Array(n), sc = ab.sampleRate / rate
+let _recEnd = null, _recT = null, _recBlob = null, _recUrl = '', _recName = ''
+function _f32ToWav16k (mono, srcRate) {   // Float32 mic capture -> 16k mono PCM16 WAV
+  const rate = 16000, n = Math.round(mono.length * rate / srcRate)
+  const f = new Float32Array(n)
+  const sc = mono.length / n
   for (let i = 0; i < n; i++) {
-    const pos = i * sc, i0 = Math.floor(pos), i1 = Math.min(i0 + 1, ab.length - 1), w = pos - i0
-    let v = 0
-    for (const ch of chans) v += ch[i0] * (1 - w) + ch[i1] * w
-    f[i] = v / chans.length
+    const pos = i * sc, i0 = Math.floor(pos), i1 = Math.min(i0 + 1, mono.length - 1), w = pos - i0
+    f[i] = mono[i0] * (1 - w) + mono[i1] * w
   }
   const buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf)
   const tag = (o, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)) }
@@ -277,35 +274,53 @@ function _b64 (u8) {
   return window.btoa(bin)
 }
 async function voRecStart () {
+  // RAW PCM capture (owner 2026-11-11: MediaRecorder froze between stop and
+  // ready on the 12 s auto-stop — twice). No codec, no blob decode: a
+  // ScriptProcessor taps the mic straight into Float32 buffers, and the WAV
+  // is assembled synchronously at stop. The recorder can no longer have a
+  // secret life; the row can only be idle, recording, or holding a take.
   let stream
   try {
     stream = await navigator.mediaDevices.getUserMedia(
-      { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } })
+      { audio: { channelCount: 1, echoCancellation: false,
+                 noiseSuppression: false, autoGainControl: true } })
   } catch (e) {
     $voNote.set('microphone refused: ' + String((e && e.message) || e) +
                 ' — or record the take from the watch')
     return
   }
   _recBlob = null
-  const chunks = []
-  const mime = window.MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-    ? 'audio/webm;codecs=opus' : ''
-  _recMR = new window.MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
-  _recMR.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data) }
-  _recMR.onstop = async () => {
-    stream.getTracks().forEach(t => t.stop())
-    try {
-      const ab = await new (window.AudioContext || window.webkitAudioContext)()
-        .decodeAudioData(await new window.Blob(chunks).arrayBuffer())
-      _recBlob = _toWav16k(ab)
-      $recSecs.set(Math.round(ab.duration * 10) / 10)
-      $recPhase.set('ready')
-    } catch (e) {
-      $voNote.set('could not decode the take: ' + String((e && e.message) || e))
-      $recPhase.set('idle')
-    }
+  const ctx = new (window.AudioContext || window.webkitAudioContext)()
+  ctx.resume().catch(() => {})
+  const src = ctx.createMediaStreamSource(stream)
+  const mute = ctx.createGain()
+  mute.gain.value = 0                    // monitor path stays silent, no echo
+  const proc = ctx.createScriptProcessor(4096, 1, 1)
+  const parts = []
+  proc.onaudioprocess = (ev) => {
+    if ($recPhase.get() === 'rec')
+      parts.push(new Float32Array(ev.inputBuffer.getChannelData(0)))
   }
-  _recMR.start(250)     // timeslice: data lands even if the stream ends abruptly
+  src.connect(proc); proc.connect(mute); mute.connect(ctx.destination)
+  _recEnd = () => {
+    clearInterval(_recT)
+    try { proc.disconnect(); src.disconnect(); mute.disconnect() } catch { /* gone */ }
+    stream.getTracks().forEach(t => t.stop())
+    let n = 0
+    for (const q of parts) n += q.length
+    if (!n) {
+      $voNote.set('the microphone handed back nothing — check the input device')
+      $recPhase.set('idle'); $recSecs.set(0); ctx.close().catch(() => {})
+      return
+    }
+    const mono = new Float32Array(n)
+    let off = 0
+    for (const q of parts) { mono.set(q, off); off += q.length }
+    _recBlob = _f32ToWav16k(mono, ctx.sampleRate)
+    $recSecs.set(Math.round(n / ctx.sampleRate * 10) / 10)
+    $recPhase.set('ready')
+    ctx.close().catch(() => {})
+  }
   $recPhase.set('rec')
   $recSecs.set(0)
   clearInterval(_recT)
@@ -316,18 +331,9 @@ async function voRecStart () {
   }, 500)
 }
 function voRecStop () {
-  clearInterval(_recT)
-  if (_recMR && _recMR.state !== 'inactive') _recMR.stop()
-  // Watchdog (owner 2026-11-11: auto-stop at 12.5 s left the row frozen in
-  // 'recording' with no confirm buttons — the take never came back and
-  // nothing said why). If the recorder's onstop hasn't landed in 2 s, the
-  // row says so and frees itself.
-  setTimeout(() => {
-    if ($recPhase.get() === 'rec') {
-      $voNote.set('the recorder never handed the take back (mic or codec hiccup) — ↺ try again')
-      $recPhase.set('idle'); $recSecs.set(0); _recBlob = null
-    }
-  }, 2000)
+  // synchronous handoff: _recEnd assembles the WAV on the spot — there is no
+  // async decode step left that could fail to call back.
+  if (_recEnd) { const f = _recEnd; _recEnd = null; f() }
 }
 function voRecPlay () {
   if (!_recBlob) return
@@ -969,7 +975,7 @@ function WearKitPane () {
               jsx('span', {
                 className: 'text-[9px] text-(--ui-text-tertiary)',
                 title: 'pane build — if this is older than the latest commit, quit and reopen',
-                children: '· 7a2129'
+                children: '· ' + (((voice || {}).revision) || 'build')
               }),
               air.installed && (air.model_verified || air.verified_pending)
                 ? (air.engine || {}).phase === 'warm'
@@ -1233,7 +1239,8 @@ function WearKitPane () {
                     : jsxs('span', {
                         className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)',
                         children: [String(_recName || ''),
-                                   ' · ', ($recSecs.get() || 0).toFixed(1), 's']
+                                   ' · ', ($recSecs.get() || 0).toFixed(1), 's',
+                                   _recBlob ? ` · ${Math.round(_recBlob.length / 1024)} KB` : '']
                       }),
                   $recPhase.get() === 'rec'
                     ? jsxs('span', {
