@@ -125,11 +125,17 @@ def _fake_engine(monkeypatch, texts, wav=None):
                                                  # this stub via read_prefs)
 
 
-def _sandbox_home(monkeypatch):
+def _sandbox_home(monkeypatch, request):
     """Point the plugin's prefs root at a throwaway dir so voiceout state writes
     never land in whoever's home runs pytest. The resolver prefers a CONTEXT-LOCAL
     override and profile-pin env vars over HERMES_HOME — neutralize all three
-    (exact conftest pattern, 2026-11-10 lesson)."""
+    (exact conftest pattern, 2026-11-10 lesson).
+
+    pytest 9 removed MonkeyPatch.finalize: the old `monkeypatch.finalize(...)` raised
+    AttributeError past a bare except, so the override got set but its reset was never
+    registered — the sandbox home then LEAKED into every later test file (it is what
+    broke test_voiceout's SentenceChunking suite cross-file, 2026-11-11). Registered
+    on `request.addfinalizer`, which every pytest in the support window has."""
     import tempfile
     d = tempfile.mkdtemp(prefix="wearos-home-")
     monkeypatch.setenv("HERMES_HOME", d)
@@ -137,7 +143,13 @@ def _sandbox_home(monkeypatch):
         import hermes_constants as _hc
         if hasattr(_hc, "set_hermes_home_override"):
             _token = _hc.set_hermes_home_override(d)
-            monkeypatch.finalize(lambda: _hc.reset_hermes_home_override(_token))
+
+            def _reset():
+                try:
+                    _hc.reset_hermes_home_override(_token)
+                except ValueError:          # token from a dead context: clear anyway
+                    _hc.set_hermes_home_override(None)
+            request.addfinalizer(_reset)
     except Exception:
         pass
     monkeypatch.delenv("HERMES_GATEWAY_PROFILE_PIN", raising=False)
@@ -145,8 +157,8 @@ def _sandbox_home(monkeypatch):
     return d
 
 
-def test_stream_yields_one_pcm_chunk_per_sentence(monkeypatch):
-    _sandbox_home(monkeypatch)
+def test_stream_yields_one_pcm_chunk_per_sentence(monkeypatch, request):
+    _sandbox_home(monkeypatch, request)
     seen = _fake_engine(monkeypatch, None)
     import voiceout
     voiceout.set_chunk_mode("sentence")   # this test pins the SENTENCE lane;

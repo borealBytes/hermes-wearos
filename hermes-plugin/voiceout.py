@@ -39,7 +39,6 @@ import re
 import struct
 import threading
 import time
-import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -59,12 +58,6 @@ def _root() -> Path:
 
 PREFS_NAME = "voiceout.yaml"
 CARDS_DIR = "cards"
-SEED_DIR = "seed"
-
-# Seed pack: pinned release asset (10 refs + manifest.json), verified by exact hash.
-SEED_URL = ("https://github.com/borealBytes/hermes-wearos/releases/download/"
-            "voiceout-seed-v1/seed-pack-v1.tar.gz")
-SEED_SHA256 = "PENDING"          # set when the pack is cut (tools/voiceout_seed_cut.py)
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
 # CHUNK MODE (owner ruling 2026-11-11): 'sentence' = the issue #7 sentence-by-
 # sentence lane; 'paragraph' (the DEFAULT) renders one paragraph per draw — the
@@ -434,38 +427,6 @@ def delete_card(card_id: str) -> dict:
                 p["voices"]["__default__"] = max(
                     cards.items(), key=lambda kv: kv[1].get("created") or 0)[0]
         return _save_and_return(p)
-
-
-# ------------------------------------------------------------------ seed pack
-
-def ensure_seeds(force: bool = False) -> dict:
-    """Fetch+verify the 10-voice seed pack once. Returns {ok, seeded:[ids], detail}."""
-    root = _root()
-    done = root / ".seeds-done"
-    if done.is_file() and not force:
-        with LOCK:
-            p = read_prefs()
-        return {"ok": True, "seeded": [c for c, m in (p.get("cards") or {}).items()
-                                       if m.get("seeded")], "detail": "already seeded"}
-    try:
-        import tarfile
-        import io
-        blob = urllib.request.urlopen(SEED_URL, timeout=60).read()
-        if SEED_SHA256 != "PENDING" and hashlib.sha256(blob).hexdigest() != SEED_SHA256:
-            return {"ok": False, "seeded": [], "detail": "seed pack checksum mismatch"}
-        out: list[str] = []
-        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
-            manifest = json.load(tf.extractfile("manifest.json"))
-            for entry in manifest.get("voices", []):
-                wav = tf.extractfile(entry["file"]).read()
-                card = create_card(wav, entry["label"], source="seed-pack",
-                                   license_=entry.get("license", "CC0"),
-                                   transcript=entry.get("transcript"), seeded=True)
-                out.append(card["card_id"])
-        done.write_text(json.dumps(out))
-        return {"ok": True, "seeded": out, "detail": f"fetched {len(blob)} bytes, verified"}
-    except Exception as exc:                       # network optional; never crash the pane
-        return {"ok": False, "seeded": [], "detail": f"{type(exc).__name__}: {exc}"}
 
 
 # ------------------------------------------------------------------ synthesis

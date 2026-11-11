@@ -11,8 +11,9 @@
  *     server → client : TEXT frames, JSON lines from the engine adapter:
  *                       {"partial":"…"} (engine-dependent), {"final":"…"}, {"error":"…"}
  *
- * Engine: config.json `stt_stream_engine` picks the DEFAULT ("whisper" buffered — final only,
- * CPU-friendly | "parakeet" — transcribe.cpp GGUF streaming, partials WHILE talking). The watch
+ * Engine: config.json `stt_stream_engine` picks the DEFAULT (owner doctrine 2026-11-11:
+ * "parakeet" — transcribe.cpp GGUF streaming, partials WHILE talking — is the default;
+ * "whisper" buffered — final only, CPU-friendly — remains a trivial opt-in). The watch
  * may override PER SESSION with `?engine=<id>` (Settings ▸ Voice in ▸ Gateway picker lists the
  * engines /health reports, owner 2026-10-30: "it should let you … select … installed models").
  * Unknown engine ids fall back to the configured default, never an error mid-sentence.
@@ -96,7 +97,8 @@ function sttProbe(probes) {
 }
 
 export function sttEngineStatus(cfg, venvPy, wkDir, extraProbes) {
-  const engine = cfg.stt_stream_engine || 'whisper';
+  const engine = cfg.stt_stream_engine || 'parakeet';   // owner doctrine 2026-11-11: gateway
+  // Parakeet is the WearKit STT story; whisper stays only as this trivial config opt-in.
   const probes = [{ python: venvPy, script: path.join(wkDir, 'stt_stream.py'), cwd: wkDir },
     ...(extraProbes || [])];
   const usable = probes.filter((p) => p.python && fs.existsSync(p.python) && fs.existsSync(p.script));
@@ -104,7 +106,7 @@ export function sttEngineStatus(cfg, venvPy, wkDir, extraProbes) {
   const ready = usable.length > 0;
   return {
     engine, ready,
-    missing: ready ? null : 'run scripts/whisper-env.sh',
+    missing: ready ? null : `run scripts/${engine === 'whisper' ? 'whisper-env' : 'parakeet'}.sh`,
     engines: sttEngines || [], // [] until the first probe lands — honest "don't know yet"
   };
 }

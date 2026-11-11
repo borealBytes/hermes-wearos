@@ -14,7 +14,7 @@
 # mirror split is born without app/libs/hermes-tailnet.aar, and the Parakeet engine is
 # BUILT from pinned source on the user's machine, never shipped).
 name: wearos
-version: 0.3.5
+version: 0.3.6
 description: >-
   ⌚ Pairs the Hermes Wear OS watch app over the watch's OWN tailnet node — the gateway
   issues a 6-digit code, a human types it back at the gateway (never through a model);
@@ -22,8 +22,10 @@ description: >-
   notifications, and one-command full revoke (tailnet node + token + key rotation).
   Voice-out: your agents speak on the wrist with cloned zero-shot voices (NeuTTS Air,
   Apache-2.0) — a Desktop pane dropdown picks the weights source (community re-quants
-  default, no account; official gated rows for consent-keepers), separate gateway and
-  watch quants, word-synced karaoke, all audio served over your own tailnet. Optional
+  default; every row needs the gated neuphonic/neucodec codec plus a free HF read
+  token — community rows only spare you the backbone consent), separate gateway and
+  watch quants, word-synced karaoke in the desktop pane, all audio served over your own
+  tailnet. Optional
   streaming speech-to-text builds itself from pinned source. 𝗢𝗽𝗲𝗻 𝘀𝗼𝘂𝗿𝗰𝗲
   𝗳𝗼𝗿𝗲𝘃𝗲𝗿 — full walkthrough: https://github.com/borealBytes/hermes-wearos
 author: "Clay (borealBytes)"
@@ -102,22 +104,24 @@ config_schema:
     type: secret
     env: HF_TOKEN
     description: >-
-      Hugging Face read token for the voice-out weights (ONLY needed when a
-      gated official row is selected — the community default needs no account).
-      Create a "read" token (fine-grained is fine) at
-      https://huggingface.co/settings/tokens, then accept the two model agreements
-      once while logged in: https://huggingface.co/neuphonic/NeuTTS-Air and
-      https://huggingface.co/neuphonic/NeuTTS-Air-GGUF — without those clicks the
-      download 401s even with a valid token. Paste here or in the pane. Read through
-      this plugin's declared secret route (profile-scoped); the pane's token box
-      stores it 0600 in the plugin's own data dir; never echoed by any route, never
-      logged.
+      Hugging Face read token for the voice-out weights — needed by EVERY source
+      row (the gated neuphonic/neucodec audio codec rides along with every
+      backbone, community re-quants included). Create a "read" token
+      (fine-grained is fine) at https://huggingface.co/settings/tokens, then
+      accept the terms once at https://huggingface.co/neuphonic/neucodec (always
+      needed — the audio codec) and, for official backbone rows,
+      https://huggingface.co/neuphonic/neutts-air-q8-gguf (or -q4-gguf) — without
+      those clicks the download 401s even with a valid token. Paste here or in the
+      pane. Read through this plugin's declared secret route (profile-scoped); the
+      pane's token box stores it 0600 in the plugin's own data dir; never echoed by
+      any route, never logged.
   claim_port:
     type: int
     default: 42653
     description: >-
       Loopback port of the funnel-facing claim door (127.0.0.1 only; tailscale funnel
-      fronts /pair/*). Change both together if 42653 is taken.
+      mounts it at the ROOT of :443 and the door itself answers only
+      /pair/begin|poll|ack — 404 otherwise). Change both together if 42653 is taken.
   private_port:
     type: int
     default: 42654
@@ -129,9 +133,8 @@ config_schema:
     type: str
     default: "https://github.com/borealBytes/hermes-wearos/releases/latest"
     description: >-
-      Where "install the watch app" points (CI-built APK + SHA256SUMS). First run
-      needs a REUSABLE, non-ephemeral Tailscale auth key
-      (https://login.tailscale.com/admin/settings/keys → generate): ephemeral dies
-      at the first reinstall and strands the app in NEEDS_AUTH. The node enrolls
-      once with it; every pairing after that uses a single-use key the gateway
-      mints itself.
+      Where "install the watch app" points (CI-built APK + SHA256SUMS). First run needs
+      NO key to paste: pairing hands the watch a single-use enrollment key the gateway
+      mints at approval. (Manual alternative: Settings ▸ Gateways ▸ Tailnet with a
+      REUSABLE, non-ephemeral auth key — ephemeral dies at the first reinstall and
+      strands the app in NEEDS_AUTH.)
