@@ -265,8 +265,21 @@ class MainActivity : ComponentActivity() {
                 val pairNow by WearApp.Graph.pairRequested.collectAsState()
                 var pairTookOver by remember { mutableStateOf(false) }
                 LaunchedEffect(pairNow) {
-                    if (pairNow) { screen = Screen.Settings; pairTookOver = true }
-                    else if (pairTookOver) { screen = Screen.Chat; pairTookOver = false }
+                    if (pairNow) {
+                        // Take over only for people who didn't open Settings themselves; a
+                        // manual visitor's own Pair row shows the gate (the page collector
+                        // renders it whenever pairNow — no hijack needed).
+                        if (!settingsManual) { screen = Screen.Settings; pairTookOver = true }
+                    } else if (pairTookOver) {
+                        // GEAR FREEZE (#21, 2026-11-11): the hand-back must never yank a
+                        // manual visitor to Chat. A probe blip (401 during enable-time
+                        // re-pin, a lane timeout) used to flip pairNow up/down under the
+                        // wearer's finger and snap Settings shut a beat after the gear
+                        // lane committed — trace proof: `dial lane=settings` 6/6, screen
+                        // back to Chat on the misses.
+                        if (screen == Screen.Settings && !settingsManual) screen = Screen.Chat
+                        pairTookOver = false
+                    }
                 }
                 var composing by remember { mutableStateOf(false) }
                 var draft by remember { mutableStateOf("") }
@@ -1809,6 +1822,10 @@ private fun OrbCluster(
                         Log.d("HermesWear", "dial lane=${lane.id} slot=$slot spin=${spin.spinning}")
                         onDial(lane)
                     }
+                } else {
+                    // No-lit-slot release: the gear that does nothing and says nothing.
+                    // (owner 2026-11-11 gear freeze: silence was the disease, not just the misfire)
+                    Log.d("HermesWear", "dial release: no lit slot (spinning=${spin.spinning})")
                 }
             }
             spinEngaged = false
