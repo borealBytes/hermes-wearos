@@ -2492,3 +2492,14 @@ Two provable halves of one ruling, both hardware-driven same evening:
   → hub, enrollment first), so the hardware back walks out of sub- and sub-sub-screens and
   only THEN rejoins the Chat→Sessions→Agents→Chat loop; edge-swipe keeps its straight-to-chat
   contract. JVM suite + release lint gate the build.
+
+- **v0.3.3 — the checkbox is WATCH PRESENCE (owner ruling 2026-11-11, supersedes the
+  v0.3.2 refusal).** v0.3.2 refused to uncheck the pane's host profile; the owner ruled that
+  wrong: the Wear Kit pane's agent checkbox means "this agent is reachable from the watch"
+  (grant + enablement), never "kill the plugin that hosts this pane". Unchecking the host's
+  own box now REVOKES THE GRANT (the agent leaves the watch) and leaves Wear Kit running to
+  serve the pane and the lane; the full off-switch is the Plugins-page toggle, which names
+  what it does. Re-checking takes the normal path (delegate-enable, re-pin, re-grant). The
+  TTS-provider entry (`wearkit-gateway`) ships in GET /api/config/schema dynamically — a
+  desktop that doesn't show it is serving a schema cached ≤5 min (react-query staleTime),
+  not a dead registration.

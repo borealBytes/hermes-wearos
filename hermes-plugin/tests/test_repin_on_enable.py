@@ -9,6 +9,8 @@ and says so in the detail (no silent upgrades either)."""
 from __future__ import annotations
 
 import json
+import types
+
 import pytest
 from pathlib import Path
 
@@ -94,9 +96,10 @@ def test_pair_host_drops_the_dot_net_suffix(wearos, monkeypatch, tmp_path):
     assert info["gateway_url"] == "http://tuxdesktop.tailb12aa5.ts.net:8642"
 
 
-def test_self_disable_of_the_host_profile_is_refused(wearos, monkeypatch):
-    """'Plugin not found' after unchecking default (twice bitten): the pane's
-    API dies with its host, so the route must refuse that click with a note."""
+def test_unchecking_the_host_profile_revokes_the_grant_without_kill(monkeypatch):
+    """OWNER RULING 2026-11-11 (v0.3.3): the checkbox is WATCH PRESENCE. The
+    host's own uncheck must revoke the grant, NOT disable the plugin that hosts
+    the pane — and must not delegate a disable down the CLI lane."""
     import importlib.util
     import sys
     from pathlib import Path
@@ -107,18 +110,23 @@ def test_self_disable_of_the_host_profile_is_refused(wearos, monkeypatch):
     sys.modules["wearos_plugin_api_rpin"] = api
     spec.loader.exec_module(api)
     try:
-        seen = []
+        seen, grants = [], []
+        fake_engine = types.SimpleNamespace(set_grant=lambda p, a: grants.append((p, a)))
         monkeypatch.setattr(api, "_launch_profile", lambda: "default")
-        monkeypatch.setattr(wearos, "delegate_enablement",
-                            lambda p, e: seen.append((p, e)) or {"name": p, "ok": True})
-        monkeypatch.setattr(wearos, "refresh_inventory_row", lambda p: None)
+        monkeypatch.setattr(api, "_p", lambda: types.SimpleNamespace(
+            _engine=lambda: fake_engine,
+            delegate_enablement=lambda p, e: seen.append((p, e)) or {"name": p, "ok": True},
+            refresh_inventory_row=lambda p: None))
         out = api.enable({"agent": "default", "enable": False})
-        assert out["ok"] is False and not seen                  # never delegated
-        assert "hosts this pane" in out["detail"] and "disable" in out["detail"]
+        assert out["ok"] is True and not seen                    # no CLI disable
+        assert grants == [("default", False)]                    # presence revoked
+        assert "removed from the watch" in out["detail"] and "Plugins page" in out["detail"]
         out2 = api.enable({"agent": "wear-demo", "enable": False})
-        assert out2.get("ok") is True and seen == [("wear-demo", False)]  # others pass
+        assert out2.get("ok") is True and seen == [("wear-demo", False)]  # others still delegate
+        assert grants == [("default", False), ("wear-demo", False)]       # uncheck revokes, always
         out3 = api.enable({"agent": "default", "enable": True})
-        assert out3.get("ok") is True                           # re-enable stays allowed
+        assert out3.get("ok") is True and seen[-1] == ("default", True)   # re-check = full path
+        assert grants[-1] == ("default", True)                            # re-check re-grants
     finally:
         sys.modules.pop("wearos_plugin_api_rpin", None)
 
