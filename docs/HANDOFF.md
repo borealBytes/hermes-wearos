@@ -278,3 +278,18 @@ flashes): named profile without the plugin → auto-install from install-metadat
   ~/.hermes/tools/python-3.14.9*/lib/python3.14/site-packages -> 146 pass, 1 skip,
   1 pre-existing fail (sibling_lane fixture drift; stashed HEAD reproduces it).
 - Mirror re-synced clean (77bfbdf) after the flatten half-apply; dashboard restored.
+
+## Enrollment keyboard: saga closed (23:40, 23:39 APK)
+- Root cause was the WATCH, not the app: HoneyBoard (the registered IME) is package-DISABLED
+  since the companion work and Gboard was absent from `enabled_input_methods` — IMMS had
+  nothing to bind (mCurMethod=null for every window). Fixed on device via
+  `ime enable + ime set ...LatinIME` (disclosed; reversible in watch Settings).
+- Name field is now VoiceOrTypeField (the app's one keyboard widget), parameterized with
+  imeAction: enrollment asks Done, search keeps the glass (owner ruling); the page also has
+  an explicit next button. Enrollment lives in the ACTIVITY window, not a Dialog — the
+  OneUI Wear IME never attaches to dialog windows (the kept fix from the migration).
+- Proven: tapping the field raises the floating Gboard (kbd11/kbd_done shots).
+- Freeform law shipped: READY reads "talk 3–12 s / say anything"; pace = syllable nuclei
+  from the envelope (`rate_source: syllabic-est`); scripted lane kept for seed pack + pane.
+- Display-name law shipped: invisible immutable card uuid; ✎ rename on the pane propagates
+  (selected voices, dropdowns, watch list) through rev-bumped prefs.
