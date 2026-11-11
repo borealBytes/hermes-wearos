@@ -214,6 +214,14 @@ const voSpeed = e => {
 const voKaraoke = e => voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'karaoke', karaoke: e.target.checked } }))
 const $confirmDel = atom('')      // card_id armed for delete ('' = none)
+// Default picker feedback must be UNMISTAKABLE (owner 2026-11-11: "the
+// checkbox doesn't turn green"): theme-independent green accent, an optimistic
+// tick the instant you touch it (the refresh confirms, a failed POST reverts
+// it), and a green dot on the row itself — the truth never rides on a 12px
+// glyph the mono theme can flatten.
+const $defPick = atom('')
+const _isDefault = (voicing, cid) =>
+  ((((voicing && voicing.voices) || {}).__default__) === cid) || $defPick.get() === cid
 const voDelete = cid => { $confirmDel.set(''); voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'card_delete', card: cid } })) }
 // Rename is label-only: the card_id (uuid-ish slug) is the identity every
@@ -1137,9 +1145,12 @@ function WearKitPane () {
                         // dropdown-less agent speaks with.
                         jsx('input', {
                           type: 'checkbox', disabled: busy,
-                          checked: (((voicing && voicing.voices) || {}).__default__) === cid,
+                          style: { accentColor: '#4ade80' },
+                          checked: _isDefault(voicing, cid),
                           title: 'Voice-out default (agents without their own pick speak this one)',
+                          onClick: () => { $defPick.set(cid) },
                           onChange: () => setAgentVoice('__default__', cid)
+                            .then(() => $defPick.set('')).catch(() => {})
                         }),
                         // The NAME IS THE RENAME HANDLE (owner: "click on a model or a
                         // voice sample name, rename it right there") — no separate
@@ -1151,6 +1162,10 @@ function WearKitPane () {
                           children: [m.label || cid.slice(0, 8),
                                      m.ref_rate ? ` · ${Math.round(m.ref_rate)} wpm` : '']
                         }),
+                        _isDefault(voicing, cid) ? jsx('span', {
+                          className: 'shrink-0 text-[10px]', style: { color: '#4ade80' },
+                          children: '● default'
+                        }) : null,
                         jsx('button', {
                           // A voice is irreplaceable audio — the ✕ asks first
                           // (owner 2026-11-11): one tap arms, the next deletes.

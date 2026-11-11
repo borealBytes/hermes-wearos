@@ -393,11 +393,21 @@ def delete_card(card_id: str) -> dict:
         p = read_prefs()
         cards = p.get("cards") or {}
         if card_id in cards:
+            was_default = (p.get("voices") or {}).get("__default__") == card_id
             cards.pop(card_id)
             for agent, bound in (p.get("voices") or {}).items():
                 if bound == card_id:
                     p["voices"][agent] = ""          # unbind, never orphan a reference
-            ( _root() / CARDS_DIR / f"{card_id}.wav").unlink(missing_ok=True)
+            for suffix in (".wav", ".wav.codes.pt"):
+                # the runner's reference-codes cache dies with its card
+                (_root() / CARDS_DIR / f"{card_id}{suffix}").unlink(missing_ok=True)
+            if was_default and cards:
+                # A checkbox panel where NOTHING is checked answers nobody:
+                # hand the default to the newest survivor (owner 2026-11-11 —
+                # after deleting the default voice the picker showed no tick
+                # anywhere and looked broken).
+                p["voices"]["__default__"] = max(
+                    cards.items(), key=lambda kv: kv[1].get("created") or 0)[0]
         return _save_and_return(p)
 
 

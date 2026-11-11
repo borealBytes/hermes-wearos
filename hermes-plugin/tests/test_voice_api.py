@@ -214,6 +214,28 @@ def test_card_create_wav_and_delete_round_trip(vlane):
     assert st == 404
 
 
+def test_deleting_the_default_hands_it_to_the_newest_survivor(vlane):
+    # owner 2026-11-11: after deleting the checked voice the panel showed NO
+    # tick anywhere and looked broken — the default always lands on a
+    # survivor, and the runner's .codes.pt cache dies with its card.
+    import importlib
+    vo = importlib.import_module("voiceout")
+    st, older = http(vlane["base"], "POST", "/voice/card_create",
+                     {"wav_b64": base64.b64encode(mkwav(5.0)).decode(),
+                      "label": "older"})
+    st, newer = http(vlane["base"], "POST", "/voice/card_create",
+                     {"wav_b64": base64.b64encode(mkwav(6.0)).decode(),
+                      "label": "newer"})
+    vo.set_voice("__default__", older["card_id"])
+    cache = vo._root() / vo.CARDS_DIR / f"{older['card_id']}.wav.codes.pt"
+    cache.write_bytes(b"stale codes")
+    st, doc = http(vlane["base"], "POST", "/voice/card_delete",
+                   {"card_id": older["card_id"]})
+    assert st == 200
+    assert doc["voices"]["__default__"] == newer["card_id"]
+    assert not cache.exists()
+
+
 def test_card_rejects_a_two_second_clip_over_the_lane(vlane):
     st, body = http(vlane["base"], "POST", "/voice/card_create",
                     {"wav_b64": base64.b64encode(mkwav(2.0)).decode(),
