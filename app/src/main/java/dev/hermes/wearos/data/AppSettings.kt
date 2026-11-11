@@ -496,7 +496,20 @@ class AppSettings(private val context: Context) {
     private val _orbSlots = MutableStateFlow(OrbDial.DEFAULT_SLOTS)
     val orbSlots: StateFlow<List<Lane>> = _orbSlots
     suspend fun orbSlotsRaw(): String = context.dataStore.data.first()[KEY_ORB_SLOTS] ?: ""
-    suspend fun loadOrbSlots() { _orbSlots.value = OrbDial.decode(orbSlotsRaw()) }
+    suspend fun loadOrbSlots() {
+        val raw = orbSlotsRaw()
+        val decoded = OrbDial.decode(raw)
+        _orbSlots.value = decoded
+        if (raw.isNotBlank() && decoded.none { it == Lane.Commands }) {
+            // v0.10.11 reseed (trace-convicted 2026-11-11): every pre-clock default map
+            // contained Commands — a saved map without it is an auto-seeded relic of an older
+            // default (never a deliberate owner edit), and it silently mis-points the wedges
+            // (the owner's 'sessions takes me to agents' saga WAS this stale map). Reset.
+            context.dataStore.edit { it[KEY_ORB_SLOTS] = OrbDial.encode(OrbDial.DEFAULT_SLOTS) }
+            _orbSlots.value = OrbDial.DEFAULT_SLOTS
+            android.util.Log.i("HermesWear", "orb map reseeded to the 8-wedge clock")
+        }
+    }
     suspend fun setOrbSlots(slots: List<Lane>) {
         context.dataStore.edit { it[KEY_ORB_SLOTS] = OrbDial.encode(slots) }
         _orbSlots.value = OrbDial.decode(orbSlotsRaw())

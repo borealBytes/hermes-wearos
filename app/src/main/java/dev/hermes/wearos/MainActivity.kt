@@ -158,6 +158,22 @@ class MainActivity : ComponentActivity() {
      * same path for the bezel-less emulator.)
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            // #25 BACK-SOURCE PROBE + hardware-only law (owner 2026-11-11: "the only way to exit
+            // settings is the hardware back button" — the system bottom-swipe was ejecting pages
+            // mid-scroll). A gesture-back is a SYNTHESIZED key event; the physical button is not.
+            // Log every source (forensics), swallow synthesized backs while any settings surface
+            // is up, let the hardware key fall through to the dispatcher (page-up / exit).
+            // ON-DEVICE CALIBRATION (trace 2026-11-11): Samsung's gesture-nav back arrives
+            // with FLAG_FAKE (0x8), NOT FLAG_IS_SYNTHESIZED (0x800) — gate on both masks so
+            // the swallow works on this watch and on stock Wear.
+            val synth = (event.flags and 0x808) != 0
+            Log.i("HermesWear", "back key source=${event.source} flags=0x${Integer.toHexString(event.flags)} synthesized=$synth")
+            if (synth && isSettingsSurfaceVisible()) {
+                Log.i("HermesWear", "back-swipe SWALLOWED (settings law)")
+                return true
+            }
+        }
         val steps = when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> 1
             KeyEvent.KEYCODE_VOLUME_DOWN -> -1
@@ -166,6 +182,14 @@ class MainActivity : ComponentActivity() {
         if (RotaryVolume.rotate(steps)) return true
         return super.onKeyDown(keyCode, event)
     }
+
+    /** True when the settings hub or any of its pages owns the screen (back law applies). */
+    private fun isSettingsSurfaceVisible(): Boolean =
+        settingsVisible[0]
+
+    // Written by the screen ledger (setContent) each time the screen changes; read by the
+    // back-source gate above. Plain array — same volatile publish semantics the ledger uses.
+    private val settingsVisible = booleanArrayOf(false)
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
@@ -263,6 +287,9 @@ class MainActivity : ComponentActivity() {
                     // manual flag as it stood at that instant.
                     android.util.Log.i("HermesWear", "screen=$screen manual=$settingsManual")
                     if (screen != Screen.Settings) settingsManual = false
+                    // Back law (#25): feed the activity-level source gate — synthesized (swipe)
+                    // backs are swallowed only while a settings surface owns the screen.
+                    settingsVisible[0] = screen == Screen.Settings
                 }
                 // FIRST-RUN / NEEDS_AUTH PAIR GATE (SPEC §4, "tailnet only, always"): an empty
                 // registry or any engine edge into NEEDS_AUTH routes the wrist to Settings —
@@ -766,6 +793,14 @@ class MainActivity : ComponentActivity() {
                     // rightward drag is yielded untouched — that is the edge-back gesture's
                     // job and stealing it would break "just get me back to the chat".
                     SwipeForward(onForward = {
+                        // DIAL/SLICE RACE (trace 2026-11-11 ~14:11: every fast radial flick to
+                        // an east wedge also carried >=14 px of horizontal travel inside 220 ms,
+                        // so this detector CLAIMED the dial's own release and the ring
+                        // overwrote the lane in the same frame — Settings opened as Sessions,
+                        // 'sometimes' was just the slow drags). A release that committed a dial
+                        // lane is a dial gesture, not a slice: the ring stays out of it.
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - dialCommitAt.get() < 400L) return@SwipeForward
                         when (BackRing.action(screen)) {
                             BackRing.Action.ToSessions -> screen = Screen.Sessions
                             BackRing.Action.ToAgents -> {
@@ -1285,6 +1320,8 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
  *  early so the system edge-back keeps its gesture. Vertical lists are untouched — a scrolling
  *  child consumes the stream and this detector bows out with it. Pure gesture, no state: the
  *  where-to logic stays in BackRing (unit-tested) beside the physical-back handler. */
+private val dialCommitAt = java.util.concurrent.atomic.AtomicLong(0L)
+
 @Composable
 private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
     val slop = with(LocalDensity.current) { 40.dp.toPx() }
@@ -1843,6 +1880,10 @@ private fun OrbCluster(
         },
         onDialEnd = { _, _ ->
             armed = false; activeSlot = -1; risen = false; spinPhase = 0f
+            // Stamp the commit BEFORE dispatch so the sibling swipe detector (see the
+            // dial/slice race gate at the SwipeForward call site) can tell this gesture's
+            // release apart from a deliberate ring slice.
+            dialCommitAt.set(android.os.SystemClock.elapsedRealtime())
             if (volumeMode) {
                 // The double slider commits its level — the mute toggle is consumed by the dwell.
                 volumeMode = false

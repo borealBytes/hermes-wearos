@@ -485,6 +485,19 @@ byte-identical to `BottomLayout.REF`, so dial geometry is unit-testable against 
 
 ### 12.1 The dial (D1–D9) — `domain/OrbDial.kt` + `ui/OrbDialOverlay.kt`
 
+> **AMENDMENT 2026-11-11 (v0.10.11) — EIGHT 45° wedges restored; supersedes the 9×40° arrangement
+> below (kept for the record).** The #24 lane-landing saga + the owner's live gauntlet ("this is 8
+> ways… we have 9 ways… it used to work") proved the learned clock model is the contract: two
+> below-horizon wedges and a 12.5 % narrower sector turned the ring into a miss generator.
+> New default map: keyboard 12:00 · mute 1:30 · settings 3:00 · commands 4:30 · model 6:00
+> (rise-only, dead center) · sessions 7:30 · agents 9:00 · approvals 10:30. **Chats leaves the
+> default ring** (owner: "what the hell do I have chats for") — every lane incl. chats remains
+> remappable in Settings ▸ Orb. A 9-slot saved map migrates: chats is dropped, the list compacts,
+> free slots take the new defaults (`OrbDial.decode`). Rise arc moves to 112°…248° with the wedge
+> geometry. Same amendment ships the settings back law: the system bottom-swipe no longer ejects
+> settings pages (synthesized BACK keys are swallowed while settings owns the screen; hardware
+> back still pages up — owner: "the only way to exit it should be the hardware back button").
+
 Nine 40° sectors, default map (every slot remappable in Settings ▸ Orb). Keyboard is PINNED to
 12:00 by owner rule (2026-10-29: *"that allows for fast access to the most commonly used option"*) —
 slot 0 is always straight up no matter how the ring is remapped or resized:

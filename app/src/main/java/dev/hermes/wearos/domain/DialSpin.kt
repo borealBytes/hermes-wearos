@@ -46,10 +46,14 @@ class DialSpin(private val scale: Float) {
     private var lastDx = Float.NaN
     private var slotAtSpinStart = 0
     private var lastSteps = 0
+    private var dwellSamples = 0
+
+    /** Consecutive top-arc move events required before lateral accumulation arms (anti-transit). */
+    private val DWELL_SAMPLES = 6
 
     fun reset() {
         activeSlot = -1; spinning = false; phaseDeg = 0f; changed = false
-        accumPx = 0f; lastDx = Float.NaN; slotAtSpinStart = 0; lastSteps = 0
+        accumPx = 0f; lastDx = Float.NaN; slotAtSpinStart = 0; lastSteps = 0; dwellSamples = 0
     }
 
     /**
@@ -85,14 +89,24 @@ class DialSpin(private val scale: Float) {
             val r = kotlin.math.sqrt(dxPx * dxPx + dyPx * dyPx)
             val dwelling = OrbDial.wedgeDist(ang, 0f) <= SPIN_ARM_ARC_DEG &&
                 r >= SPIN_ARM_R_REF * scale
-            if (dwelling) accumPx += dxPx - lastDx
+            // A PASS-THROUGH IS NOT A DWELL (owner gauntlet 2026-11-11: natural flicks to the
+            // east wedges arc through the top wedge at icon-ring radius, and a single lateral
+            // sample crossing the step hijacked the aim — gear committed sessions). Accumulation
+            // starts only after the finger HOLDS the arc for DWELL_SAMPLES consecutive move
+            // events (~80 ms at typical hover rate); a transit sits in the arc for 2–3.
+            dwellSamples = if (dwelling) dwellSamples + 1 else 0
+            if (dwelling && dwellSamples >= DWELL_SAMPLES) accumPx += dxPx - lastDx
             else accumPx = 0f
             lastDx = dxPx
             if (abs(accumPx) >= stepPx) {
                 spinning = true
                 slotAtSpinStart = aim
-                lastSteps = truncSteps(accumPx, stepPx)
-                activeSlot = wrap(slotAtSpinStart + lastSteps)
+                // Velocity debt ZEROED (same gauntlet): the transit's own lateral px must not
+                // pre-load steps — the owner's rightward flick to the gear would otherwise
+                // instantly walk +1..2 detents at engagement. Spin counts only what the finger
+                // travels FROM the moment the mode arms.
+                accumPx = 0f; lastSteps = 0
+                activeSlot = aim
                 changed = true
                 // The ring starts turning the INSTANT the mode engages, not on the next event.
                 phaseDeg = OrbDial.normDeg180(ang - activeSlot * OrbDial.SLOT_DEG)
