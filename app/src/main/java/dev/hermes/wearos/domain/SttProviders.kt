@@ -5,9 +5,12 @@ package dev.hermes.wearos.domain
  * picker: Local Vosk default/offline · System … honestly labeled OFF-DEVICE when networked,
  * auto-detected per vendor"*).
  *
- * Pure labelling only — the engines live in voice/ (VoskStt, SystemStt) and the persisted id
- * lives in AppSettings (`stt_provider`). Default is LOCAL even when the system recognizer is
- * glorious: the owner's watch must keep working in airplane mode (SPEC §5 offline rule).
+ * Pure labelling only — the engines live in voice/ (VoskStt, SystemStt, GatewayStt) and the
+ * persisted id lives in AppSettings (`stt_provider`). OWNER DOCTRINE (2026-11-11): on-device
+ * audio is optional, and the preferred land for STT is the gateway — so the first-run default
+ * is GATEWAY (streaming Parakeet via watchkit). LOCAL (on-watch Vosk) stays the OPTIONAL
+ * offline fallback, and the GATEWAY contract is GatewayStt's auto-local fallback, so the
+ * airplane-mode promise (SPEC §5 offline rule) survives the flip.
  */
 enum class SttProvider { LOCAL, SYSTEM, GATEWAY }
 
@@ -22,13 +25,16 @@ object SttProviders {
      * on every startListening and must never race a flow emission.
      */
     @Volatile
-    var current: String = ID_LOCAL
+    var current: String = ID_GATEWAY // first-run default = gateway streaming (doctrine 2026-11-11)
 
-    /** Anything unknown (first run, garbage in prefs) is LOCAL — the offline-safe default. */
+    /**
+     * Anything unknown (first run, garbage in prefs) is the DEFAULT — GATEWAY (owner doctrine
+     * 2026-11-11). Offline-safe by contract: GatewayStt auto-falls-back to local Vosk.
+     */
     fun fromId(id: String?): SttProvider = when (id) {
         ID_SYSTEM -> SttProvider.SYSTEM
-        ID_GATEWAY -> SttProvider.GATEWAY
-        else -> SttProvider.LOCAL
+        ID_LOCAL -> SttProvider.LOCAL
+        else -> SttProvider.GATEWAY
     }
 
     /** Pref-safe canonical id: garbage (or an older build's write) collapses to the default. */

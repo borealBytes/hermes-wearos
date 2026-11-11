@@ -217,10 +217,12 @@ object OrbDial {
      * renamed in a future build) keeps THAT slot's default instead of blanking the whole dial, and
      * a blank/corrupt value falls back to the owner's default map.
      *
-     * LEGACY (9-wedge era) SAVES: a save that equals the old default map migrates wholesale to the
-     * new 8-way default (that's who the old map described). Any OTHER legacy save is compacted by
-     * position — chats is dropped (owner removed it from the ring), the list shifts left, and free
-     * slots take the new defaults. Explicit choices survive; the ring shape follows the clock.
+     * LEGACY (9-wedge era) SAVES: every save of 9+ slots is compacted BY POSITION — chats (and
+     * any unknown id) is dropped (the owner removed chats from the ring), the list shifts left,
+     * and free slots take the new defaults. There is NO wholesale rewrite to the new default map:
+     * explicit choices survive, so the old default save lands as model@4:30 + commands@6:00
+     * (swapped against today's default) — pinned by OrbDialTest
+     * "a nine-slot legacy save compacts onto the eight-wedge clock".
      */
     fun decode(raw: String?): List<Lane> {
         val parts = raw?.split(",")?.map { it.trim() } ?: emptyList()

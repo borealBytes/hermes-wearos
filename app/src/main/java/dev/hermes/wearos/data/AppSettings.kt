@@ -46,7 +46,9 @@ class AppSettings(private val context: Context) {
         private val KEY_SESSION_ID = stringPreferencesKey("session_id")
         private val KEY_LAST_RUN = stringPreferencesKey("last_run")
         private val KEY_VOICE_OUT = booleanPreferencesKey("voice_out")
-        // SPEECH-INPUT PROVIDER (batch-4 #8): "local" (default, offline Vosk) | "system".
+        // SPEECH-INPUT PROVIDER (batch-4 #8; default flipped 2026-11-11): "gateway" (default —
+        // streaming Parakeet via the gateway/watchkit) | "local" (OPTIONAL offline Vosk fallback)
+        // | "system".
         private val KEY_STT_PROVIDER = stringPreferencesKey("stt_provider")
     private val KEY_STT_GATEWAY_ENGINE = stringPreferencesKey("stt_gateway_engine")
         private val KEY_TTS_VOICE = stringPreferencesKey("tts_voice")
@@ -263,18 +265,20 @@ class AppSettings(private val context: Context) {
     suspend fun setVoiceOut(v: Boolean) = context.dataStore.edit { it[KEY_VOICE_OUT] = v }.let { }
 
     /**
-     * SPEECH-INPUT PROVIDER (batch-4 #8): persisted id ("local"/"system"); the in-memory truth
-     * is `SttProviders.current` (voice/UI read it synchronously — same-moment switch promise),
-     * seeded here at startup and rewritten by setSttProvider. Default LOCAL even when the system
-     * recognizer exists: the watch keeps listening in airplane mode (SPEC §5 offline rule).
+     * SPEECH-INPUT PROVIDER (batch-4 #8): persisted id ("gateway"/"local"/"system"); the
+     * in-memory truth is `SttProviders.current` (voice/UI read it synchronously — same-moment
+     * switch promise), seeded here at startup and rewritten by setSttProvider. Default GATEWAY
+     * (owner doctrine 2026-11-11: gateway/wearkit is the preferred land for STT — streaming
+     * Parakeet); LOCAL (on-watch Vosk) is the optional offline fallback, and GatewayStt's
+     * auto-local fallback keeps the SPEC §5 airplane-mode promise even on the gateway default.
      */
     suspend fun sttProviderValue(): String =
-        context.dataStore.data.first()[KEY_STT_PROVIDER] ?: SttProviders.ID_LOCAL
+        context.dataStore.data.first()[KEY_STT_PROVIDER] ?: SttProviders.ID_GATEWAY
     suspend fun loadSttProvider() {
         SttProviders.current = sttProviderValue()
     }
     suspend fun setSttProvider(v: String) {
-        val id = SttProviders.normalize(v) // any unknown collapses to local (offline default)
+        val id = SttProviders.normalize(v) // any unknown collapses to the default (gateway)
         context.dataStore.edit { it[KEY_STT_PROVIDER] = id }
         SttProviders.current = id
     }

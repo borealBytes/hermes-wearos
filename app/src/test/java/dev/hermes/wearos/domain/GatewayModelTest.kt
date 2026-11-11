@@ -40,8 +40,8 @@ class GatewayModelTest {
         // MINIMAL-INPUT LAW (owner 2026-11-10): the pane shows the host alone; the
         // watch must accept typing exactly that.
         assertEquals("http://a.b:8642", GatewayModel.normalizeEndpoint("a.b"))
-        assertEquals("http://t.tailb12aa5.ts.net:8642",
-                     GatewayModel.normalizeEndpoint("t.tailb12aa5.ts.net"))
+        assertEquals("http://t.example.ts.net:8642",
+                     GatewayModel.normalizeEndpoint("t.example.ts.net"))
         assertEquals("lonejunk", GatewayModel.normalizeEndpoint("lonejunk"))  // not host-like
         // an explicit port rides untouched…
         assertEquals("http://h:9000", GatewayModel.normalizeEndpoint("h:9000"))

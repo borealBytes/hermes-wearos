@@ -159,14 +159,17 @@ class MainActivity : ComponentActivity() {
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            // #25 BACK-SOURCE PROBE + hardware-only law (owner 2026-11-11: "the only way to exit
+            // BACK-SOURCE PROBE + hardware-only law (owner 2026-11-11: "the only way to exit
             // settings is the hardware back button" — the system bottom-swipe was ejecting pages
-            // mid-scroll). A gesture-back is a SYNTHESIZED key event; the physical button is not.
+            // mid-scroll; the work shipped in PR #30, this thread was never filed as an issue).
+            // A gesture-back is a SYNTHESIZED key event; the physical button is not.
             // Log every source (forensics), swallow synthesized backs while any settings surface
             // is up, let the hardware key fall through to the dispatcher (page-up / exit).
-            // ON-DEVICE CALIBRATION (trace 2026-11-11): Samsung's gesture-nav back arrives
-            // with FLAG_FAKE (0x8), NOT FLAG_IS_SYNTHESIZED (0x800) — gate on both masks so
-            // the swallow works on this watch and on stock Wear.
+            // ON-DEVICE CALIBRATION (PR #30, SM-L705U trace 2026-11-11): Samsung's gesture-nav
+            // back arrives with 0x8 — KeyEvent.FLAG_FROM_SYSTEM ("came from a trusted part of
+            // the system"); the earlier names FLAG_FAKE / FLAG_IS_SYNTHESIZED do not exist as
+            // KeyEvent constants. The hardware key arrived with flags 0 here; the 0x808 mask on
+            // other OEMs is unverified.
             val synth = (event.flags and 0x808) != 0
             Log.i("HermesWear", "back key source=${event.source} flags=0x${Integer.toHexString(event.flags)} synthesized=$synth")
             if (synth && isSettingsSurfaceVisible()) {
@@ -287,7 +290,7 @@ class MainActivity : ComponentActivity() {
                     // manual flag as it stood at that instant.
                     android.util.Log.i("HermesWear", "screen=$screen manual=$settingsManual")
                     if (screen != Screen.Settings) settingsManual = false
-                    // Back law (#25): feed the activity-level source gate — synthesized (swipe)
+                    // Back law (PR #30): feed the activity-level source gate — synthesized (swipe)
                     // backs are swallowed only while a settings surface owns the screen.
                     settingsVisible[0] = screen == Screen.Settings
                 }

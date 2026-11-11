@@ -189,7 +189,7 @@ class PairingClient(private val http: Http = LiveHttp()) {
         @Serializable
         private data class AckReply(val token: String = "")
 
-        /** The funnel door host for one verb: `tux-desktop.tailb12aa5` → https://…/pair/<verb>. */
+        /** The funnel door host for one verb: `gw.example` → https://gw.example.ts.net/pair/<verb>. */
         fun doorUrl(handle: String, verb: String): String {
             val h = PairingCode.normalizeHandle(handle)
             require(h.isNotEmpty()) { "pairing address needed (the host the wizard prints, before .ts.net)" }

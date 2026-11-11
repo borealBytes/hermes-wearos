@@ -8,10 +8,13 @@ import org.junit.Test
 /** Batch-4 #8: the picker's honesty contract is pure logic — pinned here, not on-device. */
 class SttProvidersTest {
 
-    @Test fun `unknown or missing provider id falls back to the offline default`() {
-        assertEquals(SttProvider.LOCAL, SttProviders.fromId(null))
-        assertEquals(SttProvider.LOCAL, SttProviders.fromId(""))
-        assertEquals(SttProvider.LOCAL, SttProviders.fromId("gateway-future"))
+    @Test fun `unknown or missing provider id falls back to the gateway default`() {
+        // Owner doctrine 2026-11-11: gateway is the preferred land for STT; the GATEWAY
+        // contract (GatewayStt auto-local fallback) keeps that offline-safe too.
+        assertEquals(SttProvider.GATEWAY, SttProviders.fromId(null))
+        assertEquals(SttProvider.GATEWAY, SttProviders.fromId(""))
+        assertEquals(SttProvider.GATEWAY, SttProviders.fromId("gateway-future"))
+        assertEquals(SttProvider.LOCAL, SttProviders.fromId("local"))
         assertEquals(SttProvider.SYSTEM, SttProviders.fromId("system"))
     }
 
@@ -19,8 +22,8 @@ class SttProvidersTest {
         assertEquals("local", SttProviders.normalize("local"))
         assertEquals("system", SttProviders.normalize("system"))
         assertEquals("gateway", SttProviders.normalize("gateway")) // the #9 regression this gate exists for
-        assertEquals("local", SttProviders.normalize("bogus"))
-        assertEquals("local", SttProviders.normalize(null))
+        assertEquals("gateway", SttProviders.normalize("bogus"))
+        assertEquals("gateway", SttProviders.normalize(null))
     }
 
     @Test fun `vendor auto-detect names the big stacks, passes the rest through`() {
