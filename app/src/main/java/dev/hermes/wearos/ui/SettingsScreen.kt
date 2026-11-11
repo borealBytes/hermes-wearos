@@ -295,7 +295,14 @@ fun SettingsScreen(
             // BATCH-6 #29 (owner: "the main settings screen… does not work with the bezel
             //  scrolling"): it DID circle — at the chat's reading gear, ~50 px a real-finger
             //  stroke, invisible on a button list. Dense surfaces circle at 2f, like Sessions.
-            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.scrollBy(total) } },
+            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.scrollBy(total) } }
+            // OWNER 2026-11-11 (the "box around everything" law, system-settings pattern): the
+            // scroll modifier lives on the VIEWPORT-sized Box, not the content Column. On the
+            // Column, blank air beside/below a row belonged to no scrollable node — the finger
+            // had to hunt a widget to scroll, and an accidental no-effect drag read as a swipe
+            // that did nothing. Now every pixel of the face scrolls (tap-only children still
+            // win taps; sliders keep their axis), exactly like the Wear system settings box.
+            .verticalScroll(settingsScroll),
     ) {
     Column(
         modifier = Modifier
@@ -303,11 +310,11 @@ fun SettingsScreen(
             // BATCH-4 #6, owner-corrected: NO viewport band (roundSafe removed) and no pre-scroll
             // padding either — the scroll strip is the WHOLE face, exactly like chat ("cutting off
             // stuff at the top and the bottom of the screen, which is dumb… like you did on the
-            // chat window initially"). The buffer is CONTENT padding after the scroll: think of a
+            // chat window initially). The buffer is CONTENT padding after the scroll: think of a
             // web page with extra blank lines at the end — the text flows through the rim zone
             // while you read, and the LAST line comes to rest in the meat of the circle.
-            .padding(horizontal = 20.dp)
-            .verticalScroll(settingsScroll)
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+            .padding(bottom = 40.dp)
             // BATCH-7: 12.dp was fine at the owner's 1.81× text scale, but at default scale the
             // page title lands dead-center under OneUI's persistent clock pill (About proved it).
             // Clear the pill band on EVERY page, at every font scale.
