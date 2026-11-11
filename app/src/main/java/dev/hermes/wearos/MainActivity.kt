@@ -265,6 +265,9 @@ class MainActivity : ComponentActivity() {
                 val pairNow by WearApp.Graph.pairRequested.collectAsState()
                 var pairTookOver by remember { mutableStateOf(false) }
                 LaunchedEffect(pairNow) {
+                    // #24 TRACE: name every takeover/hand-back so the log answers "who stole
+                    // my screen" outright (the dialog punch after lane commits).
+                    android.util.Log.i("HermesWear", "pairNow=$pairNow tookOver=$pairTookOver manual=$settingsManual")
                     if (pairNow) {
                         // Take over only for people who didn't open Settings themselves; a
                         // manual visitor's own Pair row shows the gate (the page collector

@@ -194,6 +194,9 @@ fun PromptActionSheet(
     onCopy: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open PromptActionSheet") }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),

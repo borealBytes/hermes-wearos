@@ -43,6 +43,9 @@ fun AgentPickerDialog(
     onDismiss: () -> Unit,
     gateway: String = "",  // selected gateway label (SPEC §11) — small header line
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open AgentPickerDialog") }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
