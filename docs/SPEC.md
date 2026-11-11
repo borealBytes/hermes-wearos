@@ -1941,6 +1941,35 @@ time-scale: pitch follows at extremes — WSOLA polish tracked in the amendment 
   round-trip; the issue #7 sentence tests now pin their mode explicitly and a
   latent async-audition race in them was fixed the same pass (the warm thread
   could land a draw after the call-count snapshot — `_drain_audition()`).
+- **2026-11-11 — v0.3.5 THE PLUGIN SEEDS ITS OWN TTS DEFAULT (owner: *"can the plugin
+  make wearkit the text-to-speech default, or at least get it in the dropdown?"*).**
+  Core's provider-option builder guarantees a profile's ACTIVE provider name is
+  selectable even in the per-profile schema slice (`hermes_cli/web_server_config.py`
+  rule 3 — the reason it "worked yesterday": the value was active then; the config
+  wipe removed it and the runtime registry slice only reaches the GLOBAL schema). So
+  registration now writes `tts.provider: wearkit-gateway` via `hermes config set`
+  (rule 11, same pattern as `rotate_agent_key`) for any profile that loads the plugin,
+  ONLY when that profile's config carries no explicit `tts.provider` — an explicit
+  pick (edge's or ours) is never steamrolled. Profiles whose edge value was core's
+  own seed default (wear/weardev) were explicitly re-ruled by the owner today; the
+  guard stays for genuine choices. The per-profile schema slice dropping runtime
+  plugin providers remains a CORE bug — upstream PR separate from the catalog PR per
+  contest law.
+- **2026-11-11 — v0.10.4 SPLASH REWORK (#17, owner cold-start spec: *"a second or two
+  of the icon, then go into video right away while the app loads; clicking hops you
+  in"*).** Reproduced on the AVD: (a) first launch after data-wipe pops POST_NOTIFICATIONS
+  over the film → media3 pauses on focus loss → no frame for the whole 12 s budget →
+  icon marinate; (b) fresh installs route to the Pair wizard BEHIND the film, so the
+  hand-off target never composes. Three gates, all pure (`SplashIntro`):
+  `Gate.Onboarding` — a launch whose registry is empty skips the film (setup launches
+  answer setup; the film is launch 2's reward); the deferred ask — on show-shaped
+  launches the permission dialog waits for the overlay's release (every exit path
+  clears the hold) instead of eating the player's focus; `OWNER_ICON_CAP_MS = 3000` —
+  the system splash may now hold the icon at most a second or two past the gate, then
+  fades onto whatever the app surface shows (moving film on the happy path — the #30
+  reveal rule still wins the race at ~2.2 s; poster or chat on a starved one). The
+  12–15 s marinate is structurally gone. `SplashIntroTest` pins all three.
+
 
 
 ## Appendix A — Landed slices (build log, newest first)

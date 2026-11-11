@@ -193,10 +193,13 @@ class MainActivity : ComponentActivity() {
         // release into the same plain fade. installSplashScreen BEFORE super.onCreate.
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        // #17 rework: the POST_NOTIFICATIONS ask is DEFERRED until the intro overlay is gone
+        // (see the gate below) — on a fresh install it used to pop OVER the film, media3
+        // pauses on focus loss, the first frame never arrives, and the wearer stands at the
+        // icon for the whole budget. The ask still happens — one heartbeat after the show.
+        val wantNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
-        ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         parseDeepLink(intent)
         // Hold ONLY show-shaped launches (same question the gate asks, answered early with what
         // onCreate already knows; the gate's own verdict arrives with the settings read).
@@ -670,10 +673,32 @@ class MainActivity : ComponentActivity() {
                         choice = mode,
                         deepLink = deepLink.value != null, // notification/tile tap (§M5)
                         fromLauncher = fromLauncher,
+                        // #17 rework: an empty registry (fresh install) means the Pair wizard
+                        // is about to own the screen — a film behind a wizard is an icon
+                        // marinate. Setup launches answer setup; the film waits for launch 2.
+                        needsPairing = WearApp.Graph.pairRequested.value,
                     ).also {
                         WearApp.Graph.launchHold?.gate = it
                         if (it != SplashIntro.Gate.PlayVideo && it != SplashIntro.Gate.PlayStatic) {
                             Log.i(TAG, "intro skipped: $it")
+                        }
+                        // THE DEFERRED ASK (#17 rework): the notification dialog waits out the
+                        // show — every overlay exit (tap, end, cap, failure) releases the hold,
+                        // and the focus-hungry dialog lands the moment the film no longer needs
+                        // the window. Non-show launches ask immediately, exactly as before.
+                        if (wantNotifPermission) {
+                            if (it == SplashIntro.Gate.PlayVideo || it == SplashIntro.Gate.PlayStatic) {
+                                launch {   // the LaunchedEffect's own scope — dies with the composition
+                                    val h = WearApp.Graph.launchHold
+                                    while (h != null && h.holds(android.os.SystemClock.elapsedRealtime())) {
+                                        delay(120)
+                                    }
+                                    delay(260)   // let the fade finish; the dialog is not the curtain's sequel
+                                    notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            } else {
+                                notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
                         }
                     }
                 }
