@@ -247,3 +247,19 @@ Agent
 flashes): named profile without the plugin → auto-install from install-metadata source+revision, retry enable once. wear profile installed/enabled/granted live.
 - invalidate keeps serving stale (17:10 flash fix): pane refetch must never pay the fan-out sync; pane overlays the clicked state until server confirms; enable-all reports per-profile failures.
 ## 2026-11-10 ~17:25 — PR #8 MERGED into feat/hermes-plugin (merge commit cc92c61). Develop from this worktree / branch onward; hermes-wearos-voiceout stays as the voice-out slice archive. Mirror: catalog main lags until feat/hermes-plugin->main; live box pinned pr-8@faf30a3f (identical content). Voice-out soundtest verified ok:true on GPU 1 — the owner 503 was an armed restart drain window, self-resolving.
+
+## 2026-11-10 ~22:15 — fling fix on glass + tailnet address row (weardev)
+- SwipeForward hardened: 40 dp travel OR 14 dp + <=140 ms timestamp fling.
+  HARDWARE-PROVEN on SM-L705U (build 21:50, installed 21:58): 70 px/80 ms
+  flicks walk Chat->Sessions->Agents (screenshots /tmp/hw/g0-g3.png).
+  Caveat: first flick after cold launch may be dropped; subsequent ones register.
+- Tailnet address row (ee23cd2): /status carries `tailnet` = derived from
+  `tailscale status --json` Self.DNSName -> http://tuxdesktop.tailb12aa5.ts.net:8642
+  (60 s cache, honest empties). Pane prints it under the Pair card with copy button.
+  Owner must bounce the desktop app once for the pane JS to reload.
+- Install gotcha found: `split -d` => `part-NN` (hyphen); the reassembly glob must be
+  `part-*`. Three "MD5 MISMATCH" scares were this, not the link.
+- Test harness canonical now: scratch/wear-pytest-venv (3.14) + overlay
+  ~/.hermes/tools/python-3.14.9*/lib/python3.14/site-packages -> 146 pass, 1 skip,
+  1 pre-existing fail (sibling_lane fixture drift; stashed HEAD reproduces it).
+- Mirror re-synced clean (77bfbdf) after the flatten half-apply; dashboard restored.
