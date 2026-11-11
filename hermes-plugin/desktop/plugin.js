@@ -1277,18 +1277,18 @@ function WearKitPane () {
                     ? jsxs(Fragment, { children: [
                         jsx('button', {
                           className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
-                          type: 'button', title: 'listen to the take before it becomes a voice',
-                          onClick: voRecPlay, children: '▶'
+                          type: 'button', title: 'hear the raw take before it becomes a voice',
+                          onClick: voRecPlay, children: '▶ play'
                         }),
                         jsx('button', {
                           className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
                           type: 'button', title: 'create the voice (Parakeet will transcribe the take)',
-                          onClick: voRecConfirm, children: '✓'
+                          onClick: voRecConfirm, children: '✓ confirm'
                         }),
                         jsx('button', {
                           className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
                           type: 'button', title: 'throw this take away and record again',
-                          onClick: voRecRetry, children: '↺'
+                          onClick: voRecRetry, children: '↺ redo'
                         })
                       ] })
                     : null,
