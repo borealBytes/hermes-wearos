@@ -291,16 +291,31 @@ def voice_post(body: dict):
                            str(body.get("mode") or "gateway"))
     if action == "card_create":
         import base64
+        import logging
         try:
-            wav = base64.b64decode(str(body.get("wav_b64") or ""), validate=True)
+            blob = base64.b64decode(str(body.get("wav_b64") or ""), validate=True)
+            if body.get("gzip"):
+                import gzip
+                blob = gzip.decompress(blob)
+            logging.getLogger("hermes.wearos").info(
+                "voice card_create: %s label=%r b64=%dKB wav=%dKB gzip=%s",
+                "ok", str(body.get("label") or "")[:24],
+                len(str(body.get("wav_b64") or "")) // 1024, len(blob) // 1024,
+                bool(body.get("gzip")))
             # transcript "" = the freeform lane: Parakeet hears the take and
             # the card stores the REAL words (owner 2026-11-11). A pane
             # enrollment is a first-class voice, not a second-class watch echo.
-            return vo.create_card(
-                wav, str(body.get("label") or "pane voice")[:48],
+            card = vo.create_card(
+                blob, str(body.get("label") or "pane voice")[:48],
                 source=str(body.get("source") or "pane-record")[:24],
                 transcript="")
+            logging.getLogger("hermes.wearos").info(
+                "voice card created: %s rate=%s", card.get("card_id"),
+                card.get("ref_rate"))
+            return card
         except Exception as exc:
+            logging.getLogger("hermes.wearos").info(
+                "voice card_create FAILED: %r", exc)
             return {"error": str(exc)[:300]}
     if action == "card_delete":
         return vo.delete_card(str(body.get("card") or ""))

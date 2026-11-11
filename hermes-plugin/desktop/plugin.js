@@ -275,6 +275,7 @@ function _b64 (u8) {
   return window.btoa(bin)
 }
 async function voRecStart () {
+  $voNote.set('opening the microphone…')
   // RAW PCM capture (owner 2026-11-11: MediaRecorder froze between stop and
   // ready on the 12 s auto-stop — twice). No codec, no blob decode: a
   // ScriptProcessor taps the mic straight into Float32 buffers, and the WAV
@@ -327,7 +328,7 @@ async function voRecStart () {
   $recPhase.set('rec')
   $recSecs.set(0)
   clearInterval(_recT)
-  _recT = setInterval(() => {
+  const tick = () => {
     const v = Number($recSecs.get() || 0) + 0.5
     $recSecs.set(v)
     if ($recFrames.get() > 0 && v >= 12.5) voRecStop()   // 3–12 s law; the gateway re-proves it
@@ -337,7 +338,9 @@ async function voRecStart () {
                   Math.floor(v) + ' s) — another app owns the device, or the OS ' +
                   'mic permission was revoked for this app')
     }
-  }, 500)
+  }
+  tick()                       // first increment lands with the click, not 500 ms later
+  _recT = setInterval(tick, 500)
 }
 function voRecStop () {
   // synchronous handoff: _recEnd assembles the WAV on the spot — there is no
@@ -364,13 +367,18 @@ async function voRecConfirm () {
     $voNote.set('too short — talk for 3–12 seconds'); return
   }
   $recPhase.set('send')
-  $voNote.set('sending your take…')
+  $voNote.set('sending your take… (compressed, then the gateway listens to it)')
   // A ✓ never answers with silence (doctrine): every failure mode of the
   // upload lands as a note line under the play button, not a dead row.
+  const gz = (_recBlob && window.CompressionStream && (_voice.get() || {}).revision)
+    ? await new Response(new Blob([_recBlob])
+        .stream().pipeThrough(new window.CompressionStream('gzip'))).arrayBuffer()
+    : null
   await voiceAct(async () => {
     const out = await rest('/voice', {
       method: 'POST',
-      body: { action: 'card_create', label, transcript: '', wav_b64: _b64(_recBlob) } })
+      body: { action: 'card_create', label, transcript: '',
+              gzip: !!gz, wav_b64: _b64(gz ? new Uint8Array(gz) : _recBlob) } })
     if (out && out.error) { $voNote.set('gateway refused: ' + out.error); throw new Error(out.error) }
     if (out && out.card_id) {
       $voNote.set('voice added' + (out.transcript ? ' — heard: "' +
