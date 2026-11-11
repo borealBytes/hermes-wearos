@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -32,12 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalView
-import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -97,43 +90,6 @@ fun VoiceEnroll(onClose: () -> Unit) {
     val ctx = LocalContext.current
     val ime = LocalSoftwareKeyboardController.current
     val recThread = remember { AtomicReference<Thread?>(null) }
-    val fieldFocus = remember { FocusRequester() }
-    var wantKbd by remember { mutableStateOf(false) }
-    val imeView = LocalView.current
-    // THE KEYBOARD LADDER — the app's proven idiom (PromptEditor / VoiceOrTypeField):
-    // on this watch a bare show() lands before OneUI attaches the IME session to the
-    // fresh InputConnection, the caret blinks and no keyboard rises (owner report,
-    // twice). Focus → show → SHOW_EXPLICIT retry → forced toggle.
-    suspend fun raiseKeyboard() {
-        runCatching { fieldFocus.requestFocus() }
-        ime?.show()
-        // This enrollment lives in a Dialog — its own window. OneUI's floating IME
-        // answers WindowInsetsController on dialog windows when the IMM heuristics
-        // stay deaf (minSdk 30, so the platform API is always there).
-        runCatching {
-            imeView.windowInsetsController?.show(android.view.WindowInsets.Type.ime())
-        }
-        try {
-            val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as? android.view.inputmethod.InputMethodManager
-            @Suppress("DEPRECATION")
-            for (d in longArrayOf(0L, 400L, 800L)) {
-                if (d > 0L) delay(d)
-                if (imm?.isAcceptingText != true) imm?.showSoftInput(imeView, 1) else break
-            }
-            if (imm?.isAcceptingText != true) {
-                @Suppress("DEPRECATION")
-                imm?.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED, 0)
-            }
-        } catch (e: Exception) { /* IME is whatever the watch runs; best effort */ }
-    }
-    LaunchedEffect(wantKbd) {
-        if (!wantKbd) return@LaunchedEffect
-        runCatching { fieldFocus.requestFocus() }
-        withFrameNanos { }
-        delay(120)
-        raiseKeyboard()
-    }
     var step by remember { mutableStateOf(Step.NAME) }
     var name by remember { mutableStateOf("") }
     var pcm by remember { mutableStateOf<ByteArray?>(null) }
@@ -204,26 +160,18 @@ fun VoiceEnroll(onClose: () -> Unit) {
         when (step) {
             Step.NAME -> {
                 Text("name this voice", style = MaterialTheme.typography.body2)
-                // Tapping the box MUST open the system keyboard — a field that
-                // ignores the finger is a dead widget (owner, first real contact
-                // 2026-11-11). FocusRequester + explicit show() is the Wear idiom.
-                Box(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colors.surface.copy(alpha = 0.6f))
-                        .clickable { wantKbd = true }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                ) {
-                    if (name.isEmpty()) Text("voice name", style = MaterialTheme.typography.body2,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f))
-                    BasicTextField(
-                        value = name, onValueChange = { name = it.take(24) },
-                        singleLine = true,
-                        modifier = Modifier.focusRequester(fieldFocus),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { ime?.hide() }),
-                        textStyle = MaterialTheme.typography.body2.copy(color = MaterialTheme.colors.onSurface),
-                    )
-                }
+                // THE standard keyboard path of this app: VoiceOrTypeField is the
+                // widget sessions/chat use and whose IME demonstrably rises on the
+                // owner's watch (batch-6 #27 fixed its ladder). A hand-rolled box
+                // with a hand-run ladder got focus but never the IME window here —
+                // one input widget per app, one keyboard behavior.
+                VoiceOrTypeField(
+                    value = name,
+                    onValueChange = { name = it.take(24) },
+                    placeholder = "voice name",
+                    onSend = { step = Step.READY },
+                    showKeyboardHint = false,
+                )
                 Button(onClick = { ime?.hide(); step = Step.READY },
                     modifier = Modifier.size(width = 140.dp, height = 36.dp)) {
                     Text("next", style = MaterialTheme.typography.button)
