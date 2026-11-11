@@ -44,7 +44,7 @@ const $error = atom('')
 const $code = atom('')
 const $pairNote = atom('')
 const $renaming = atom('')       // card_id whose label is being edited ('' = none)
-const $renamingVal = atom('')
+let _renameDraft = ''            // UNCONTROLLED draft: typing never re-renders
 
 let api = null
 const rest = (path, opts) => {
@@ -218,9 +218,9 @@ const voDelete = cid => { $confirmDel.set(''); voiceAct(() => rest('/voice', {
   method: 'POST', body: { action: 'card_delete', card: cid } })) }
 // Rename is label-only: the card_id (uuid-ish slug) is the identity every
 // binding speaks; the name you see is display text and can change forever.
-const voRenameStart = (cid, label) => { $renaming.set(cid); $renamingVal.set(label) }
+const voRenameStart = (cid, label) => { _renameDraft = label; $renaming.set(cid) }
 const voRename = cid => {
-  const label = String($renamingVal.get() || '').trim().slice(0, 48)
+  const label = String(_renameDraft || '').trim().slice(0, 48)
   $renaming.set('')
   if (!label) return
   voiceAct(() => rest('/voice', {
@@ -997,8 +997,10 @@ function WearKitPane () {
                       children: [
                         jsx('input', {
                           className: 'min-w-0 flex-1 rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-xs',
-                          type: 'text', value: $renamingVal.get() || '', maxLength: 48,
-                          onInput: (e) => $renamingVal.set(e.target.value),
+                          type: 'text', defaultValue: _renameDraft, maxLength: 48,
+                          // autoFocus: the box IS the click target's follow-up
+                          autoFocus: true,
+                          onInput: (e) => { _renameDraft = e.target.value },
                           onKeyDown: (e) => { if (e.key === 'Enter') voRename(cid); if (e.key === 'Escape') $renaming.set('') }
                         }),
                         jsx('button', {
