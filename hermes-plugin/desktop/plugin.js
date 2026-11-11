@@ -15,7 +15,7 @@
 // `hermes -p <profile> plugins enable` — no hand-rolled config editor anymore.
 import { atom, host, haptic, useValue } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useEffect } from 'react'
+import { Fragment, useEffect } from 'react'
 
 const FALLBACK_RELEASES = 'https://github.com/borealBytes/hermes-wearos/releases/latest'
 
@@ -225,6 +225,120 @@ const voRename = cid => {
   if (!label) return
   voiceAct(() => rest('/voice', {
     method: 'POST', body: { action: 'card_rename', card: cid, label } }))
+}
+
+
+// ── PANE-SIDE ENROLLMENT (owner 2026-11-11: "we can add voices from the pane
+// OR from the watch itself"). Same contract as the wrist: a freeform 3–12 s
+// take from the system default mic; the pipeline then HEARS it (Parakeet ->
+// real transcript -> measured pace) exactly like a watch enrollment. The take
+// travels as 16 kHz mono PCM16 WAV — the format cards speak — resampled and
+// mixed down in-page, so the server sees no format difference at all.
+const $enrolling = atom(false)
+const $recPhase = atom('idle')          // idle | rec | ready | send
+const $recSecs = atom(0)
+let _recMR = null, _recT = null, _recBlob = null, _recUrl = '', _recName = ''
+function _toWav16k (ab) {               // AudioBuffer -> 16k mono PCM16 WAV bytes
+  const rate = 16000, n = Math.round(ab.duration * rate)
+  const chans = []
+  for (let c = 0; c < ab.numberOfChannels; c++) chans.push(ab.getChannelData(c))
+  const f = new Float32Array(n), sc = ab.sampleRate / rate
+  for (let i = 0; i < n; i++) {
+    const pos = i * sc, i0 = Math.floor(pos), i1 = Math.min(i0 + 1, ab.length - 1), w = pos - i0
+    let v = 0
+    for (const ch of chans) v += ch[i0] * (1 - w) + ch[i1] * w
+    f[i] = v / chans.length
+  }
+  const buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf)
+  const tag = (o, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)) }
+  tag(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); tag(8, 'WAVE'); tag(12, 'fmt ')
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true)
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true)
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); tag(36, 'data')
+  dv.setUint32(40, n * 2, true)
+  for (let i = 0; i < n; i++) {
+    const v = Math.max(-1, Math.min(1, f[i]))
+    dv.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true)
+  }
+  return new Uint8Array(buf)
+}
+function _b64 (u8) {
+  let bin = ''
+  for (let i = 0; i < u8.length; i += 0x8000)
+    bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000))
+  return window.btoa(bin)
+}
+async function voRecStart () {
+  let stream
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } })
+  } catch (e) {
+    $voNote.set('microphone refused: ' + String((e && e.message) || e) +
+                ' — or record the take from the watch')
+    return
+  }
+  _recBlob = null
+  const chunks = []
+  _recMR = new window.MediaRecorder(stream)
+  _recMR.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data) }
+  _recMR.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop())
+    try {
+      const ab = await new (window.AudioContext || window.webkitAudioContext)()
+        .decodeAudioData(await new window.Blob(chunks).arrayBuffer())
+      _recBlob = _toWav16k(ab)
+      $recSecs.set(Math.round(ab.duration * 10) / 10)
+      $recPhase.set('ready')
+    } catch (e) {
+      $voNote.set('could not decode the take: ' + String((e && e.message) || e))
+      $recPhase.set('idle')
+    }
+  }
+  _recMR.start()
+  $recPhase.set('rec')
+  $recSecs.set(0)
+  clearInterval(_recT)
+  _recT = setInterval(() => {
+    const v = Number($recSecs.get() || 0) + 0.5
+    $recSecs.set(v)
+    if (v >= 12.5) voRecStop()          // 3–12 s law client-side; the gateway re-proves it
+  }, 500)
+}
+function voRecStop () {
+  clearInterval(_recT)
+  if (_recMR && _recMR.state !== 'inactive') _recMR.stop()
+}
+function voRecPlay () {
+  if (!_recBlob) return
+  if (_recUrl) URL.revokeObjectURL(_recUrl)
+  _recUrl = URL.createObjectURL(new window.Blob([_recBlob], { type: 'audio/wav' }))
+  new window.Audio(_recUrl).play().catch(() => $voNote.set('playback blocked by the browser'))
+}
+function voRecRetry () {
+  _recBlob = null
+  if (_recUrl) { URL.revokeObjectURL(_recUrl); _recUrl = '' }
+  $recPhase.set('idle'); $recSecs.set(0)
+}
+function voRecClose () { voRecStop(); voRecRetry(); $enrolling.set(false) }
+async function voRecConfirm () {
+  const label = String(_recName || '').trim().slice(0, 48)
+  if (!label) { $voNote.set('give the voice a name first'); return }
+  if (!_recBlob) return
+  if (($recBlob.length - 44) / 2 / 16000 < 3) {
+    $voNote.set('too short — talk for 3–12 seconds'); return
+  }
+  $recPhase.set('send')
+  await voiceAct(async () => {
+    const out = await rest('/voice', {
+      method: 'POST',
+      body: { action: 'card_create', label, transcript: '', wav_b64: _b64(_recBlob) } })
+    if (out && out.error) { $voNote.set(out.error); throw new Error(out.error) }
+    if (out && out.card_id)
+      $voNote.set('voice added' + (out.transcript ? ' — heard: "' +
+        String(out.transcript).slice(0, 60) + '"' : ' (words arrive when the engine is up)'))
+  }).catch(() => {})
+  if ($recPhase.get() === 'send') voRecRetry()
 }
 
 async function act (fn) {
@@ -1056,6 +1170,83 @@ function WearKitPane () {
                 ]
               })
             : null,
+          // + ADD A VOICE (owner 2026-11-11): sits BELOW the list; clicking it
+          // slides the enrollment row in ABOVE the button — name it, record,
+          // listen, confirm. The take runs the exact watch pipeline.
+          jsxs('div', {
+            className: 'flex flex-col gap-0.5 pt-1',
+            children: [
+              $enrolling.get() ? jsxs('div', {
+                className: 'flex items-center gap-1 text-xs',
+                children: [
+                  ($recPhase.get() === 'idle' || $recPhase.get() === 'rec')
+                    ? jsx('input', {
+                        className: 'min-w-0 flex-1 rounded border border-(--ui-border) bg-transparent px-1 py-0.5 text-xs',
+                        type: 'text', maxLength: 48, placeholder: 'voice name',
+                        defaultValue: _recName, autoFocus: true,
+                        onInput: (e) => { _recName = e.target.value }
+                      })
+                    : jsxs('span', {
+                        className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)',
+                        children: [String(_recName || ''),
+                                   ' · ', ($recSecs.get() || 0).toFixed(1), 's']
+                      }),
+                  $recPhase.get() === 'rec'
+                    ? jsxs('span', {
+                        className: 'shrink-0 tabular-nums text-(--ui-text-danger)',
+                        children: [`${Math.floor($recSecs.get() || 0)}s`]
+                      })
+                    : null,
+                  $recPhase.get() === 'idle'
+                    ? jsx('button', {
+                        className: 'shrink-0 rounded border border-(--ui-text-danger) px-1.5 py-0.5 text-[10px] text-(--ui-text-danger)',
+                        type: 'button', disabled: busy, title: 'record 3–12 s from your mic',
+                        onClick: voRecStart, children: '● record'
+                      })
+                    : null,
+                  $recPhase.get() === 'rec'
+                    ? jsx('button', {
+                        className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
+                        type: 'button', onClick: voRecStop, children: '■ stop'
+                      })
+                    : null,
+                  $recPhase.get() === 'ready'
+                    ? jsxs(Fragment, { children: [
+                        jsx('button', {
+                          className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
+                          type: 'button', title: 'listen to the take before it becomes a voice',
+                          onClick: voRecPlay, children: '▶'
+                        }),
+                        jsx('button', {
+                          className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
+                          type: 'button', title: 'create the voice (Parakeet will transcribe the take)',
+                          onClick: voRecConfirm, children: '✓'
+                        }),
+                        jsx('button', {
+                          className: 'shrink-0 rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px]',
+                          type: 'button', title: 'throw this take away and record again',
+                          onClick: voRecRetry, children: '↺'
+                        })
+                      ] })
+                    : null,
+                  $recPhase.get() === 'send'
+                    ? jsx('span', {
+                        className: 'shrink-0 text-[10px] text-(--ui-text-tertiary)',
+                        children: 'listening to your take…'
+                      })
+                    : null
+                ]
+              }) : null,
+              jsx('button', {
+                className: 'self-start rounded border border-(--ui-border) px-1.5 py-0.5 text-[10px] text-(--ui-text-secondary)',
+                type: 'button',
+                title: $enrolling.get() ? 'close the recorder'
+                                        : 'enroll a new voice right here (system mic)',
+                onClick: () => $enrolling.get() ? voRecClose() : $enrolling.set(true),
+                children: $enrolling.get() ? '✕ close' : '＋ add a voice'
+              })
+            ]
+          }),
           WATCH_TTS_UI ? jsx('div', {
             className: 'text-[10px] text-(--ui-text-tertiary)',
             children: 'record more voices from the watch — yours, or anyone’s (recorder ships with the player)'

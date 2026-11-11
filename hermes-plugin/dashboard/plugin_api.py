@@ -273,10 +273,23 @@ def voice_post(body: dict):
     if action == "mode":
         return vo.set_mode(str(body.get("agent") or "default"),
                            str(body.get("mode") or "gateway"))
+    if action == "card_create":
+        import base64
+        try:
+            wav = base64.b64decode(str(body.get("wav_b64") or ""), validate=True)
+            # transcript "" = the freeform lane: Parakeet hears the take and
+            # the card stores the REAL words (owner 2026-11-11). A pane
+            # enrollment is a first-class voice, not a second-class watch echo.
+            return vo.create_card(
+                wav, str(body.get("label") or "pane voice")[:48],
+                source=str(body.get("source") or "pane-record")[:24],
+                transcript="")
+        except Exception as exc:
+            return {"error": str(exc)[:300]}
     if action == "card_delete":
         return vo.delete_card(str(body.get("card") or ""))
     if action == "card_rename":
         return vo.rename_card(str(body.get("card") or ""),
                               str(body.get("label") or ""))
     return {"error": f"unknown voice action {action!r} — select|install|cancel|"
-                     "soundtest|speed|karaoke|voice|mode|card_delete|card_rename"}
+                     "soundtest|speed|karaoke|voice|mode|card_create|card_delete|card_rename"}
