@@ -6,6 +6,11 @@ lifecycle = "2.8.7"
 activityCompose = "1.9.3"
 wearCompose = "1.4.1"
 wear = "1.3.0"
+# Explicit fragment floor: a transitive 1.2.x trips lintVitalRelease
+# (InvalidFragmentVersionForActivityResult, MainActivity notification-permission
+# launcher). The release-APK lane is the only place this lint runs, so JVM tests
+# stayed green while the preview roll reddened. 1.8.x is the compileSdk-35 train.
+fragment = "1.8.5"
 okhttp = "4.12.0"
 serializationJson = "1.7.3"
 datastore = "1.1.1"
@@ -33,6 +38,7 @@ androidx-wear-compose-foundation = { group = "androidx.wear.compose", name = "co
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "composeFoundation" }
 androidx-wear-tooling-preview = { group = "androidx.wear", name = "wear-tooling-preview", version = "1.0.0" }
 androidx-wear = { group = "androidx.wear", name = "wear", version.ref = "wear" }
+androidx-fragment = { group = "androidx.fragment", name = "fragment", version.ref = "fragment" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
