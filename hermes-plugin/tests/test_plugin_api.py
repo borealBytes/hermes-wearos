@@ -19,6 +19,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from threading import Thread as _RealThread   # captured at import: the inventory test fakes threading.Thread
 
 import pytest
 
@@ -73,8 +74,11 @@ def test_wearos_resolver_finds_the_loaded_instance(wearos, api):
 
 def test_status_shape(wearos, api):
     payload = api.status()
+    # /status mirrors watch_status PLUS two pane-only derivations: the door
+    # listening-bit and the pair host computed live (owner ruling 2026-11-10).
     assert set(payload) == {"checks", "devices", "pairing", "profiles", "grants",
-                            "apk_release_url", "door"}
+                            "apk_release_url", "door", "tailnet"}
+    assert isinstance(payload["tailnet"], dict)
     assert payload["devices"] == {}
     assert payload["pairing"]["window"] is None
     assert payload["profiles"] == [{"name": "default", "enabled": True, "visible": True,
@@ -102,7 +106,15 @@ def test_inventory_serving_serves_stale_and_refreshes_off_the_path(wearos, api,
     assert rows == stale                      # served, not blocked
     assert fake.calls == []                   # no CLI on the request path
     assert len(started) == 1                  # exactly one refresh queued
-    started[0]()                              # run the queued refresh
+    # Bounded (audit 2026-11-11: this test could hang at the pin): run the queued
+    # refresh on a helper thread with a hard join deadline — under the faked CLI it
+    # must land in seconds, and a wedged refresh must surface as THIS failure, not
+    # a frozen suite. _RealThread is the pre-patch class: the monkeypatch above
+    # replaced threading.Thread on the SHARED module object.
+    _runner = _RealThread(target=started[0], daemon=True)
+    _runner.start()
+    _runner.join(10)
+    assert not _runner.is_alive(), "queued refresh must finish within 10 s under the faked CLI"
     assert wearos._INVENTORY_CACHE["inv"][1] != stale and fake.calls
     assert wearos._INVENTORY_REFRESHING is False
     # while a refresh is in flight, a second serving call must not queue another
@@ -119,10 +131,13 @@ def test_inventory_serving_serves_stale_and_refreshes_off_the_path(wearos, api,
 def test_pair_window_claim_round_trip(wearos, api):
     opened = api.pair_window({"action": "open"})
     assert opened["opened"]["profile"] == "default"
-    wearos.door_begin(SECRET_A, "Watch")
+    begun = wearos.door_begin(SECRET_A, "Watch")   # the WATCH is the only surface
+    code = begun["code"]                          # that ever sees the code
     pend = api.pair_pending()
     assert pend["pending"][0]["label"] == "Watch"
-    code = pend["pending"][0]["code"]
+    # Catalog review law (Nous #151546): the pending list says WHAT waits, never
+    # WHICH code — the code is a secret until a human types it.
+    assert "code" not in pend["pending"][0]
     out = api.pair_claim({"code": "000000"})
     assert "error" in out and out["lock"]["locked"] is False      # miss 1
     assert "approved" in api.pair_claim({"code": code})
@@ -174,7 +189,7 @@ def test_tailnet_gateway_url_is_derived_not_narrated(wearos, monkeypatch):
 
     class Done:
         returncode = 0
-        stdout = _json.dumps({"Self": {"DNSName": "TuxDesktop.tailb12aa5.ts.net."}}).encode()
+        stdout = _json.dumps({"Self": {"DNSName": "Gw.example.ts.net."}}).encode()
 
     def fake_run(cmd, **kw):
         calls["n"] += 1
@@ -184,8 +199,10 @@ def test_tailnet_gateway_url_is_derived_not_narrated(wearos, monkeypatch):
     monkeypatch.setattr(wearos.shutil, "which", lambda x: "/usr/bin/tailscale")
     monkeypatch.setattr(wearos.subprocess, "run", fake_run)
     out = wearos.tailnet_gateway_url(ttl=0)
-    assert out == {"gateway_url": "http://tuxdesktop.tailb12aa5.ts.net:8642",
-                   "host": "tuxdesktop.tailb12aa5.ts.net"}
+    # minimal-input law (owner 2026-11-11): the host drops the trailing .ts.net —
+    # the MagicDNS-relative form is what belongs on the watch's keyboard.
+    assert out == {"gateway_url": "http://gw.example.ts.net:8642",
+                   "host": "gw.example"}
     assert calls["n"] == 1
     # cache: a second call inside the TTL does not re-shell
     wearos.tailnet_gateway_url()
@@ -262,7 +279,10 @@ def _tair(wearos):
 
 def test_voice_feed_shapes_the_pane(wearos, api):
     feed = api.voice()
-    assert set(feed) == {"voice", "air", "aligner"}
+    # `revision` rides along with the pane-header truth fix (owner 2026-11-11):
+    # the header stamps the revision the gateway ACTUALLY loaded (install
+    # metadata), not a build-time string.
+    assert set(feed) == {"voice", "air", "aligner", "revision"}
     assert feed["air"]["slots"] == {"gateway": "community-q8",   # community default
                                     "watch": "community-q4"}      # watch-size quant
     assert {r["id"] for r in feed["air"]["sources"]} == set(_tair(wearos).SOURCES)
@@ -278,7 +298,12 @@ def test_voice_post_select_install_soundtest(wearos, api, monkeypatch):
     assert out["slots"]["gateway"] == "community-q8"             # other slot untouched
     assert not api.voice_post({"action": "select", "source": "nope"})["ok"]
 
-    # install: gated row + token → stored 0600; worker thread faked, no pip in tests
+    # install: gated row + token → stored 0600; worker thread faked, no pip in
+    # tests. The whoami check is a REAL huggingface.co call in shipped code —
+    # the suite is no-network by contract (conftest law), so answer it locally:
+    # the test asserts the store/0600 half, not the vendor's verdict.
+    monkeypatch.setattr(ta, "validate_token",
+                        lambda tok: {"ok": True, "user": "pane-test"})
     monkeypatch.setattr(ta.shutil, "which", lambda n: "/usr/bin/" + n)
     monkeypatch.setattr(ta.threading, "Thread",
                         lambda **kw: type("T", (), {"start": lambda s: None,

@@ -1075,8 +1075,10 @@ def _profile_pin(profile: str) -> str:
 
 def delegate_enablement(profile: str, enable: bool) -> dict:
     """One checkbox = one fixed-argv `hermes -p <profile> plugins enable|disable
-    wearos` (review fix: no hand-rolled YAML editor; the CLI's consent flow runs, we
-    NEVER pass --yes; the value lives in core's hands).
+    wearos` (review fix: no hand-rolled YAML editor; the enable/disable calls never
+    pass --yes, but the self-heal re-pin below DOES: `plugins install … --force
+    --ref <rev> --yes` against the pane's own pinned source — disclosed in
+    README (rule 13); the value lives in core's hands).
 
     Enable self-heals (owner ruling 2026-11-10 ~17:05, the 'Where Agent flashes'
     report): a named profile that never INSTALLS wearos answers 'No plugin named',
@@ -1418,7 +1420,8 @@ def _tool_watch_status(args: dict, **kw) -> str:
 
 def _tool_watch_pair(args: dict, **kw) -> str:
     """No arguments at all (review fix): the model opens the pairing WINDOW and reads
-    status — it can neither mint nor approve nor see a claim it can act on."""
+    status — it can neither mint nor approve nor see a claim it can act on. Reports
+    HOW MANY watches are waiting, never a code (review law, audit 2026-11-11 C2)."""
     if args:
         return json.dumps({"error": "watch_pair takes no arguments — the pairing code "
                                     "is typed by a human at the gateway, never by a model"})
@@ -1426,6 +1429,7 @@ def _tool_watch_pair(args: dict, **kw) -> str:
     return json.dumps({
         "pairing_window": {"profile": state["profile"],
                            "seconds_left": max(0, int(state["until"] - time.time()))},
+        "waiting": len(pairing_state()["pending"]),
         "how": "tap Pair on the watch — it shows a 6-digit code; the HUMAN types it at "
                "the gateway (hermes watch pair <CODE> or /pair <CODE> on the computer). "
                "The code never passes through a model.",

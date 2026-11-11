@@ -85,15 +85,15 @@ def test_failed_enable_reports_no_repinnote_and_no_crash(wearos, monkeypatch, tm
 def test_pair_host_drops_the_dot_net_suffix(wearos, monkeypatch, tmp_path):
     """minimal-input law: the pane shows device.tailnet, not the .ts.net FQDN."""
     import io
-    payload = json.dumps({"Self": {"DNSName": "tuxdesktop.tailb12aa5.ts.net."}}).encode()
+    payload = json.dumps({"Self": {"DNSName": "Gw.example.ts.net."}}).encode()
     monkeypatch.setattr(wearos.shutil, "which", lambda name: "/usr/bin/tailscale")
     monkeypatch.setattr(wearos.subprocess, "run",
                         lambda argv, **kw: type("D", (), {
                             "returncode": 0, "stdout": payload, "stderr": b""})())
     wearos._TAILNET_CACHE.update(stamp=0.0, out={})          # force a refresh
     info = wearos.tailnet_gateway_url(ttl=0)
-    assert info["host"] == "tuxdesktop.tailb12aa5"
-    assert info["gateway_url"] == "http://tuxdesktop.tailb12aa5.ts.net:8642"
+    assert info["host"] == "gw.example"
+    assert info["gateway_url"] == "http://gw.example.ts.net:8642"
 
 
 def test_unchecking_the_host_profile_revokes_the_grant_without_kill(monkeypatch):
