@@ -112,6 +112,29 @@ def _get_secret(name: str) -> Optional[str]:
         return None
 
 
+def _get_secret_for(profile: str, name: str) -> Optional[str]:
+    """Secret read for a KNOWN profile, safe on plugin-owned threads.
+
+    Pairing transactions run on a plugin thread that carries no request secret
+    scope; under the multiplexing gateway get_secret() then fails closed (the
+    container rig proved this — host dev machines masked it because the launch
+    env carried the key). Build that profile's own file scope explicitly
+    (.env + external secrets layered, the same builder the gateway middleware
+    uses) instead of guessing from the ambient environment.
+    """
+    val = _get_secret(name)
+    if val:
+        return val
+    home = _profile_home(str(profile or "default"))
+    if home is None:
+        return None
+    try:
+        from agent.secret_scope import build_profile_secret_scope
+        return build_profile_secret_scope(home).get(name)
+    except Exception:
+        return None
+
+
 def _cfg(key: str, default: Any = None) -> Any:
     if _CTX is None:
         return default
@@ -119,13 +142,17 @@ def _cfg(key: str, default: Any = None) -> Any:
     return default if value is None else value
 
 
-def _cred() -> tailscale.Credential:
-    """Prefer the least-privilege OAuth client; fall back to the personal API token."""
+def _cred(profile: str = "") -> tailscale.Credential:
+    """Prefer the least-privilege OAuth client; fall back to the personal API
+    token. Secret reads are profile-scoped (see _get_secret_for): pairing
+    transactions run on plugin threads without a request secret scope, so the
+    fallback builds the owning profile's file scope explicitly."""
+    who = str(profile or _running_profile())
     client_id = str(_cfg("tailscale_oauth_client_id", "") or "")
-    client_secret = _get_secret("tailscale_oauth_client_secret") or ""
+    client_secret = _get_secret_for(who, "tailscale_oauth_client_secret") or ""
     if client_id and client_secret:
         return tailscale.Credential(client_id=client_id, client_secret=client_secret)
-    token = _get_secret("tailscale_api_token") or ""
+    token = _get_secret_for(who, "tailscale_api_token") or ""
     if not token:
         raise tailscale.CredentialMissing(
             "no Tailscale credential configured — set plugins.entries.wearos.settings."
@@ -134,8 +161,8 @@ def _cred() -> tailscale.Credential:
     return tailscale.Credential(api_token=token)
 
 
-def _client() -> tailscale.TailnetClient:
-    return tailscale.TailnetClient(_cred(), tailnet=str(_cfg("tailnet", "") or "-"))
+def _client(profile: str = "") -> tailscale.TailnetClient:
+    return tailscale.TailnetClient(_cred(profile), tailnet=str(_cfg("tailnet", "") or "-"))
 
 
 def _running_profile() -> str:
@@ -215,7 +242,7 @@ def _engine() -> pairing.PairingEngine:
 
 
 def _mint_key(profile: str) -> tuple[str, str]:
-    client = _client()
+    client = _client(profile)
     key = client.mint_enrollment_key(tag=str(_cfg("watch_tag", "tag:hermes-watch")),
                                      expiry=str(_cfg("key_expiry", "24h")))
     return key, client.last_key_id
