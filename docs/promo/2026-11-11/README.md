@@ -16,6 +16,7 @@ clay-synth reply) and a live tool-step answer, Galaxy Watch Ultra.
 | watch-answer.png | streamed answer, one sentence |
 | watch-voices-checked.png | multi-agent default check state after the pass |
 | watch-live-ask.mp4 | 10 s: broadcast ask → tool step (`echo $(12*12)`) → streamed 144 |
+| watch-live-demo.mp4 | 12 s WITH SOUND: PTT-style ask → streamed answer → clay-synth voice-out recorded off the watch speaker (webcam mic + adb screenrecord welded) |
 
 Privacy: pane crops show only the pane; watch frames contain no contact
 names or personal message bodies (voice labels cartman/politician are
