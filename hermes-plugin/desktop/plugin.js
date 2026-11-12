@@ -1004,9 +1004,9 @@ function WearKitPane () {
         className: 'flex flex-col gap-1 rounded border border-(--ui-border) p-2',
         children: [
           jsxs('div', {
-            className: 'flex items-center justify-between',
+            className: 'flex items-center justify-between gap-2',
             children: [
-              jsx('span', { className: 'font-medium', children: '🔊 Voice-out' }),
+              jsx('span', { className: 'font-medium shrink-0 whitespace-nowrap', children: '🔊 Voice-out' }),
               // build stamp (owner debugging law 2026-11-11): the pane must
               // SAY which copy it is running — no more 'did my reopen take?'
               jsx('span', {
@@ -1015,14 +1015,13 @@ function WearKitPane () {
                 children: '· ' + (((voice || {}).revision) || 'build')
               }),
               jsx('button', {
-                className: 'rounded border border-(--ui-border) px-2 py-1 text-[10px]',
+                className: 'shrink-0 whitespace-nowrap text-[10px] text-(--ui-text-secondary) hover:text-(--ui-text) underline decoration-dotted underline-offset-2',
                 type: 'button',
                 title: 'writes tts.provider = wearkit-gateway in this profile\u2019s '
                      + 'config (the agent speaks with this engine everywhere) — an '
-                     + 'explicit pick of yours is never overwritten; engine must be '
-                     + 'installed for there to be sound',
+                     + 'explicit pick of yours is never overwritten',
                 onClick: voSetTts,
-                children: '🔊 set as agent voice'
+                children: 'set agent voice'
               }),
               air.installed && (air.model_verified || air.verified_pending)
                 ? (air.engine || {}).phase === 'warm'
