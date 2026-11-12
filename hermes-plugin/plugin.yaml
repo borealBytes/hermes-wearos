@@ -14,7 +14,7 @@
 # mirror split is born without app/libs/hermes-tailnet.aar, and the Parakeet engine is
 # BUILT from pinned source on the user's machine, never shipped).
 name: wearos
-version: 0.3.7
+version: 0.3.8
 description: >-
   ⌚ Pairs the Hermes Wear OS watch app over the watch's OWN tailnet node — the gateway
   issues a 6-digit code, a human types it back at the gateway (never through a model);

@@ -1,5 +1,5 @@
 """tts_air: honest probe, size-gated fetch, stdlib time-scale, no-network (issue #7 s2)."""
-import hashlib, importlib.util, os, shutil, struct, sys, tempfile, unittest
+import hashlib, importlib.util, os, shutil, struct, sys, tempfile, time, unittest
 from unittest import mock
 os.environ.setdefault("HERMES_HOME", tempfile.mkdtemp(prefix="tts-test-"))
 
@@ -80,6 +80,23 @@ class TtsAirTests(unittest.TestCase):
             src["bytes"] = old
             if old_sha != "PENDING":
                 src["sha256"] = old_sha
+
+    def test_busy_marker_shields_a_sibling_synth(self):
+        """speak-stream death 21:16: a sibling process's reaper SIGKILLed a
+        worker MID-REQUEST (dashboard vs gateway twin ping-pong). The worker
+        now announces busy/idle in worker.state and the reaper defers instead
+        of clipping the audio."""
+        st = ta._root() / "worker.state"
+        st.parent.mkdir(parents=True, exist_ok=True)
+        st.write_text('{"pid": 4242, "state": "busy", "t": %s}' % time.time())
+        self.assertEqual(ta._worker_state_busy(), 4242)        # fresh: protect
+        st.write_text('{"pid": 4242, "state": "idle", "t": %s}' % time.time())
+        self.assertIsNone(ta._worker_state_busy())             # done: reap ok
+        st.write_text('{"pid": 4242, "state": "busy", "t": %s}'
+                      % (time.time() - 10 * 60))                 # 10 min stale
+        self.assertIsNone(ta._worker_state_busy())             # crashed worker
+        st.unlink()
+        self.assertIsNone(ta._worker_state_busy())             # no file: reap
 
     def test_register_if_ready_false_when_absent(self):
         self.assertFalse(ta.register_if_ready())
