@@ -1081,8 +1081,14 @@ def _reap_stray_workers(keep: "set | None" = None) -> None:
     for pid in pids:
         try:
             with open("/proc/%d/cmdline" % pid, "rb") as f:
-                cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+                argv0 = f.read().split(b"\0")
+                cmd = b" ".join(argv0).decode("utf-8", "replace")
             if "air_runner.py" not in cmd or "--serve" not in cmd:
+                continue
+            # argv[0] must BE the venv python: a grep/pgrep/shell whose own
+            # command line mentions the worker used to be reaped here (the
+            # -9 mystery in this very session's own probes).
+            if not (argv0 and argv0[0].endswith(b"/python")):
                 continue
             if pid in keep or pid == os.getpid():
                 continue

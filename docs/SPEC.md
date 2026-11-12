@@ -2601,3 +2601,10 @@ Two provable halves of one ruling, both hardware-driven same evening:
   spawn guard returns None, and the attempt loop retries (3s sleeps, honest
   give-up text). A crashed worker's stale busy marker expires on the same
   window. Test: `test_busy_marker_shields_a_sibling_synth`. (v0.3.8)
+- **2026-11-11 — reaper friendly-fire (v0.3.9).** The same /proc scan SIGKILLed
+  any shell whose command line merely *mentioned* the resident worker's script
+  and flag (two session probes died -9 and briefly masqueraded as OOM).
+  Matching now requires argv[0] to be the venv python itself. The post-restart
+  triple-worker pileup this exposed is self-healing by law: the first new-code
+  spawn reaps every old-code worker (no `worker.state` marker = nothing to
+  protect) and speaks on exactly one.
