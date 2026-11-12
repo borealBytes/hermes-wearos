@@ -65,6 +65,9 @@ SEED_DIR = "seed"
 SEED_URL = ("https://github.com/borealBytes/hermes-wearos/releases/download/"
             "voiceout-seed-v1/seed-pack-v1.tar.gz")
 SEED_SHA256 = "PENDING"          # set when the pack is cut (tools/voiceout_seed_cut.py)
+# card ids double as filenames (cards/<cid>.wav) — the ONLY shape accepted from
+# a watch's merge delta or used in a synth path (Nous #151546 round 2).
+_CARD_KEY_RE = re.compile(r"[a-z0-9-]{1,64}")
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
 # CHUNK MODE (owner ruling 2026-11-11): 'sentence' = the issue #7 sentence-by-
 # sentence lane; 'paragraph' (the DEFAULT) renders one paragraph per draw — the
@@ -137,6 +140,13 @@ def merge_prefs(remote: dict) -> dict:
         for section in ("global", "modes", "voices", "cards"):
             delta = remote.get(section) or {}
             if isinstance(delta, dict):
+                if section == "cards":
+                    # Catalog review round 2 (Nous #151546): merged card keys
+                    # become FILE NAMES (cards/<cid>.wav). A watch-sent key like
+                    # '../../x' would escape the cards dir — accept nothing that
+                    # isn't the shape card_create itself mints.
+                    delta = {k: v for k, v in delta.items()
+                             if _CARD_KEY_RE.fullmatch(str(k))}
                 merged = dict(local.get(section) or {})
                 merged.update(delta)
                 local[section] = merged

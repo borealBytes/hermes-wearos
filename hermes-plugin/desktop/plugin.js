@@ -143,6 +143,17 @@ function voInstall () {
   } }))
 }
 
+// Catalog review round 2 (Nous #151546): plugin load no longer writes
+// tts.provider. This button IS the opt-in — its tooltip states exactly what
+// it changes, and the answer lands in the note line (never a silent action).
+async function voSetTts () {
+  $voNote.set('setting agent voice…')
+  await voiceAct(async () => {
+    const out = await rest('/voice', { method: 'POST', body: { action: 'set_tts_default' } })
+    $voNote.set((out && out.detail) || 'done')
+  })
+}
+
 // Sound test: the lane returns a real wav, the pane plays it. No engine → the
 // refusal text, never a silent button (issue #7 honesty rule).
 async function voSoundTest () {
@@ -1002,6 +1013,16 @@ function WearKitPane () {
                 className: 'text-[9px] text-(--ui-text-tertiary)',
                 title: 'pane build — if this is older than the latest commit, quit and reopen',
                 children: '· ' + (((voice || {}).revision) || 'build')
+              }),
+              jsx('button', {
+                className: 'rounded border border-(--ui-border) px-2 py-1 text-[10px]',
+                type: 'button',
+                title: 'writes tts.provider = wearkit-gateway in this profile\u2019s '
+                     + 'config (the agent speaks with this engine everywhere) — an '
+                     + 'explicit pick of yours is never overwritten; engine must be '
+                     + 'installed for there to be sound',
+                onClick: voSetTts,
+                children: '🔊 set as agent voice'
               }),
               air.installed && (air.model_verified || air.verified_pending)
                 ? (air.engine || {}).phase === 'warm'

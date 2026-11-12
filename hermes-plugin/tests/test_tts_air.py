@@ -53,7 +53,9 @@ class TtsAirTests(unittest.TestCase):
     def test_size_gate_and_pending_sha_honesty(self):
         src = ta.SOURCES["community-q8"]
         old = src["bytes"]
+        old_sha = src.get("sha256", "PENDING")   # pinned since review round 2
         src["bytes"] = 12
+        src["sha256"] = "PENDING"
         try:
             model = ta._root() / "model" / src["file"]
             model.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +78,8 @@ class TtsAirTests(unittest.TestCase):
                 src.pop("sha256") if old_sha == "PENDING" else src.update(sha256=old_sha)
         finally:
             src["bytes"] = old
+            if old_sha != "PENDING":
+                src["sha256"] = old_sha
 
     def test_register_if_ready_false_when_absent(self):
         self.assertFalse(ta.register_if_ready())

@@ -303,6 +303,10 @@ def voice_post(body: dict):
         # CUDA variant build; the engine keeps speaking on CPU meanwhile and
         # rebinds the worker the moment the build is done. SPEC 19.4(m).
         return ta.set_device(str(body.get("device") or "cpu"))
+    if action == "set_tts_default":
+        # Catalog review round 2 (Nous #151546): explicit opt-in replaces the
+        # config write plugin-load used to do. The button states the change.
+        return _p().set_tts_default()
     if action == "speed":
         return vo.set_speed(float(body.get("speed", 1.0)))
     if action == "karaoke":
@@ -349,4 +353,5 @@ def voice_post(body: dict):
         return vo.rename_card(str(body.get("card") or ""),
                               str(body.get("label") or ""))
     return {"error": f"unknown voice action {action!r} — select|install|cancel|"
-                     "soundtest|speed|karaoke|voice|mode|card_create|card_delete|card_rename"}
+                     "soundtest|set_tts_default|speed|karaoke|voice|mode|"
+                     "card_create|card_delete|card_rename"}
