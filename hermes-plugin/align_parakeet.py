@@ -39,6 +39,18 @@ _WORDS_PER_S_CEILING = 12.0                # sanity: faster than speech can be
 STATUS = threading.Lock()
 _last_error = ""                           # last runner failure, surfaced via status()
 
+
+def _runner_env(lib: str) -> dict:
+    """Catalog review round 2 (Nous #151546): the aligner/transcriber runner
+    gets the stt_install allowlist env (PATH/HOME/LANG/TMPDIR + TRANSCRIBE_
+    LIBRARY), NEVER the gateway's inherited environ — every provider key would
+    otherwise be in reach of the native transcribe library."""
+    try:
+        from . import stt_install
+    except ImportError:
+        import stt_install  # type: ignore[no-redef]
+    return stt_install._min_env({"TRANSCRIBE_LIBRARY": lib})
+
 ALIGNER_SRC = '''\
 """Parakeet aligner runner — the ONLY code touching transcribe_cpp/numpy.
 
@@ -162,7 +174,7 @@ def align(wav_bytes: bytes, rate: int, text: str) -> list:
     argv = [str(venv_py), str(runner), str(tmp), str(model), str(lib)]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
-                              timeout=ALIGN_TIMEOUT)
+                              timeout=ALIGN_TIMEOUT, env=_runner_env(str(lib)))
         if proc.returncode != 0:
             _last_error = (proc.stderr or "")[-400:]
             raise RuntimeError("aligner failed: " + _last_error)
@@ -189,7 +201,8 @@ def transcribe(wav_bytes: bytes, rate: int) -> str:
         proc = subprocess.run(
             [str(venv_py), str(runner), str(tmp), str(_model_path()),
              str(lib), "asr"],
-            capture_output=True, text=True, timeout=ALIGN_TIMEOUT)
+            capture_output=True, text=True, timeout=ALIGN_TIMEOUT,
+            env=_runner_env(str(lib)))
         if proc.returncode != 0:
             raise RuntimeError("transcriber failed: " + (proc.stderr or "")[-400:])
         import json

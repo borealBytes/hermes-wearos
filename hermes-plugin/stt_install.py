@@ -35,18 +35,26 @@ MODEL_REPO = "handy-computer/parakeet-unified-en-0.6b-gguf"
 # One engine (transcribe.cpp), every official quant selectable (owner ruling
 # 2026-11-09): the vendor repo publishes six; sizes are the repo's own bytes.
 VARIANTS = {
+    # Every quant is sha-pinned (catalog review round 2, Nous #151546): the
+    # values below are the HF LFS oids fetched from the model repo's API tree
+    # on 2026-11-11 — identical to the day-one q8 pin, which re-verified exact.
     "q4_k_m": {"file": "parakeet-unified-en-0.6b-Q4_K_M.gguf", "bytes": 477_274_496,
+               "sha256": "a8bf3de2b393bd14ead5a858c3748d5e3b07a20fdeabdd3b498fba4f463fa929",
                "label": "Q4_K_M — smallest, fastest first-token; slightly more mishears"},
     "q5_k_m": {"file": "parakeet-unified-en-0.6b-Q5_K_M.gguf", "bytes": 540_795_264,
+               "sha256": "f9def6f9b4e83ab7d006df3e1b676dfa1f973a3b6da232a9c99fcaa66bcd2836",
                "label": "Q5_K_M — near-Q8 accuracy at ~74% the size"},
     "q6_k":   {"file": "parakeet-unified-en-0.6b-Q6_K.gguf", "bytes": 602_191_232,
+               "sha256": "912c42ec3fd1afa31b7eda45684577feadf413249ca767fa912a89c4810e38d0",
                "label": "Q6_K — visually-indistinguishable from Q8"},
     "q8_0":   {"file": "parakeet-unified-en-0.6b-Q8_0.gguf", "bytes": 731_357_568,
                "sha256": "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
                "label": "Q8_0 — the shipped default, checksum-pinned since day one"},
     "f16":    {"file": "parakeet-unified-en-0.6b-F16.gguf", "bytes": 1_239_114_240,
+               "sha256": "4a284b229bff9dc66aa00666fdcc2419c0f82a5adb5a36f7a48a4e0713c35492",
                "label": "F16 — lossless half-precision"},
     "f32":    {"file": "parakeet-unified-en-0.6b-F32.gguf", "bytes": 2_473_323_520,
+               "sha256": "81d3a8c7676324a4dae977dac0f5900dc1468755fdf3b5369261bb759f17fdf3",
                "label": "F32 — full reference weights (disk-cheap boxes need not apply)"},
 }
 DEFAULT_VARIANT = "q8_0"

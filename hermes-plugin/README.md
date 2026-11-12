@@ -69,11 +69,21 @@ here so nobody reads it as the watch "rebooting the server on its own".
 
 ## What you get installed
 
-The Desktop app gains a **Wear Kit** page ([desktop/plugin.js](./desktop/plugin.js)): the pairing
-window control (open/close + the live pending list with Approve), paired devices with live tailnet
-state and a Revoke button, per-agent **key grants**, per-agent **cron-alert preference** (all runs
-/ only failures / off), a one-click **Parakeet STT installer** (see below), and readiness lights.
-Its data plane is [dashboard/plugin_api.py](./dashboard/plugin_api.py), a FastAPI router
+The Desktop app gains a **Wear Kit** page ([desktop/plugin.js](./desktop/plugin.js)): a
+four-step checklist — *install the APK → pair the watch → enable agents → green lights* — where
+the checkbox **is** the grant (checking enables the plugin for that profile — it no longer
+re-pins or self-installs anything: revision drift is shown next to the row with the exact
+`hermes -p <profile> plugins update wearos` command, and a profile that never installed wears
+gets that install command back as its answer; unchecking revokes the agent from the watch's
+ring and never self-disables the
+plugin; fresh installs grant nobody, and an Enable-all box sits over the list), a per-agent
+**voice-out dropdown** riding the canonical `voiceout.yaml` store, the pairing window control
+(the button opens it and toggles to a bare countdown chip; the live pending list carries
+Approve), paired devices with live tailnet state and a Revoke button (no device row carries an
+agent name — the row is the hardware, the grant is yours to make), per-agent **cron-alert
+preference** (all runs / only failures / off), a one-click **Parakeet STT installer** (see
+below), and ✅/❌ **readiness lights** where every red names its fix verb. Its data plane is
+[dashboard/plugin_api.py](./dashboard/plugin_api.py), a FastAPI router
 hot-mounted at `/api/plugins/wearos/*`: `/status`, `/pair/window|pending|claim`, `/devices`,
 `/devices/revoke`, `/grants`, `/alerts`, `/enable`, `/stt`. The pane never calls tools — the
 desktop SDK has no tool-call door (measured on v0.23.0), which is exactly why the REST half exists.
@@ -124,13 +134,41 @@ could never see. Credentials: prefer a Tailscale **OAuth client** (`auth_keys` +
 restricted to the watch tag); an Owner/Admin API token also works — the wizard and README say
 which is which.
 
-Outbound hosts (nothing else): `api.tailscale.com` (key mint/tag/expiry + node DELETE),
-`github.com` / `huggingface.co` / `pypi.org` (STT installer only), and `tailscale` CLI calls —
-`status`/`whois` read-only, but **not** `funnel`: `hermes watch setup --fix serve` runs
-`tailscale funnel --bg --https=443`, which MUTATES your tailnet's Funnel route (it is shown
-in the wizard's consent card first). **No telemetry.** Third-party build chains (STT/TTS
-installers) run with an allowlisted environment — the gateway's provider keys are never
-inherited into a vendored `setup.py`.
+## Disclosures (rule 13)
+
+- **Network.** `api.tailscale.com` for:
+  - minting and expiring single-use enrollment keys;
+  - device list, DNS prefs and ACL read;
+  - a full-file ACL write with If-Match, behind preview→approve (`--fix funnel`);
+  - node DELETE on revoke.
+
+  Only when you press Install:
+  - `github.com`: transcribe.cpp @ `5700f12`, neutts @ `ac69851`, and the optional CUDA llama-cpp wheel (≈1.8 GB, SHA-256-pinned).
+  - `pypi.org`: torch, `torchao==0.11.0`, `llama-cpp-python==0.3.36` and their transitive deps.
+  - `huggingface.co`:
+    - Parakeet GGUF: the Q8_0 default is SHA-256-pinned, other quants are size-checked.
+    - NeuTTS backbone ≈3.3 GB, size-checked, hash recorded on first fetch, not pre-pinned.
+    - The **gated `neuphonic/neucodec` codec, needed by every source row**.
+    - `api/whoami-v2` when you paste a token.
+
+  The plugin no longer installs itself into foreign profiles (review round 2 —
+  the pane hands the user the exact `plugins install` command instead). **No telemetry.**
+- **Public exposure.** `hermes watch setup --fix serve` runs `tailscale funnel --bg --https=443 http://127.0.0.1:42653` as soon as you invoke it. It mounts at the root of your node's :443 and mutates your tailnet's Funnel config; on a tailnet without Funnel it prints the per-node approval link and waits up to 4 min. The door answers only `/pair/begin|poll|ack` (426 on the retired `/pair/claim`, 404 otherwise). **If the gateway machine moves to a different tailnet or its node is renamed, re-run `--fix serve`** — the serve config survives under the OLD name and the watch would knock a dead URL; the pane checklist flags exactly that ("funnel still names the OLD host").
+- **Credentials.** Declared secrets are read through `agent.secret_scope`. **Checking an agent in the pane enables the plugin for that profile and lets paired watches receive that profile's `API_SERVER_KEY`, so Enable-all grants every profile.** A pasted HF token is stored 0600 at `plugin-data/wearos/tts/hf_token`. Device tokens and codes are stored as SHA-256 hashes; enrollment keys are single-use and zeroed at pickup. Revoking or forgetting a watch rotates that profile's key, and every other client using the old key gets 401 until it re-pulls.
+- **Commands (fixed argv, never a shell).**
+  - `tailscale`:
+    - reads: `status --json`, `whois --json`, `funnel status`;
+    - write: `funnel --bg` (via `--fix serve`).
+  - `hermes`:
+    - `[-p P] plugins list --json`, across every profile (pane inventory);
+    - `[-p P] plugins enable|disable wearos`;
+    - `[-p P] config set API_SERVER_KEY …` (revoke rotation);
+    - `config set tts.provider wearkit-gateway` — ONLY from the pane's **"set as agent voice"**
+      button (the Voice-out card states the change); plugin load never writes it;
+    - `gateway restart`, run **automatically** after an unpair confirmed on the watch, default profile only. Pane and CLI revokes only warn.
+  - Voice installers **and the Parakeet aligner/transcriber runner**: `git`, `cmake`, `g++`, `pip`, `python -m venv`, `nvidia-smi`, with an allowlisted env (no provider keys inherited — the runner gets `PATH/HOME/LANG/TMPDIR + TRANSCRIBE_LIBRARY`, nothing else).
+- **Background.** The door and lane daemon threads run while the gateway runs, plus a voice prewarm thread at boot. Once the TTS engine is installed, **one resident `air_runner.py --serve` worker** (~3.4 GB RSS) stays loaded (`WEARKIT_TTS_IDLE_S=900` restores idle exit). To keep a single copy, the plugin scans `/proc` and **SIGKILLs any other `air_runner.py --serve` on the machine**.
+- **Reads outside plugin data.** Each profile's `state.db` (read-only, cron titles); `config.yaml` (to detect an existing `tts.provider`); each profile's `plugins/.install-metadata.json` (revision check); `/proc/*/cmdline` (worker dedupe).
 
 ## The STT installer (pane button, pinned + checksummed)
 
