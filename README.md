@@ -365,9 +365,28 @@ sessions; asking them needs the key:
 Installed into the Hermes desktop app, the plugin adds a **Wear Kit** page — a right-side pane
 whose whole job is a four-step checklist:
 
-| | |
-|:--:|:--:|
-| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: install checklist, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen (v1-era shot): the tailnet handle typed, Knock button under a watch-minted 6-digit PIN — v2 instead shows the gateway-minted code"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. (The pane shot is current — plugin 0.3.11, four-step checklist with voice dropdowns, Enable-all, and ✅/❌ health lights; host + unchecked agent names redacted by the maintainer. The watch PIN shot is still 0.1-era — v2 shows the gateway-minted code instead. See [hermes-plugin/README.md](hermes-plugin/README.md).) Agent names are blurred by the maintainer — they are yours to populate. |
+<img src="docs/screens/67-wearkit-pane.png" width="420" alt="The whole Wear Kit pane as it lives on a running gateway (plugin 0.3.11): Pair-a-watch card with host + code field + paired-watch rows, the agents enable list with per-agent voice dropdowns and Enable-all, Voice-in card, Voice-out card with the exclusive GPU pin and voice list, and a green/red readiness checklist at the foot"/>
+
+Reading it top to bottom:
+
+- **Pair a watch** — the card shows bare *hosts* (tailnet names, no URLs); type the 6-digit code
+  the watch is showing, approve, and the watch lands here as a row with revoke beside it.
+- **Enable Wear Kit for your agents** — one checkbox per agent (enable ⇒ grant, no second screen),
+  a per-agent voice dropdown so each agent speaks in its own cloned voice, and an Enable-all row.
+  The watch's agent switcher then holds exactly what you checked — nothing else.
+- **Voice-in** — the gateway's Parakeet streaming engine, weights pinned by sha256.
+- **Voice-out** — the engine card (community weights, no account, 803 MB), an *exclusive* GPU pin
+  when a second GPU is in the box, a test-play button, and the voice list: cards cloned from a
+  3–12 s clip, recorded on the wrist or right here.
+- **Health checklist** — tailscaled, private lane, funnel, paired watches — per-line ✅/❌, not
+  one aggregate dot.
+
+Host names and unchecked agent names are redacted by the maintainer; yours will be your own.
+
+And the code you type lands on the watch's Pair screen (this shot predates 0.2 — the code is
+gateway-minted now, the watch only knocks):
+
+<img src="docs/screens/68-pin-screen.png" width="420" alt="A cold watch's Pair screen: the tailnet handle typed, Knock button under a 6-digit PIN field — the v1-era shot; since 0.2 the watch shows a code the gateway minted"/>
 
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
