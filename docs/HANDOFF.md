@@ -237,6 +237,8 @@ Agent
 flashes): named profile without the plugin → auto-install from install-metadata source+revision, retry enable once. wear profile installed/enabled/granted live.
 - invalidate keeps serving stale (17:10 flash fix): pane refetch must never pay the fan-out sync; pane overlays the clicked state until server confirms; enable-all reports per-profile failures.
 
+- 2026-11-12 00:45 — plugin 0.3.11 (PR #51): docs-only pane screenshot refresh (66-wearkit-pane.png re-shot, host + unchecked agents redacted, byte-verified at pin). Mirror a3a5280, tag v0.3.11, catalog #151546 re-pinned head cee7098f; body+comment posted. Contest PR now current: plugin 0.3.11 / watch 0.10.12.
+
 ## 2026-11-12 ~01:10 — catalog PR merged; body de-borked; private-email follow-up PR #154472
 - PR #151546 MERGED (teknium1, 25 commits, pin a3a5280/0.3.11 — entry live). Body had been
   double-escaped by the --input patch (JSON string into JSON) + a broken demo-video link +
