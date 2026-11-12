@@ -62,6 +62,12 @@ OUTPUT_RATE = 24_000                                   # neucodec is 50 Hz → 2
 BUILD_TIMEOUT = 60 * 60                                # torch wheel + llama-cpp build
 SYNTH_TIMEOUT = 600                                    # a whole paragraph on weak CPUs; a cold first run (model+mmap+codec warm) can exceed 180s after install
 CODEC_REPO = "neuphonic/neucodec"                      # PyTorch codec (encode+decode)
+# Revision pins (catalog review round 2, Nous #151546): the codec is NEVER
+# mirrored (2026-11-09 measurement), so the repo the loader pulls is recorded
+# at an exact revision for audit; the kind:"port" plumbing, when it lands,
+# downloads at PORT_REV — no floating `main`.
+CODEC_REV = "a940021324df13a07f44185f0a17c6dac3698179"     # neuphonic/neucodec @ 2026-11-11
+PORT_REV = "11873db8f834e8dc5b132d64b421fc4890ec45fe"      # bezzam/neucodec-hf  @ 2026-11-11
 
 # ---------------------------------------------------------------- source menu
 # Owner ruling 2026-11-09: every weights source we know of ships as a CHOICE —
@@ -85,6 +91,9 @@ SOURCES = {
                  "the most-downloaded source on the Hub)",
         "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q8_0.gguf",
         "bytes": 802_659_296, "gated": False,
+        # Pinned per catalog review round 2 (Nous #151546): cross-verified —
+        # HF LFS oid matches this box's observed-sha256 from the day-one fetch.
+        "sha256": "589adb5df73ee56ef68cd2f3056d8c8b938bd6440f81221d99332bb51640b7ad",
         "codec": {"kind": "repo", "repo": CODEC_REPO},
     },
     "community-q4": {
@@ -92,6 +101,7 @@ SOURCES = {
                  "half the RAM — the watch-size quant)",
         "repo": "mradermacher/neutts-air-GGUF", "file": "neutts-air.Q4_K_M.gguf",
         "bytes": 596_267_936, "gated": False,
+        "sha256": "9e8ae3aefb85c617f6eabeec774619c59d402ed3f8096c28b842d0abdb6c98a1",
         "codec": {"kind": "repo", "repo": CODEC_REPO},
     },
     "official-q8": {
@@ -111,6 +121,7 @@ SOURCES = {
         "label": "Alt Q8_0 — MrDrinking re-quant (no account, ungated)",
         "repo": "MrDrinking/neutts-air-Q8_0-GGUF", "file": "neutts-air-q8_0.gguf",
         "bytes": 802_658_880, "gated": False,
+        "sha256": "ca552530b7e81a0756f71886fe32081195a653721e5a5b2f5d4ec0468d140ddb",
         "codec": {"kind": "repo", "repo": CODEC_REPO},
     },
 }
@@ -478,7 +489,8 @@ def _run() -> None:
                 _set("codec", "downloading the ungated NeuCodec port (~2.5 GB)")
                 for f in s["codec"]["files"]:
                     _download(f"https://huggingface.co/{s['codec']['repo']}"
-                              f"/resolve/main/{f}", cdir / f,
+                              f"/resolve/{s['codec'].get('rev', PORT_REV)}/{f}",
+                              cdir / f,
                               cbig if f.endswith(".safetensors") else 0)
             if not _size_ok(cdir / "model.safetensors", cbig):
                 raise RuntimeError("codec port download size mismatch — kept nothing")
@@ -1353,7 +1365,10 @@ def synth(text: str, card: Optional[dict], speed: float) -> tuple:
         raise RuntimeError("no voice card bound — record one or fetch the seed pack; "
                            "zero-shot cloning needs reference audio")
     voiceout = _voiceout()
-    ref_wav = voiceout._root() / voiceout.CARDS_DIR / f"{card['card_id']}.wav"
+    cid = str(card.get("card_id") or "")
+    if not voiceout._CARD_KEY_RE.fullmatch(cid):
+        raise RuntimeError(f"card id {cid!r} is not a safe filename")
+    ref_wav = voiceout._root() / voiceout.CARDS_DIR / f"{cid}.wav"
     if not ref_wav.is_file():
         raise RuntimeError(f"card {card['card_id']} has no reference wav on disk")
     ref_text = card.get("transcript") or ""

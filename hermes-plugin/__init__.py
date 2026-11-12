@@ -849,11 +849,21 @@ def local_checks() -> dict:
                             text=True, timeout=5)
         text = (fs.stdout or "") + (fs.stderr or "")
         funneled = f":{port}" in text.replace("127.0.0.1", "")
+        # Node-renamed trap (tailnet move, 2026-11-11): the serve config survives
+        # a rejoin under its OLD name — the door looks funneled but the watch
+        # knocks a dead URL. Demand THIS node's name in the funnel output.
+        self_name = str(st.get("DNSName") or "").split(".")[0:2]
+        renamed = funneled and len(self_name) == 2 and \
+                  (f"{self_name[0]}.{self_name[1]}" not in text)
         checks["funnel"] = {
-            "ok": funneled,
-            "detail": ("fronts 127.0.0.1:" + str(port)) if funneled else
-                      ("not fronting the door — " + text.strip().splitlines()[0:1][0]
-                       if text.strip() else "not fronting the door"),
+            "ok": funneled and not renamed,
+            "detail": (f"fronts {st.get('DNSName', '?')} -> 127.0.0.1:{port}"
+                       if funneled and not renamed else
+                       ("funnel still names the OLD host — the node was renamed/"
+                        "moved networks; re-run `hermes watch setup --fix serve`"
+                        if renamed else
+                        ("not fronting the door — " + text.strip().splitlines()[0:1][0]
+                         if text.strip() else "not fronting the door"))),
             "fix": "hermes watch setup --fix serve",
         }
     except Exception as exc:
@@ -1102,17 +1112,18 @@ def _profile_pin(profile: str) -> str:
 
 def delegate_enablement(profile: str, enable: bool) -> dict:
     """One checkbox = one fixed-argv `hermes -p <profile> plugins enable|disable
-    wearos` (review fix: no hand-rolled YAML editor; the enable/disable calls never
-    pass --yes, but the self-heal re-pin below DOES: `plugins install … --force
-    --ref <rev> --yes` against the pane's own pinned source — disclosed in
-    README (rule 13); the value lives in core's hands).
+    wearos` (review fix: no hand-rolled YAML editor; the CLI's consent flow runs,
+    we NEVER pass --yes; the value lives in core's hands).
 
-    Enable self-heals (owner ruling 2026-11-10 ~17:05, the 'Where Agent flashes'
-    report): a named profile that never INSTALLS wearos answers 'No plugin named',
-    which used to just flash the checkbox back. When that happens and the pane's
-    own install metadata names the repo+ref, we install from that exact pin (same
-    consent flags the pane's Enable-all uses — --yes rides the pinned community
-    source, --force matches how the owner re-pins) and retry the enable once."""
+    Catalog review round 2 (Nous #151546) retired the enable self-heal from the
+    owner ruling of 2026-11-10: a named profile that never INSTALLS wearos
+    answered 'No plugin named', and the old code installed from the pane's pin
+    with --yes — which skipped core's install consent and could downgrade a
+    newer catalog pin. Now that case answers ok=False with the EXACT install
+    command (verb 'install'), and revision drift after a good enable is
+    REPORTED in the note with the exact `plugins update` command. The 'Where
+    Agent flashes' complaint is answered by the pane rendering that command
+    inline, not by a silent install."""
     profile = re.sub(r"[^a-z0-9_-]", "", str(profile or "").strip().lower())[:64]
     if not profile:
         return {"name": profile, "error": "profile name is required"}
@@ -1130,57 +1141,29 @@ def delegate_enablement(profile: str, enable: bool) -> dict:
     text = ((out.stdout or "") + (out.stderr or "")).strip()
     _note = ""
     if verb == "enable" and out.returncode != 0 and "No plugin named" in text:
+        # Catalog review round 2 (Nous #151546): the plugin no longer
+        # self-installs into foreign profiles with --yes — core's install
+        # consent belongs to a human. The pane shows the exact command instead.
         repo, ref = _install_source_ref()
-        if repo and re.fullmatch(r"[0-9a-f]{40}", ref or ""):
-            try:
-                inst = subprocess.run(
-                    prefix + ["plugins", "install", repo, "--force",
-                              "--ref", ref, "--yes"],
-                    capture_output=True, text=True, timeout=180,
-                    stdin=subprocess.DEVNULL, env=_clean_env())
-            except (subprocess.SubprocessError, OSError) as exc:
-                return {"name": profile, "ok": False, "verb": "install",
-                        "detail": f"auto-install failed: {exc}"}
-            if inst.returncode == 0:
-                try:
-                    out = subprocess.run(argv, capture_output=True, text=True,
-                                         timeout=60, stdin=subprocess.DEVNULL,
-                                         env=_clean_env())
-                except (subprocess.SubprocessError, OSError) as exc:
-                    return {"name": profile, "error": f"{verb} failed: {exc}"}
-                text = ((out.stdout or "") + (out.stderr or "")).strip()
-            else:
-                return {"name": profile, "ok": False, "verb": "install",
-                        "detail": ("auto-install failed: "
-                                   + ((inst.stdout or "") + (inst.stderr or "")).strip()[-400:])}
+        return {"name": profile, "ok": False, "verb": "install",
+                "detail": f"not installed for {profile} — run: hermes -p {profile} "
+                          "plugins install "
+                          f"{repo or 'borealBytes/hermes-wearos-plugin'}"
+                          + (f" --ref {ref}" if re.fullmatch(r"[0-9a-f]{40}", ref or "")
+                             else "")}
     if verb == "enable" and out.returncode == 0:
-        # Drift re-pin (owner fresh-person test 2026-11-11): 'enable' flips a
-        # flag on whatever bytes the profile ALREADY has — one box held five
-        # different wearos revisions, and the catalog pin can lag the release
-        # while its PR is open. The checkbox means "run the current plugin",
-        # so after a successful enable we force-sync the target to THIS pane's
-        # exact revision when it differs. Honest note rides the response.
+        # Drift is REPORTED, not force-fixed (catalog review round 2): a forced
+        # re-pin could downgrade a profile already on a newer pin and its --yes
+        # skipped core's install consent. The checkbox enables; updating bytes
+        # is the owner's `plugins update` in their own shell.
         _note = ""
         _, canonical = _install_source_ref()
         if re.fullmatch(r"[0-9a-f]{40}", canonical or ""):
             was = _profile_pin(profile)
             if was and was != canonical:
-                try:
-                    repin = subprocess.run(
-                        prefix + ["plugins", "install",
-                                  "https://github.com/borealBytes/hermes-wearos-plugin.git",
-                                  "--force", "--ref", canonical, "--yes"],
-                        capture_output=True, text=True, timeout=180,
-                        stdin=subprocess.DEVNULL, env=_clean_env())
-                except (subprocess.SubprocessError, OSError) as exc:
-                    return {"name": profile, "ok": False, "verb": "enable",
-                            "detail": f"enabled but re-pin failed: {exc} — "
-                                      f"{profile} runs stale wearos"}
-                if repin.returncode != 0:
-                    return {"name": profile, "ok": False, "verb": "enable",
-                            "detail": "enabled but re-pin failed: "
-                                      + ((repin.stdout or "") + (repin.stderr or "")).strip()[-300:]}
-                _note = f" (re-pinned {was[:7]}→{canonical[:7]})"
+                _note = (f" (runs {was[:7]}, pane at {canonical[:7]} — "
+                         f"hermes{' -p ' + profile if profile != 'default' else ''}"
+                         " plugins update wearos to sync)")
             elif not was:
                 _note = " (no install metadata to verify)"
     return {"name": profile, "ok": out.returncode == 0, "verb": verb,
@@ -1707,14 +1690,15 @@ def _startup_pass() -> None:
                                                 for k, v in local_checks().items()})
 
 
-def _ensure_tts_default() -> None:
-    """Owner ruling 2026-11-11: enabling Wear Kit makes the agent SPEAK on the
-    Wear Kit's own TTS by default — and guarantees the provider is PRESENT in
-    the desktop dropdown (core's provider-option builder keeps the profile's
-    ACTIVE provider name selectable even when the plugin registry slice is
-    process-local — that's exactly what 'worked yesterday' and vanished with
-    the config wipe). Writes ONLY when this profile's config has no explicit
-    tts.provider — an explicit pick (ours or edge's) is never steamrolled."""
+def set_tts_default() -> dict:
+    """Catalog review round 2 (Nous #151546): we do NOT write tts.provider at
+    plugin load anymore — a plugin rewriting a core setting on enable goes
+    silent for every TTS surface until the ~3.3 GB engine installs. The pane's
+    Voice-out card carries an explicit button that runs THIS and states what it
+    changes; an explicit pick already in config is never steamrolled. It also
+    guarantees the provider stays PRESENT in the desktop dropdown (core's
+    provider-option builder keeps the profile's ACTIVE provider name selectable
+    even when the plugin registry slice is process-local)."""
     try:
         import re as _re
         home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
@@ -1722,18 +1706,26 @@ def _ensure_tts_default() -> None:
         txt = open(cfg, encoding="utf-8").read() if os.path.exists(cfg) else ""
         m = _re.search(r"(?m)^tts:[ \t]*\r?\n((?:^[ \t].*(?:\r?\n|$))*)", txt)
         if m and _re.search(r"(?m)^\s+provider\s*:", m.group(1)):
-            return
+            return {"ok": True, "detail": "tts.provider already set — left as you chose"}
         prof = _re.sub(r"^.*profiles/", "", home).strip("/")
         prof = prof if home.endswith(("profiles/" + prof,)) and "/profiles/" in home else "default"
         hermes = shutil.which("hermes")
         if not hermes:
-            return
+            return {"ok": False, "detail": "hermes CLI not on PATH"}
         argv = ([hermes] if prof == "default" else [hermes, "-p", prof]) + \
                ["config", "set", "tts.provider", "wearkit-gateway"]
-        subprocess.run(argv, capture_output=True, text=True, timeout=60,
-                       stdin=subprocess.DEVNULL)
-    except Exception:  # a config nicety must never break plugin load
-        logger.debug("wearos: tts default seed skipped", exc_info=True)
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            return {"ok": False,
+                    "detail": "config set failed: "
+                              + ((r.stdout or "") + (r.stderr or "")).strip()[-200:]}
+        return {"ok": True,
+                "detail": f"tts.provider = wearkit-gateway for {prof} "
+                          "(needs the Voice-out engine installed to speak)"}
+    except Exception as exc:  # an explicit button answers honestly, never silently
+        logger.debug("wearos: tts default set failed", exc_info=True)
+        return {"ok": False, "detail": f"{exc}"}
 
 
 def register(ctx) -> None:
@@ -1755,7 +1747,8 @@ def register(ctx) -> None:
             import tts_provider            # type: ignore[no-redef]
         _singleton_alias(tts_provider)
         tts_provider.register(ctx)
-        _ensure_tts_default()   # dropdown presence + speak-by-default (owner 2026-11-11)
+        # Catalog review round 2: NO config write at load. `set_tts_default()`
+        # runs only when the user presses the pane button that says what it does.
     except Exception:
         logger.warning("wearos: TTS provider registration skipped", exc_info=True)
     ctx.register_cli_command(

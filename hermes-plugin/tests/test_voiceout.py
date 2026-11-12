@@ -126,6 +126,25 @@ class VoiceoutTests(unittest.TestCase):
         self.assertEqual(p["voices"]["farmbot"], "")
         self.assertNotIn(c["card_id"], p["cards"])
 
+    def test_watch_cannot_merge_path_escaping_card_keys(self):
+        """Review round 2: card keys become file names — a watch sending
+        '../evil' must be dropped, not given a shelf outside the store."""
+        cur = int(vo.read_prefs().get("rev", 1))        # setUp already seeded
+        merged = vo.merge_prefs({"rev": cur,             # tie: gateway doc wins
+                                 "cards": {"good-card": {"speed": 1.0}}})
+        self.assertNotIn("good-card", merged["cards"])
+        base = {"rev": cur + 2, "cards": {"good-card": {"speed": 1.0}},
+                "speed": 1.0, "pitch": 0.0}
+        merged = vo.merge_prefs(base)                    # fresher: merged in
+        self.assertIn("good-card", merged["cards"])
+        evil = {"rev": cur + 12, "cards": {"../escape": {"speed": 0.9},
+                                    "ok-key-1": {"speed": 1.1},
+                                    "good-card": {"speed": 1.2}}}
+        merged = vo.merge_prefs(evil)
+        self.assertNotIn("../escape", merged.get("cards", {}))
+        self.assertIn("ok-key-1", merged["cards"])            # legal keys survive
+        self.assertEqual(merged["cards"]["good-card"]["speed"], 1.2)
+
 
 LONG3 = ("The wear kit renders every long reply sentence by sentence now. "
          "Each sentence is its own short generation with its own cache entry, "

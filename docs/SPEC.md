@@ -2569,3 +2569,22 @@ Two provable halves of one ruling, both hardware-driven same evening:
   TTS-provider entry (`wearkit-gateway`) ships in GET /api/config/schema dynamically — a
   desktop that doesn't show it is serving a schema cached ≤5 min (react-query staleTime),
   not a dead registration.
+
+- **2026-11-11 — catalog review round 2 (Nous #151546), four rulings.**
+  (1) A plugin must not rewrite a core setting on load: `_ensure_tts_default()`
+  became an explicit `set_tts_default()` invoked ONLY by the pane's "set as agent
+  voice" button (tooltip + note line state the change). (2) The Parakeet
+  aligner/transcriber runner now gets an allowlist env (PATH/HOME/LANG/TMPDIR +
+  TRANSCRIBE_LIBRARY) — provider keys never reach the native library. (3) The
+  enable self-heal (this branch, 2026-11-10) is retired: a never-installed
+  profile receives the EXACT `plugins install` command as the answer (ok=False,
+  verb 'install'); revision drift is REPORTED with `plugins update`; we never
+  run --yes for a human, so a newer catalog pin can never be downgraded by a
+  checkbox. Rationale for the 'Where Agent flashes' fix survives: the pane
+  renders the command inline. (4) Card ids are the only shape a watch may merge
+  (`^[a-z0-9-]{1,64}$`, enforced in merge_prefs AND before any tts_air
+  filesystem path) — keys double as filenames; `../` must not escape the cards
+  dir. Recommended-and-done: sha256 pins for every STT quant and every ungated
+  community voice weight (HF LFS oids, cross-verified against day-one
+  observed-sha256 files), and NeuCodec revision pins (neuphonic a9400213, bezzam
+  port 11873db8) — downloads take `resolve/<rev>`, never floating `main`.

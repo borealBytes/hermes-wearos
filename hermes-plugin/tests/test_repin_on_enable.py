@@ -49,17 +49,36 @@ def _wire(wearos, monkeypatch, tmp_path, calls):
     monkeypatch.setattr(wearos.subprocess, "run", fake_run)
 
 
-def test_enable_repins_a_drifted_profile(wearos, monkeypatch, tmp_path):
+def test_enable_reports_drift_without_touching_it(wearos, monkeypatch, tmp_path):
+    """Review round 2 contract: enable NEVER mutates a foreign profile's
+    revision — drift is REPORTED with the exact update command (consent is
+    core's job, and a forced --yes re-pin could downgrade a newer pin)."""
     calls = []
     _seed_pins(tmp_path, CANON, "target", STALE)
     _wire(wearos, monkeypatch, tmp_path, calls)
     res = wearos.delegate_enablement("target", True)
     assert res["ok"] is True
-    assert "re-pinned" in res["detail"] and f"{STALE[:7]}→{CANON[:7]}" in res["detail"]
-    inst = [c for c in calls if "install" in c][-1]
-    assert "--force" in inst and "--yes" in inst
-    assert inst[inst.index("--ref") + 1] == CANON           # exact bytes, no roulette
-    assert wearos._profile_pin("target") == CANON
+    assert STALE[:7] in res["detail"] and CANON[:7] in res["detail"]
+    assert "hermes -p target plugins update wearos" in res["detail"]
+    assert not any("install" in c for c in calls)            # no re-pin subprocess
+    assert wearos._profile_pin("target") == STALE            # bytes untouched
+
+
+def test_never_worn_profile_gets_the_install_command(wearos, monkeypatch, tmp_path):
+    """No metadata == no install consent ever given there. core errors on
+    enable ('No plugin named'); the answer must be the EXACT install command
+    — never a --yes run on the user's behalf (review round 2)."""
+    calls = []
+    _seed_pins(tmp_path, CANON, "target", None)
+    def fake_run(argv, **kw):
+        calls.append(list(argv))
+        return _Done(1, "Error: No plugin named wearos")
+    monkeypatch.setattr(wearos.shutil, "which", lambda name: "/usr/bin/hermes")
+    monkeypatch.setattr(wearos.subprocess, "run", fake_run)
+    res = wearos.delegate_enablement("target", True)
+    assert res["ok"] is False and res["verb"] == "install"
+    assert "plugins install" in res["detail"] and CANON in res["detail"]
+    assert not any("install" in c for c in calls)   # command handed over, not run
 
 
 def test_current_profile_is_left_alone(wearos, monkeypatch, tmp_path):
