@@ -68,21 +68,21 @@ def test_delete_device_resolves_odd_ref_via_device_list():
     calls: list = []
     devices = {"devices": [
         {"id": "6528413509656018", "nodeId": "nwd6MTMjys11CNTRL",
-         "name": "wear-demo-watch-2.tailb12aa5.ts.net", "hostname": "wear-demo-watch"},
+         "name": "watch.example.ts.net", "hostname": "watch"},
     ]}
 
     def fake_request(method, path, payload_=None, *, raw_body=b"", content_type="application/json",
                      auth=True, if_match=None, accept=None, want_headers=False):
         calls.append((method, path))
-        if path == "/device/wear-demo-watch-2.tailb12aa5.ts.net":
+        if path == "/device/watch.example.ts.net":
             raise tailscale.TailnetAPIError(404, "404 page not found")
         return b"null"
 
     client._request = fake_request
     client._get = lambda path: (calls.append(("GETLIST", path)), devices)[1]
 
-    out = client.delete_device("wear-demo-watch-2.tailb12aa5.ts.net")
-    assert out == {"deleted": "6528413509656018", "resolved_from": "wear-demo-watch-2.tailb12aa5.ts.net"}
+    out = client.delete_device("watch.example.ts.net")
+    assert out == {"deleted": "6528413509656018", "resolved_from": "watch.example.ts.net"}
     assert ("DELETE", "/device/6528413509656018") in calls
 
 

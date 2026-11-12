@@ -48,7 +48,8 @@
  *   WS   /stt/stream      ← BINARY mic audio from the watch (Ogg/Opus · ADTS AAC · legacy PCM —
  *        (bearer)            format sniffed from the first bytes), TEXT {"end":true}
  *                          → TEXT {"partial":"…"}* / {"final":"…"} / {"error":"…"}   (batch-4 #9)
- *        Engine default from config.json `stt_stream_engine`: "whisper" (buffered — final only)
+ *        Engine default from config.json `stt_stream_engine`: "parakeet" (transcribe.cpp GGUF
+ *        streaming — the owner-doctrine default; "whisper" buffered stays a trivial opt-in)
  *        | "parakeet" (transcribe.cpp GGUF — partials WHILE talking). The watch may override per
  *        session via ?engine=<id>; GET /health reports stt:{engine,ready,missing,engines[]}.
  *        v2 (D16): parakeet is probed in TWO homes — watchkit's own .venv AND the Wear Kit

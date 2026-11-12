@@ -355,6 +355,9 @@ fun SessionActionSheet(
     onDismiss: () -> Unit,
     isArchived: Boolean = false,
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open SessionActionSheet") }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             modifier = Modifier
@@ -422,6 +425,9 @@ fun SessionDeleteSheet(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open SessionDeleteSheet") }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             modifier = Modifier

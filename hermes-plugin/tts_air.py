@@ -57,7 +57,7 @@ MODEL_BYTES = 802_658_528                              # HF API truth, 2026-11-0
 MODEL_SHA256 = "PENDING"     # gated: auto — anonymous fetch 401s. Pinned on the first
                              # token-carrying install; until then install() size-gates
                              # and status() reports verified_pending (never a silent
-                             # skip). Same pattern voiceout.SEED_SHA256 uses.
+                             # skip). TOFU on first fetch.
 OUTPUT_RATE = 24_000                                   # neucodec is 50 Hz → 24 kHz audio
 BUILD_TIMEOUT = 60 * 60                                # torch wheel + llama-cpp build
 SYNTH_TIMEOUT = 600                                    # a whole paragraph on weak CPUs; a cold first run (model+mmap+codec warm) can exceed 180s after install

@@ -34,19 +34,24 @@ if str(_PKG) not in sys.path:
 
 
 def _ensure_hermes_on_path() -> None:
+    # The host modules are a CHECKOUT (~/.hermes/hermes-agent), not just an installed
+    # distribution: an editable install can make `hermes_constants` importable while its
+    # checkout-root siblings (hermes_yaml) stay invisible — agent.secret_scope.
+    # build_profile_secret_scope then dies on ModuleNotFoundError inside the plugin's
+    # bare except and a granted profile key reads as "no API_SERVER_KEY set" (learned
+    # 2026-11-11 running the suite on the Hermes-managed interpreter). Put the checkout
+    # on sys.path whenever it is there, importable or not.
+    for cand in (os.environ.get("HERMES_AGENT_ROOT", ""),
+                 str(Path.home() / ".hermes" / "hermes-agent")):
+        if cand and (Path(cand) / "hermes_constants.py").is_file() \
+                and cand not in [str(p) for p in sys.path]:
+            sys.path.insert(0, cand)
+            break
     try:
         import hermes_constants  # noqa: F401
         return
     except ImportError:
         pass
-    candidates = [
-        os.environ.get("HERMES_AGENT_ROOT", ""),
-        str(Path.home() / ".hermes" / "hermes-agent"),
-    ]
-    for cand in candidates:
-        if cand and (Path(cand) / "hermes_constants.py").is_file():
-            sys.path.insert(0, cand)
-            return
     raise RuntimeError(
         "Hermes host modules not importable — run pytest with the Hermes interpreter or "
         "point HERMES_AGENT_ROOT at the hermes-agent checkout"

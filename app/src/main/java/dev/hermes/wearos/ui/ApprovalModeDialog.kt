@@ -43,6 +43,7 @@ fun ApprovalModeDialog(
     agent: String,
     onPick: (ApprovalMode) -> Unit,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,  // #24 stale-lift guard
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -52,7 +53,7 @@ fun ApprovalModeDialog(
         val edgeScope = rememberCoroutineScope()
         // BATCH-5 #18: gesture on a viewport-sized wrapper, not the content-tall scroll Column.
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
                 // BATCH-6 #29: button lists circle at 2f (see SettingsScreen).
                 .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { edgeDlgScroll.scrollBy(total) } },

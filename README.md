@@ -1,16 +1,35 @@
 # Hermes Wear OS
 
+<p align="center">
+  <img src="hermes-plugin/docs/banner.png" width="820" alt="Hermes Wear Kit banner: the orb's eight-wedge dial and the gateway-minted pairing code on two round watch faces — voice-first Wear OS client for your own Hermes gateway"/>
+</p>
+
+<p align="center">
+  <a href="https://github.com/borealBytes/hermes-wearos/releases/latest"><img src="https://img.shields.io/github/v/release/borealBytes/hermes-wearos?label=watch&color=7A9CC6" alt="watch release"/></a>
+  <a href="https://github.com/borealBytes/hermes-wearos-plugin/releases/latest"><img src="https://img.shields.io/github/v/tag/borealBytes/hermes-wearos-plugin?label=plugin&color=7A9CC6" alt="plugin release"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
+  <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/Hermes%E2%80%91agent-%E2%89%A5%200.23.0-1A1D22" alt="Hermes pin"/></a>
+  <a href="https://github.com/borealBytes/hermes-wearos/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/borealBytes/hermes-wearos/ci.yml?label=CI" alt="CI"/></a>
+</p>
+
+<p align="center"><b>▶ <a href="docs/demo/voiceout-voicedemo/wearos-voice-demo.mp4">Watch the demo</a></b> — 46 s, one real pairing, one real question, answered out loud in the owner's cloned voice. <!-- TODO(x): swap to the native X post URL the day the announcement is live. --></p>
+
 **Your Wear OS watch talks directly to your own AI gateway.** No phone companion, no cloud relay,
 no Telegram in the middle. Tap the orb, say a thing, and a real agent on your own box — with real
 tools, memory, cron jobs, and your files — answers on your wrist, out loud, before your hand
 leaves the glass.
 
-Watch front-ends for Hermes gateways have existed; this is the first **full-featured** one — the
-whole gateway on the wrist (every agent, approvals, media that animates, session management), not a
-single scoped chatbot bolted to a mic. **In active development: features land roughly weekly.**
-**Install today** is the CI-built APK; the **Google Play Store listing is pending** in Google's
-approval queue — it's coming, because an install that takes a Store tap instead of developer mode
-is the point of making this easy.
+Stock watch assistants are a mic bolted to a chatbot, speaking one vendor voice from a datacenter.
+This is the whole gateway on the wrist: every agent, every session, approvals, media that
+animates — and it clones *your* voice from 3 seconds of audio, computed on your gateway's CPU,
+then karaoke-lights the words on your glass as they're spoken.
+
+Watch front-ends for Hermes gateways have existed; this is the first **full-featured** one.
+**Status, tiered:** hardware-proven on a Galaxy Watch Ultra (SM-L705U) and the Wear OS emulator;
+in active development, features land roughly weekly. **Install today** is the CI-built APK from
+[releases](https://github.com/borealBytes/hermes-wearos/releases/latest); the **Google Play Store
+listing is pending** in Google's approval queue — it's coming, because an install that takes a
+Store tap instead of developer mode is the point of making this easy.
 
 <p align="center">
   <img src="docs/demo/demo-walkthrough-v0.8.0.gif" width="280" alt="The v0.8.0 walkthrough: the shipped splash film opens inside the watch circle, then sixteen captioned beats walk the features — orb dial, streaming markdown, a four-column table, image card, mermaid diagram, push-to-talk, model picker, the in-session approval card, the approval-mode sheet, a settled-answer notification, the desktop-watch mirror card, the comfy-generated aurora card, an animated GIF, About, tailnet status, sessions — closing on the wordmark"/>
@@ -44,7 +63,7 @@ out of the way forever.
 
 | | |
 |---|---|
-| <img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb at the center ringed by its lane icons — the orb is the only control; each drag direction fires keyboard, mute, settings, model, commands, chats, sessions, or agents"/> | **Round-first — that's why every watch image here is a circle.** These screenshots are masked to a circle because that is exactly what the owner's Galaxy Watch shows. Under the mask the app renders a normal 480×480 Wear OS framebuffer; the round glass simply never shows those corners. On a square Wear OS screen those corner pixels are real pixels you'll actually get — you see *more* than these screenshots, never less — and the layout was designed for the circle from the first pass, so nothing important ever lived in a corner anyway. Built and tuned on Galaxy Watch (Wear OS 5, min SDK 30); everything travels to other Wear OS watches except the optional body-sensor tools, which ride Health Services — a capability Samsung watches provide and others don't (the app says "health services: unavailable" on its own About page and carries on). Expect small per-OEM tweaks for non-Samsung watches; a OnePlus Watch is next on the test bench. (The square ones are the desktop pane — that half lives on a rectangle.) |
+| <img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb at the center ringed by its lane icons — the orb is the only control; each drag direction is one wedge of an eight-hour clock (this shot predates the v0.10.11 clock, see the dial table below)"/> | **Round-first — that's why every watch image here is a circle.** These screenshots are masked to a circle because that is exactly what the owner's Galaxy Watch shows. Under the mask the app renders a normal 480×480 Wear OS framebuffer; the round glass simply never shows those corners. On a square Wear OS screen those corner pixels are real pixels you'll actually get — you see *more* than these screenshots, never less — and the layout was designed for the circle from the first pass, so nothing important ever lived in a corner anyway. Built and tuned on Galaxy Watch (Wear OS 5, min SDK 30); everything travels to other Wear OS watches except the optional body-sensor tools, which ride Health Services — a capability Samsung watches provide and others don't (the app says "health services: unavailable" on its own About page and carries on). Expect small per-OEM tweaks for non-Samsung watches; a OnePlus Watch is next on the test bench. (The square ones are the desktop pane — that half lives on a rectangle.) |
 
 ## Install in five
 
@@ -66,7 +85,12 @@ out of the way forever.
    watch collects its single-use enrollment key, its node joins *your* tailnet, and the lane
    session delivers the real secrets over the tunnel. The tunnel is everything from there on.
 
-After pairing, the daily loop is ≤3 touches on the wrist: raise → tap the orb → talk.
+After pairing, the daily loop is ≤3 touches on the wrist: raise → tap the orb → talk. The agent you
+paired through answers with no further ceremony; every *other* agent earns its place on the ring in
+the Wear Kit pane's checkbox list — and the checkbox *is* the grant, no separate box to forget.
+
+**Testers welcome.** Pair it against any Wear OS watch or the emulator — if the pairing takes you
+longer than 30 seconds, or anything slips through, I want to know.
 
 ## Why this exists
 
@@ -108,7 +132,7 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/28-browser-opened.png" width="180"/> | <img src="docs/screens/54-tool-activity.png" width="180"/> |
 | **Links are links** — a markdown link in an answer is blue, underlined, tappable; here the watch's browser renders the repo's GitHub org profile, at full width, on the wrist. | **See what the tools did** — every run that touches a tool carries a collapsible activity card: step count, per-tool commands, done ✓. The desktop's verbosity box, on your wrist, persisted in the transcript. |
 | <img src="docs/screens/33-approval-card.png" width="180"/> | <img src="docs/screens/56-approval-modes.png" width="180"/> |
-| **Approvals, in-session** — a gated tool call pauses the run and the card rides with it: yellow heading, the *exact parked command* in a mono chip; scroll the card off-glass and the answer moves to the orb flanks — ✅ left, ❌ right, no app-switching, no terminal. Tap ✅ and the tool executes mid-run; the settled answer lands in the same thread seconds later. | **The approval level is yours, per chat** — Manual answers every prompt yourself, Smart auto-approves while you're away and asks when the chat is on your glass, Inherit defers to the agent default (SPEC §12.9). |
+| **Approvals, in-session** — a gated tool call pauses the run and the card rides with it: crimson heading, the parked command in a mono chip; scroll the card off-glass and the answer moves to the orb flanks — ✅ left, ❌ right, no app-switching, no terminal. Tap ✅ and the tool executes mid-run; the settled answer lands in the same thread seconds later. | **The approval level is yours, per chat** — Manual answers every prompt yourself, Smart auto-approves while you're away and asks when the chat is on your glass, Inherit defers to the agent default (SPEC §12.9). |
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/21-session-search.png" width="180"/> |
 | **Sessions, from your wrist** — every session your agent has, newest first, with a scrolling chip row to filter in one tap (`all` / per-agent / `💻 computer` — desktop-and-web lanes — / `archived`); one-tap new. | **Voice-or-type search, every session, every agent** — one query hits the gateway's full-text index; results come back across all your agents with the matching line quoted and the hit bracketed. |
 | <img src="docs/screens/22-session-sheet.png" width="180"/> | <img src="docs/screens/23-archived-chip.png" width="180"/> |
@@ -118,7 +142,7 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/31-notify-plain.png" width="180"/> | <img src="docs/screens/32-notify-approval.png" width="180"/> |
 | **Settled while you're away** — the answer lands as an ordinary Wear notification, orb-spirit avatar and all; the reply text is right in the card. Your DND, mute, and per-app settings all apply — the watch never shouts over a meeting. | **Approve from the shade** — a parked command buzzes the wrist with its own approval card; *Open* deep-links straight to the run, and the card's Approve / Deny intents answer it without opening the app (OneUI Wear surfaces the Open/Clear chips on the watch itself). |
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/30-settings-lane.png" width="180"/> |
-| **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together; ● marks the live agent. | **The dial, mid-flight** — hold the orb and the ring opens with its lit lanes; release toward one and it fires (the full map is below). The ⚙ lane is why Settings is never more than a flick. |
+| **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together; ● marks the live agent. | **The dial, mid-flight** — hold the orb and the ring opens with its lit lanes; release toward one and it fires (the full map is below; this shot is the 0.1-era seven-icon layout). The ⚙ lane is why Settings is never more than a flick. |
 | <img src="docs/screens/48-media-cards.png" width="180"/> | <img src="docs/screens/50-gif-card.gif" width="180" alt="A chat image card playing an animated GIF: test-pattern bars cycling under a GIF chip, recorded off the watch and circle-masked — real motion, real pixels"/> |
 | **Generated media rides the answer** — when the desktop can render, so can the wrist: generated video and an audio sting land as cards in one answer thread — poster, ▶ chip and the file's own name, each routed by extension (re-shot on the owner's Galaxy Watch, 2026-11-09; charts, GIFs and every other type ride the same lane) — tap any card for fullscreen. | **Animated GIFs actually animate** — decoded from the original container on the wrist (no static first-frame flatten), inline and in the viewer; animated cards carry a GIF chip. This is a screen recording, circle-masked: the bars are moving. |
 | <img src="docs/screens/49-video-player.gif" width="180" alt="The full-screen video player recorded off the watch while playing: moving test-pattern bars under the transport, the chrome fading out and the volume readout on the bezel path — circle-masked, real motion (first take)"/> <img src="docs/screens/49b-video-playing.gif" width="180" alt="2026-11-09 re-take on the real watch, cut from proof-play.mp4 below: the full-screen player mid-playback of a MiniMax H3 northern-lights render — the aurora sweeping across frames while the bezel-volume readout fades at 100 % — circle-masked, real motion"/> | <img src="docs/screens/52-audio-player.png" width="180"/> |
@@ -130,7 +154,7 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/41-edge-circle-pair.png" width="420"/> | <img src="docs/screens/46-attention-pair.png" width="420"/> |
 | **Scroll by rolling the rim of the glass** — an edge-drag circles any list (settings, agents, models, approvals, chats), thumb never leaving the bezel — and normal swipes still scroll. | **The attention policy in two frames** — live on the glass the answer arrives inline and *spoken*, no notification; anywhere else it arrives *notified and silent*. It never shouts twice. |
 | <img src="docs/screens/37-voice-output.png" width="180"/> | <img src="docs/screens/38-volume-db.png" width="180"/> |
-| **Voice out, fully on-device** — the engine picker, system voice with fallback, reply speed (this wrist reads at 1.81×), and a preview button, all on one Settings page. | **Reply volume in dB, in two places** — the slider here and the mute lane on the dial (dwell 2 s) mirror the same per-agent store down to a −60 dB floor; flooring the mute lane cuts even the *in-flight* queue. |
+| **Voice out, per agent** — the on/off switch, this agent's reply volume, and the one global reply speed (1.01× here) on one Settings page. | **Reply volume, in two places** — this slider (a % position on a dB taper down to a −60 dB floor) and the mute lane on the dial (dwell 2 s) write the same per-agent store; flooring the mute lane cuts even the *in-flight* queue. |
 | <img src="docs/screens/39-karaoke-follow.png" width="180"/> | <img src="docs/screens/40-stt-source.png" width="180"/> |
 | **The glass follows the voice** — while a reply is spoken the sentence being read stays in view, teleprompter-style; one touch hands scroll control back to you mid-speech. | **Pick your audio path per agent** — Local Vosk (offline default), the vendor recognizer honestly labeled OFF-DEVICE (Google or Samsung, whichever your watch ships), or Gateway: whisper rows (final when you stop) and parakeet (streaming partials) — the highlighted row is the live source. |
 | <img src="docs/screens/56-voicein-picker.png" width="180"/> | <img src="docs/screens/57-voicein-not-installed.png" width="180"/> |
@@ -138,11 +162,11 @@ One shipped capability per row — every image below is a real capture in
 | <img src="docs/screens/58-voicein-downloading.png" width="180"/> | <img src="docs/screens/59-voicein-installed.png" width="180"/> |
 | **The card becomes a progress bar** — `downloading 30% · 13 MB of 41 MB`, `cancel` ready. The pull is Range-resumable: a wifi dropout keeps the `.part` and the next tap continues byte-for-byte where it died. The tree swaps in only after the acoustic-model marker verifies — a half model reads *failed*, never *installed*. | **`installed · works offline`** — airplane-mode dictation on your wrist, and `remove` gives back the 69 MB. `scripts/get-vosk-model.sh` remains the adb path for scripted setups; both write the identical tree, and the mic resolves it live — no app restart. |
 | <img src="docs/screens/18-settings-home.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
-| **Settings home** — the Gateways row (two saved, the current one checked, hostname pixelated), Voice out / Voice in / Display / Watch below. Every knob is on-device, and there are no hidden ones. | **Display settings** — markdown toggle, launch-splash modes, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
+| **Settings home** — the Gateways row (saved count + the checked current one), Voice out / Voice in / Display / Watch below. Every knob is on-device, and there are no hidden ones. | **Display settings** — markdown toggle, launch-splash modes, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
 | <img src="docs/screens/10-settings-body.png" width="180"/> | <img src="docs/screens/15-settings-tail.png" width="180"/> |
-| **Body tools, opt-in** — heart rate and steps behind independent toggles, all default off; the truth about each signal is in the table below. | **Settings tail** — the scroll ends where the diagnostics begin: the About row stamps the shipped version and opens the full page. |
+| **Body tools, opt-in** — heart rate and steps behind independent toggles, all default off; the truth about each signal is in the table below. | **Settings tail** — the scroll ends where the diagnostics begin: the About row stamps the shipped version and opens the full page (v0.8-era shot — the stamp reads v0.8.0). |
 | <img src="docs/screens/47-about-screen.png" width="180"/> | <img src="docs/screens/36-splash-picker.png" width="180"/> |
-| **Support without a support line** — Settings ends in an About page that states its own truth: shipped version, STT model presence, license, and who made it; when something is off, you read it there, on the wrist, offline. | **Splash modes are yours** — Settings ▸ Display: the built-in film, a static frame, your own picked media, or none at all. Markdown, launch splash, and the orb live on this one page. |
+| **Support without a support line** — Settings ends in an About page that states its own truth: shipped version, STT model presence, license, and who made it; when something is off, you read it there, on the wrist, offline (v0.8-era shot — the version line reads v0.8.0). | **Splash modes are yours** — Settings ▸ Display: the built-in film, a static frame, your own picked media, or none at all. Markdown, launch splash, and the orb live on this one page. |
 | <img src="docs/screens/35-splash-film.gif" width="180" alt="The splash film itself, circle-masked and looping: the pocket-watch lid springs open, eclipse light pours out, and Hermes rises through it — the real intro movie, not a still"/> | **A cold start opens on a moving film frame** — the intro film plays and the app *reveals itself mid-motion inside the film* (`revealIsMoving`, one clean cut), so the splash is a doorway, not a wallpaper. **Tap anywhere while it plays and you're in.** And the film is strictly for fun: the owner's first fully AI-generated video, made locally end to end (Qwen Image stills, MiniMax motion, stitched on the same box) — and it has audio. Fun. |
 
 Plus: gateway notifications with approve buttons (above), a GBoard prompt editor for long asks
@@ -165,31 +189,36 @@ became a drag direction instead:
   one press cancels the *server-side* run, not just the UI. It also burns red **while it speaks** —
   there a tap just mutes (the answer already landed), and a press-and-hold in either state pops the
   dial ring in place so you can grab the keyboard or a `/steer` mid-answer without stopping anything.
-- **Press, hold, drag** — the dial. Hold the disc for a beat and a ring appears around it: nine
-  wedges, each with an icon and a label. Keep your finger down and slide around the ring — the lane
-  under your finger highlights — and **whatever lane you're on when you let go is the one that
-  fires.** The ring is up in under 100 ms and the icons sit outside the activation gate, so once
-  you've learned the map it's a blind flick.
+- **Press, hold, drag** — the dial. Hold the disc for a beat and a ring appears around it: **eight
+  wedges, a real clock face** — every 45°, every icon at a readable half-hour — each with an icon
+  and a label. Keep your finger down and slide around the ring — the lane under your finger
+  highlights — and **whatever lane you're on when you let go is the one that fires.** The hit
+  region is the whole wedge from the orb's center to the glass edge, like a clock hand: you aim at
+  a *time*, not at a small icon, and distance doesn't matter — only the angle. The ring is up in
+  under 100 ms, so once you've learned the map it's a blind flick.
 
-The nine directions, on the default map (clock-face — every one remappable, and `off` blanks a
+The eight directions, on the default map (clock-face — every one remappable, and `off` blanks a
 direction so an accidental drag does nothing; keyboard is pinned at 12:00 — fastest reach for the
-most-used lane):
+most-used lane; gear dead-on 3:00 because a clock that lies about the hours trains nobody):
 
 | Clock | Lane | Release does… |
 |---|---|---|
 | 12:00 | ⌨ **keyboard** | opens the text editor — type it, or use the keyboard's own mic |
-| 1:20 | 🔊 **mute** | toggles spoken replies (TTS is on by default); dwell 2 s here and the ring becomes a volume slider for THIS agent |
-| 2:40 | ⚙ **settings** | straight to Settings — because getting there otherwise is a finger-crawl (`record` → hi-fi whisper STT lives on as a remap lane, roadmap in progress) |
-| 4:00 | 🧠 **model** | per-chat model picker — lists only what your gateway has enabled; the pick is remembered for that chat, and "gateway default" hands it back |
-| 5:20 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
-| 6:40 | 💬 **chats** | your chat list for the current agent |
-| 8:00 | ≡ **sessions** | the session browser — adopt desktop sessions, fork, archive, delete |
-| 9:20 | 👤 **agents** | the agent picker — persona, tools, session space, and gateway key swap together |
-| 10:40 | ✅ **approvals** | the approval-mode sheet for THIS chat — inherit, manual, smart, off |
+| 1:30 | 🔊 **mute** | toggles spoken replies (TTS is on by default); dwell 2 s here and the ring becomes a volume slider for THIS agent |
+| 3:00 | ⚙ **settings** | straight to Settings — because getting there otherwise is a finger-crawl (`record` → hi-fi whisper STT lives on as a remap lane, roadmap in progress) |
+| 4:30 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
+| 6:00 | 🧠 **model** | per-chat model picker — lists only what your gateway has enabled; the pick is remembered for that chat, and "gateway default" hands it back (this wedge sits low on the glass: rise the orb first, or aim the arc) |
+| 7:30 | ≡ **sessions** | the session browser — adopt desktop sessions, fork, archive, delete |
+| 9:00 | 👤 **agents** | the agent picker — persona, tools, session space, and gateway key swap together |
+| 10:30 | ✅ **approvals** | the approval-mode sheet for THIS chat — inherit, manual, smart, off |
 
-Remap any direction at **Settings ▸ Display ▸ Orb dial** — tap a direction's row and it advances to
-the next action. The chat reads the change live: the very next flick obeys the new map, and the ring
-icons redraw with it.
+There is also a **spin**: slide up off the orb, *hold* inside the top wedge, then go left or right —
+the ring physically rotates a slot per detent under your finger and you release wherever it lights
+(the low 6:00 wedge exists precisely so the spin can raise it to comfort). A passing drag never
+trips it: arming needs a real dwell, so an ordinary flick to any hour always commits what you aimed
+at. Remap any direction at **Settings ▸ Display ▸ Orb dial** — tap a direction's row and it advances
+to the next action (chats and record ride along as remap options). The chat reads the change live:
+the very next flick obeys the new map, and the ring icons redraw with it.
 
 ## The back button never quits
 
@@ -329,7 +358,7 @@ learned from watchkit's read of the profiles' `.env`s (re-learned on a self-time
 created agent is asking-ready before you ever tap it). Agents without a key still list their
 sessions; asking them needs the key:
 
-<img src="docs/screens/42-gateways-multi.png" width="180"/> <img src="docs/screens/43-agent-keys.png" width="180"/>
+<img src="docs/screens/42-gateways-multi.png" width="180" alt="The gateway manager mid-edit: a saved demo row with its delete chip, the + add row below"/> <img src="docs/screens/43-agent-keys.png" width="180"/>
 
 ## The Wear Kit pane
 
@@ -338,31 +367,45 @@ whose whole job is a four-step checklist:
 
 | | |
 |:--:|:--:|
-| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: install checklist, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen: the tailnet handle typed, Knock button under a code field — the shot predates 0.2, where the 6-digit code is gateway-minted"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. (Shots are from the 0.1 pane; 0.2 replaces PIN+claim with the window/Approve code ceremony, per-agent key grants, cron-alert prefs, and the pinned Parakeet STT installer — see [hermes-plugin/README.md](hermes-plugin/README.md).) Agent names are blurred by the maintainer — they are yours to populate. |
+| <img src="docs/screens/67-wearkit-pane.png" width="290" alt="The Wear Kit pane inside Hermes Desktop: install checklist, paired devices, readiness lights (agent names blurred by the maintainer)"/> | <img src="docs/screens/68-pin-screen.png" width="260" alt="A cold watch's Pair screen (v1-era shot): the tailnet handle typed, Knock button under a watch-minted 6-digit PIN — v2 instead shows the gateway-minted code"/> **What the plugin puts on your desktop, and what the watch answers with.** The pane's job is the checklist; the watch's job is one number. (These two shots are 0.1-era; the live pane is the four-step checklist above with voice dropdowns, Enable-all, and ✅/❌ health lights — re-shoot wave below. See [hermes-plugin/README.md](hermes-plugin/README.md).) Agent names are blurred by the maintainer — they are yours to populate. |
 
 1. **Install the APK** — a direct link to
    [GitHub Releases](https://github.com/borealBytes/hermes-wearos/releases/latest) and the
    [repo](https://github.com/borealBytes/hermes-wearos).
-2. **Enable Wear Kit for your agents** — one checkbox per profile on the pane (each toggle shells
-   out to the core's own `hermes plugins enable|disable wearos -p <profile>` — fixed argv, never a
-   shell); enable all, then uncheck who should *not* talk to the watch.
-3. **Open the app on the watch** — one field (your funnel handle) and a Knock button. The window
-   is closed by default; open it first: `hermes watch pair` or the pane's Pair button.
-4. **Approve the code on your computer.** The watch shows a gateway-minted 6-digit code; run
-   `hermes watch pair <CODE>` (or Approve in the pane — or `/pair <CODE>` on a local surface; a
+2. **Pair the watch** — the pair button opens the window and toggles back down with a bare
+   countdown chip while it waits. On the watch: one field (the funnel handle — the pane shows the
+   bare hostname and completes it for you) and a Knock. The watch shows a gateway-minted 6-digit
+   code; approve on the computer (Approve in the pane, or `hermes watch pair <CODE>`; a
    messaging-platform reply honestly gets "approve it on your computer"). The watch collects its
    enrollment key, enrolls its node, and pulls its real secrets over the whois-verified lane.
+   No watch row carries an agent name — the row is the device; the grant is yours to make.
+3. **Enable Wear Kit for your agents** — one checkbox per profile, and the checkbox *is* the
+   grant (there is no separate grant box to forget): checking it writes the grant AND runs the
+   core's own enable verb (`hermes plugins enable wearos -p <profile>`, fixed argv) — which means
+   "run the *current* plugin for that profile", so enabling re-pins a profile left behind by an
+   update. An enable-time re-pin rewrites agent keys, so the plugin restarts that profile's lane
+   once — routes mount at boot, one restart, not a restart storm. Unchecking removes the agent
+   from the watch's ring; it never self-disables the plugin. Fresh installs grant nobody: the
+   default is *no agent on the watch until you say so*, and an Enable-all box sits above the list
+   for the common case. Each row also carries the agent's **voice-out dropdown** (its voice card —
+   default engine included), riding the same canonical store as the watch.
+4. **Readiness, not vibes** — ✅/❌ lights for tailscaled, credential, MagicDNS, funnel; every red
+   light names its fix verb, and `hermes watch setup` prints the same list as JSON.
 
-Below the checklist: the paired-device list and the **readiness lights** (tailscaled, credential,
-MagicDNS, funnel) — every red light names its fix verb, and `hermes watch setup` prints the same
-list as JSON. The pane talks to the plugin's own REST half (`dashboard/plugin_api.py` mounted at
+The pane talks to the plugin's own REST half (`dashboard/plugin_api.py` mounted at
 `/api/plugins/wearos/*`, read pane-side with `ctx.rest`) — and that mount is **hot**: installing or
 updating the plugin makes the backend answer the very next request, no app restart. (A pane only
 needs the card's **Rescan** to pick up fresh JS; a row stuck on *"copying…"* is core's
-pending-sync state, and Rescan lands it too.) The checkbox delegates to the core's own enable verb
-(`hermes plugins enable|disable wearos -p <profile>`, fixed argv — the pane ships no editor of its
-own), and the pane adds the v2 halves: window/Approve controls with the live pending list, per-device
-Revoke, per-agent key grants, per-agent cron-alert preference, and the pinned Parakeet STT installer.
+pending-sync state, and Rescan lands it too.) The pane adds the v2 halves: window/Approve controls
+with the live pending list, per-device Revoke, per-agent cron-alert preference, and the pinned
+Parakeet STT installer.
+
+<!-- TODO(shots, v0.10 re-shoot wave): pane + voice pages here are 0.1/0.2-era. New captures owed
+     for: the v0.10 dial (8-wedge clock), the Voice-out page (cards, paragraph chunk, speed dial),
+     and the current pane (steps APK→Pair→Enable, voice dropdowns, health lights). PRIVACY MASK
+     (owner 2026-11-11): blur/hide any AGENT NAME that is not enabled for the watch, the gateway
+     hostname, and session titles — public art carries no P2 data. -->
+
 The web dashboard shows the same plugin as a plain management tile
 (Disable / Remove, *"No dashboard tab"* — honestly: this plugin's page is the Desktop pane, not
 a web page; `/api/plugins/wearos/*` is an API namespace, not a tab).
@@ -384,7 +427,7 @@ terminal.
 | <img src="docs/screens/61-vm-plugins-page.png" width="420"/> | <img src="docs/screens/62-vm-wizard-red.png" width="420"/> |
 | **A brand-new install's Plugins page** (Settings ▸ **Plugins**): the `wearos` row is the only user-source plugin on the box. The left nav grows a `wearos` sub-entry; the row and the **Manage plugins →** link both land on the Wear Kit pane — the config form two shots below is exactly what that click opens. The card legitimately says "No dashboard tab". | **`hermes watch setup` before any credential** — verbatim wizard JSON: red lights, each with its fix hint. Nothing invented for the camera. |
 | <img src="docs/screens/63-vm-wizard-green.png" width="360"/> | <img src="docs/screens/64-vm-pairing-ceremony.png" width="480"/> |
-| **Tailnet joined, funnel up, no watch yet** — all green except `devices_online: 0 paired`. Honest state, honest screenshot. | **The whole ceremony, start to finish (0.1-era shot)** — window open → watch knocks `POST /pair/begin` with its device secret → gateway shows the code → `hermes watch pair <CODE>` approves → pickup by secret, packet collected ONCE (the second ack gets 410). Single-use by construction. |
+| **Tailnet joined, funnel up, no watch yet** — all green except `devices_online: 0 paired`. Honest state, honest screenshot. | **The pairing code, minted by the gateway** (v2-era shot) — the watch knocks, the door answers with a 6-character code, the wrist shows it big; `hermes watch pair <CODE>` approves, pickup is single-use by construction. (The 0.1-era terminal-ceremony shot this row used to carry showed the retired v1 PIN claim — replaced in the 2026-11 privacy re-mask.) |
 | <img src="docs/screens/65-vm-wizard-paired.png" width="320"/> | <img src="docs/screens/66-vm-webapp-plugin-settings.png" width="420"/> |
 | **After the ceremony** — all green, `1 paired`, and the device row from `hermes watch devices`. | **The real plugin config form** (Settings ▸ Plugins ▸ wearos), rendered from `config_schema` — secret fields empty by design. |
 
@@ -399,24 +442,42 @@ Start the optional watchkit helper with `scripts/watchkit.sh` or the bundled
 
 ## Voice, honestly
 
-There is no free, offline, *perfect* STT on a watch today. The Voice-in page offers three honest
-paths (and one keyboard back door):
+**Voice-in** has one default that a self-hosted setup deserves and four paths total — because
+there is no free, offline, *perfect* STT on a watch today:
 
 | Path (the picker's own words) | Where audio goes | Quality | Default |
 |---|---|---|---|
-| **Local Vosk · offline** | never leaves the watch | Best-effort on-device. Nails short commands and dictation you speak *at* it; garbles names and mumbles. Clear speech, or edit-and-resend. Needs the model — one tap on Voice in installs it from your gateway (41 MB, resumable). | ✅ default |
+| **Gateway · parakeet** (streaming) | your own box, through your own tunnel (the mic clip rides as **Opus 24k mono** — ~10× lighter than a wave) | **The default.** Parakeet Unified EN 0.6b (GGUF, no GPU needed) streams partials back *while you talk*, at the latency of you↔your gateway — the transcript is nearly finished when your sentence is. The Wear Kit pane installs and starts the engine for you (pinned `scripts/parakeet.sh` build, hashed download — nothing unscannable runs); the Voice-in page probes it and says what's missing instead of going silent. | ✅ default |
+| **Local Vosk · offline** | never leaves the watch | The airplane path. Best-effort on-device: nails short commands and dictation you speak *at* it, garbles names and mumbles. Needs the model — one tap on Voice in installs it from your gateway (41 MB, resumable). | offline fallback |
+| **Gateway · whisper** (`watchkit /stt/whisper`) | your own box, through your own tunnel (same Opus wire) | Buffered sibling: the final text lands when you stop talking. Kept as the fallback tier and for languages Parakeet doesn't cover. | opt-in |
 | **OFF-DEVICE · vendor (Google or Samsung)** | the vendor's cloud — whatever recognizer your watch ships | Usually the best raw accuracy on the watch, at the cost of the vendor hearing it. The picker says **OFF-DEVICE** even when the vendor caches locally — that's deliberate. | your choice |
-| **Gateway · whisper** (`watchkit /stt/whisper`) | your own box, through your own tunnel (the mic clip rides as **Opus**, AAC fallback — watchkit sniffs the container) | Noticeably better than Vosk — but buffered: the final text lands when you stop talking. Model choice is a row on the Voice page. | opt-in |
-| **Gateway · parakeet** (streaming) | your own box, through your own tunnel (same Opus wire) | `scripts/parakeet.sh` sets the model up for you (Parakeet Unified EN 0.6b, GGUF, no GPU). Its edge over a built-in Hermes whisper is **streaming**: partials flow back while you talk, at the latency of you↔your gateway, so the transcript is nearly finished when your sentence is. Being moved behind the Wear Kit wizard as an install verb (`--fix stt`, preview→approve) so the gateway voice path sets up from the pane. | opt-in |
 | GBoard typing → its mic | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
 
-TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
-without touching a cloud voice. Mute is one dial flick (drag the orb toward 1:20) — the orb is the
-*only* control on the chat screen: nine drag directions stand in for every button, and the ⌘ lane
-at 5:20 opens the slash overlay. Reply loudness is PER AGENT — the Voice page slider, the mute-lane
-dwell slider on the dial, and the satellite all ride the same per-agent store. While it reads aloud,
-the chat keeps the SPOKEN sentence in view (karaoke follow); and a fresh reply rests just above the
-orb from sentence one, growing upward, instead of starting at the top of the circle.
+**Voice-out is the other half of the loop, and it's tiered the same way.** The default is
+**`wearkit-gateway`**: your gateway's own TTS pipeline (NeuTTS Air on the box, pinned private
+venv, hash-verified weights) synthesizes each reply and ships it over the watch's lane as
+24k mono audio — a better voice than any watch speaker deserves, at zero cloud cost, and the
+same engine that just heard you provides the **word-level timing** for the karaoke follow. It
+degrades honestly, never silently:
+
+- **Chunking is by PARAGRAPH** (the shipped default): one synthesis per paragraph instead of
+  per sentence — no machine-gun cadence between chunks, no pitch jitter mid-answer. The Voice-out
+  page lets you pick sentence/paragraph/whole.
+- **Voice cards** — enroll a person (say a prompt, the gateway clones the take into the engine),
+  or use the shipped set. Every reply speaks its agent's card; the Wear Kit pane carries a
+  per-agent voice dropdown, and the prefs ride the canonical `voiceout.yaml` (monotonic revision,
+  higher-rev-wins two-way merge, so an offline watch reconciles instead of clobbering).
+- **One speed dial, global** — it rides the platform TTS rate feature; each card stores the
+  *measured* pace of the voice it enrolled (1.0× = the speaker's own speed), so 1.05× means the
+  same thing across every voice.
+- **While it reads aloud**, the chat keeps the SPOKEN sentence in view (karaoke follow — words
+  light with the audio when alignment exists; when it doesn't, sentence mode, and the UI says so);
+  a fresh reply rests just above the orb from sentence one, growing upward. Tapping the orb while
+  it speaks **stops it** — the same mute semantics as everything else red, one control, no new
+  button. Mute and speed are PER AGENT: the Voice-out slider, the mute-lane dwell slider on the
+  dial, and the pane dropdown all read and write the same store.
+- **No gateway? It still talks.** The tier falls back to the watch's on-device TTS automatically —
+  replies stay spoken even with the tunnel down, and the About page names which tier is live.
 
 ## What it weighs — and why it never grows
 

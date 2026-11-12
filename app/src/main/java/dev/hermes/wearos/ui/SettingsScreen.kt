@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.material.Button
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -279,35 +280,45 @@ fun SettingsScreen(
     fun settingsGwHost(): String =
         runCatching { android.net.Uri.parse(baseUrl).host.orEmpty() }.getOrDefault("")
 
-    val settingsScroll = androidx.compose.foundation.rememberScrollState()
+    // OWNER 2026-11-11, post-research (SLC law): the settings surface IS a ScalingLazyColumn
+    // now — the same viewport-sized list Chat/Sessions use, so the #18 geometry problem above
+    // is structurally gone (node = viewport, ring math correct at every scroll depth), blank
+    // air scrolls (the "box around everything" law), and the touch bezel rides the SAME
+    // edgeScrollWalk the chat transcript uses. scalingParams pinned to identity ON PURPOSE:
+    // today the page emits its rows as one item of a hand-shaped Column; edge-scaling the
+    // block would shrink headers mid-scroll and read as a glitch. The row-itemized follow-up
+    // (each nav row its own item, system-settings fisheye live) is the post-deadline polish.
+    val settingsScroll = androidx.wear.compose.foundation.lazy.rememberScalingLazyListState()
     val edgeScope = rememberCoroutineScope()
-    // BATCH-5 #18 (owner: *"it's not working on the agent screen… let me check the settings
-    // screens… it's not working there… voice out has a really long list… not working there
-    // either"*): the gesture lived ON the scrolled Column, whose layout node measures as tall
-    // as its CONTENT — the ring geometry then computed a ~480×900 ellipse on a 480 px face, so
-    // only touches near the TOP rim ever counted, and they drifted further off the deeper the
-    // page scrolled (positions ride the node origin, which scrolls away). Chat/Sessions kept
-    // working because a ScalingLazyColumn node IS viewport-sized. The gesture now rides a
-    // viewport-sized wrapper: ring = the real round face, every page, every scroll position.
-    Box(
+    // Parent frame: the list is the page; the enrollment overlay (IME law) draws ON TOP of it,
+    // same visual stack the old Box host had.
+    Box(modifier = Modifier.fillMaxSize()) {
+    ScalingLazyColumn(
+        state = settingsScroll,
         modifier = Modifier
             .fillMaxSize()
             // BATCH-6 #29 (owner: "the main settings screen… does not work with the bezel
             //  scrolling"): it DID circle — at the chat's reading gear, ~50 px a real-finger
             //  stroke, invisible on a button list. Dense surfaces circle at 2f, like Sessions.
-            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.scrollBy(total) } },
+            .edgeCircleScroll(speed = 2f) { total -> edgeScope.launch { settingsScroll.edgeScrollWalk(total) } },
+        // Owner on-device note (v0.10.10): the page OPENED parked at About — auto-centering was
+        // pulling the tall single item up. The list starts at the TOP and scrolls down from there.
+        autoCentering = null,
+        // Scaling params at DEFAULT (Sessions idiom): the system-settings fisheye the owner
+        // asked for comes free — center row full size, edges shrink+fade toward the rim.
     ) {
+    item {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             // BATCH-4 #6, owner-corrected: NO viewport band (roundSafe removed) and no pre-scroll
             // padding either — the scroll strip is the WHOLE face, exactly like chat ("cutting off
             // stuff at the top and the bottom of the screen, which is dumb… like you did on the
-            // chat window initially"). The buffer is CONTENT padding after the scroll: think of a
+            // chat window initially). The buffer is CONTENT padding after the scroll: think of a
             // web page with extra blank lines at the end — the text flows through the rim zone
             // while you read, and the LAST line comes to rest in the meat of the circle.
-            .padding(horizontal = 20.dp)
-            .verticalScroll(settingsScroll)
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+            .padding(bottom = 40.dp)
             // BATCH-7: 12.dp was fine at the owner's 1.81× text scale, but at default scale the
             // page title lands dead-center under OneUI's persistent clock pill (About proved it).
             // Clear the pill band on EVERY page, at every font scale.
@@ -1279,7 +1290,9 @@ fun SettingsScreen(
         if (page == SettingsPage.VoiceIn) {
             // SPEECH INPUT PROVIDER (batch-4 #8 picker, #13 page: the orb's default engine,
             // nested like Voice out). HONEST subtitles from domain/SttProviders (pure +
-            // JVM-tested); Vosk stays default — airplane mode must keep listening (SPEC §5).
+            // JVM-tested); gateway streaming is the first-run default (owner doctrine 2026-11-11),
+            // Local Vosk the optional offline fallback — GatewayStt auto-falls-back to it, so
+            // airplane mode keeps listening (SPEC §5).
             // The mic path resolves the pick on every startListening (WearApp.Graph.sttNow),
             // so a pick is live immediately, no restart.
             FieldLabel("🎙 speech input")
@@ -1520,16 +1533,19 @@ fun SettingsScreen(
             StatusLine("author", "Clayton Young")
         }
     }
+    } // item
+    } // ScalingLazyColumn
         // ENROLLMENT OVERLAY (owner IME law): rendered in the ACTIVITY window as a
         // full-screen sheet over the settings surface — the Wear floating keyboard
         // rises here exactly as it does in chat; inside androidx Dialog windows on
-        // this watch it stays mute (proven twice, 2026-11-11).
+        // this watch it stays mute (proven twice, 2026-11-11). Lives in the PARENT Box
+        // scope (after the list closes) so it paints over the list, SLC-legal.
         if (enrolling && page == SettingsPage.Voice) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
                 VoiceEnroll(onClose = { enrolling = false; gwProbe++ }, agent = agentNow)
             }
         }
-    } // Box (batch-5 #18 edge-scroll host)
+    } // parent Box (SLC frame + enrollment overlay on top)
 }
 
 /**

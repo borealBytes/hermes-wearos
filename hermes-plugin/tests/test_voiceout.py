@@ -21,9 +21,38 @@ def mkwav(segs, rate=16000):
 
 VOICED = mkwav([(0.3, 0), (3.5, 1.0), (0.6, 0)])          # 3.5 s of "speech"
 
+
+def _use_home(d):
+    """Point the plugin's prefs/cache root at d for THIS test, host-proof: the
+    resolver prefers a CONTEXT-LOCAL override over HERMES_HOME (exact conftest
+    pattern), so set it ourselves — a stale override leaked by an earlier test
+    file must never re-point our sandbox (2026-11-11 lesson: pytest 9 dropped
+    MonkeyPatch.finalize and one reset silently died). Returns (hc, token)."""
+    os.environ["HERMES_HOME"] = d
+    try:
+        import hermes_constants as hc
+        tok = hc.set_hermes_home_override(d) if hasattr(
+            hc, "set_hermes_home_override") else None
+        return hc, tok
+    except Exception:
+        return None, None
+
+
+def _drop_home(hc_tok):
+    hc, tok = hc_tok
+    if hc is not None and tok is not None:
+        try:
+            hc.reset_hermes_home_override(tok)
+        except ValueError:
+            hc.set_hermes_home_override(None)
+
+
 class VoiceoutTests(unittest.TestCase):
     def setUp(self):
-        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="vo-test-")
+        self._home = _use_home(tempfile.mkdtemp(prefix="vo-test-"))
+
+    def tearDown(self):
+        _drop_home(self._home)
 
     def test_wav_reader(self):
         self.assertAlmostEqual(vo._wav_duration(VOICED), 4.4, places=1)
@@ -128,7 +157,7 @@ class SentenceChunkingTests(unittest.TestCase):
     """Owner ruling 2026-11-10: sentence-by-sentence in BOTH lanes."""
 
     def setUp(self):
-        os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="vo-test-")
+        self._home = _use_home(tempfile.mkdtemp(prefix="vo-test-"))
         # These are the issue #7 SENTENCE-mode tests; paragraph became the
         # product default on 2026-11-11 (see test_chunk_mode.py for that lane).
         vo.set_chunk_mode("sentence")
@@ -148,6 +177,7 @@ class SentenceChunkingTests(unittest.TestCase):
             th[0].join(0.1)
 
     def tearDown(self):
+        _drop_home(self._home)
         vo._SYNTH.pop("air", None)
         vo._ALIGN.clear(); vo._ALIGN.update(self._align)
 

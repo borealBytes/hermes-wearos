@@ -35,7 +35,8 @@ interface SttSource {
  * SYSTEM recognizer (batch-4 #8): android.speech.SpeechRecognizer — Google on Pixel/OnePlus,
  * Bixby/Weamp on Galaxy Watch, whatever the vendor ships elsewhere. UNLIKE Vosk this is
  * networked speech recognition on every stack we ship against, which is why the picker labels
- * it OFF-DEVICE (domain/SttProviders.subtitle), and why LOCAL stays the default.
+ * it OFF-DEVICE (domain/SttProviders.subtitle) and why it is a pick, never a default (the
+ * first-run default is GATEWAY since the owner doctrine of 2026-11-11).
  *
  * Engine quirks encoded here:
  *  • must be created/used on the MAIN thread (callbackFlow inherits the collector's Main scope);

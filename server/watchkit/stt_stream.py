@@ -166,7 +166,7 @@ def check():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", choices=list(ENGINES), default="whisper")
+    ap.add_argument("--engine", choices=list(ENGINES), default="parakeet")  # owner doctrine: gateway Parakeet is the STT story
     ap.add_argument("--check", action="store_true", help="print engine readiness JSON and exit")
     args = ap.parse_args()
     if args.check:

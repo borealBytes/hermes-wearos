@@ -85,6 +85,7 @@ import dev.hermes.wearos.ui.ChatScreen
 import dev.hermes.wearos.ui.ChatsScreen
 import dev.hermes.wearos.ui.LocalFontScale
 import dev.hermes.wearos.ui.PromptActionSheet
+import dev.hermes.wearos.ui.staleGestureGuard
 import dev.hermes.wearos.ui.PromptEditorOverlay
 import dev.hermes.wearos.ui.PttOverlay
 import dev.hermes.wearos.ui.SessionActionSheet
@@ -157,6 +158,25 @@ class MainActivity : ComponentActivity() {
      * same path for the bezel-less emulator.)
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            // BACK-SOURCE PROBE + hardware-only law (owner 2026-11-11: "the only way to exit
+            // settings is the hardware back button" — the system bottom-swipe was ejecting pages
+            // mid-scroll; the work shipped in PR #30, this thread was never filed as an issue).
+            // A gesture-back is a SYNTHESIZED key event; the physical button is not.
+            // Log every source (forensics), swallow synthesized backs while any settings surface
+            // is up, let the hardware key fall through to the dispatcher (page-up / exit).
+            // ON-DEVICE CALIBRATION (PR #30, SM-L705U trace 2026-11-11): Samsung's gesture-nav
+            // back arrives with 0x8 — KeyEvent.FLAG_FROM_SYSTEM ("came from a trusted part of
+            // the system"); the earlier names FLAG_FAKE / FLAG_IS_SYNTHESIZED do not exist as
+            // KeyEvent constants. The hardware key arrived with flags 0 here; the 0x808 mask on
+            // other OEMs is unverified.
+            val synth = (event.flags and 0x808) != 0
+            Log.i("HermesWear", "back key source=${event.source} flags=0x${Integer.toHexString(event.flags)} synthesized=$synth")
+            if (synth && isSettingsSurfaceVisible()) {
+                Log.i("HermesWear", "back-swipe SWALLOWED (settings law)")
+                return true
+            }
+        }
         val steps = when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> 1
             KeyEvent.KEYCODE_VOLUME_DOWN -> -1
@@ -165,6 +185,14 @@ class MainActivity : ComponentActivity() {
         if (RotaryVolume.rotate(steps)) return true
         return super.onKeyDown(keyCode, event)
     }
+
+    /** True when the settings hub or any of its pages owns the screen (back law applies). */
+    private fun isSettingsSurfaceVisible(): Boolean =
+        settingsVisible[0]
+
+    // Written by the screen ledger (setContent) each time the screen changes; read by the
+    // back-source gate above. Plain array — same volatile publish semantics the ledger uses.
+    private val settingsVisible = booleanArrayOf(false)
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
@@ -256,7 +284,16 @@ class MainActivity : ComponentActivity() {
                 // the ring handler below disables and SettingsScreen's own BackHandler (composed
                 // inside the screen) wins the dispatcher.
                 val settingsCanUnwind = remember { mutableStateOf(false) }
-                LaunchedEffect(screen) { if (screen != Screen.Settings) settingsManual = false }
+                LaunchedEffect(screen) {
+                    // #24 FINAL WITNESS: "settings committed but nothing happened" needs the
+                    // screen ledger, not just the commit line — log every navigation with the
+                    // manual flag as it stood at that instant.
+                    android.util.Log.i("HermesWear", "screen=$screen manual=$settingsManual")
+                    if (screen != Screen.Settings) settingsManual = false
+                    // Back law (PR #30): feed the activity-level source gate — synthesized (swipe)
+                    // backs are swallowed only while a settings surface owns the screen.
+                    settingsVisible[0] = screen == Screen.Settings
+                }
                 // FIRST-RUN / NEEDS_AUTH PAIR GATE (SPEC §4, "tailnet only, always"): an empty
                 // registry or any engine edge into NEEDS_AUTH routes the wrist to Settings —
                 // whose own collector lands the Pair page — instead of a chat with nothing to
@@ -265,6 +302,9 @@ class MainActivity : ComponentActivity() {
                 val pairNow by WearApp.Graph.pairRequested.collectAsState()
                 var pairTookOver by remember { mutableStateOf(false) }
                 LaunchedEffect(pairNow) {
+                    // #24 TRACE: name every takeover/hand-back so the log answers "who stole
+                    // my screen" outright (the dialog punch after lane commits).
+                    android.util.Log.i("HermesWear", "pairNow=$pairNow tookOver=$pairTookOver manual=$settingsManual")
                     if (pairNow) {
                         // Take over only for people who didn't open Settings themselves; a
                         // manual visitor's own Pair row shows the gate (the page collector
@@ -437,6 +477,12 @@ class MainActivity : ComponentActivity() {
                 val slash by settings.commandUsage.collectAsState()
                 val catalogJson by settings.slashCatalogJson.collectAsState()
                 var commandsOpen by remember { mutableStateOf(false) }
+                // Stale-lift guard (#24): the pointer UP that ends the dial commit lands on the
+                // scrim of the sheet the lane JUST opened and dismisses it inside the first
+                // ~50 ms — the "commands opened nothing" flash. Sheets ignore dismissal for
+                // 350 ms after they appear. (remembered holder: survives recomposition, composes
+                // nothing — the guard must never itself trigger a redraw.)
+                val sheetsOpenedAt = remember { longArrayOf(0L) }
                 var slashPrefill by remember { mutableStateOf<String?>(null) }
                 // Dev hook `-e commands 1`: open the SLASH OVERLAY without a dial drag to 6:00 —
                 // same capture-rig reason as dial_preview/model_picker (a synthetic release is
@@ -567,10 +613,13 @@ class MainActivity : ComponentActivity() {
                 )
                 fun openCommands(prefill: String?) {
                     slashPrefill = prefill
+                    sheetsOpenedAt[0] = android.os.SystemClock.elapsedRealtime()
                     commandsOpen = true
                     uiScope.launch { settings.refreshSlashCatalog(profile) }
                 }
                 fun runCommand(e: CommandEntry) {
+                    // #24 FORENSICS: name every executed entry + its age since the sheet opened.
+                    Log.i("HermesWear", "runCommand /${e.name} at +${android.os.SystemClock.elapsedRealtime() - sheetsOpenedAt[0]}ms")
                     uiScope.launch { settings.recordCommand(e.name) }
                     when (e.honored) {
                         CommandKind.Steer -> {
@@ -617,6 +666,16 @@ class MainActivity : ComponentActivity() {
                 // Settings ▸ Interface, all of them lands here. Lanes the branch-2 voice work owns
                 // say so plainly instead of silently doing nothing.
                 fun handleLane(lane: Lane) {
+                    // LET-GO-ON-THE-WORD-YOU-SEE = YOU GET IT (owner #21/#23/#24 saga):
+                    // every dialog the dial can sit behind must be cleared BEFORE the lane
+                    // lands, or the lane commits faithfully into a hidden Z-order — the
+                    // owner's "sessions took me to agents" (agents sheet still up) and
+                    // "settings didn't work" (slash overlay still up) were both exactly this.
+                    showAgents = false; showModels = false; approvalsOpen = false
+                    commandsOpen = false; promptSheet = null; manageSheet = null
+                    // Stamp AFTER the sweep: whatever the lane opens is "young" and may not be
+                    // dismissed by this gesture's own lifting finger.
+                    sheetsOpenedAt[0] = android.os.SystemClock.elapsedRealtime()
                     when (lane) {
                         Lane.Keyboard -> {
                             // The drag-up that already shipped, now slot 0 of the dial.
@@ -737,6 +796,14 @@ class MainActivity : ComponentActivity() {
                     // rightward drag is yielded untouched — that is the edge-back gesture's
                     // job and stealing it would break "just get me back to the chat".
                     SwipeForward(onForward = {
+                        // DIAL/SLICE RACE (trace 2026-11-11 ~14:11: every fast radial flick to
+                        // an east wedge also carried >=14 px of horizontal travel inside 220 ms,
+                        // so this detector CLAIMED the dial's own release and the ring
+                        // overwrote the lane in the same frame — Settings opened as Sessions,
+                        // 'sometimes' was just the slow drags). A release that committed a dial
+                        // lane is a dial gesture, not a slice: the ring stays out of it.
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - dialCommitAt.get() < 400L) return@SwipeForward
                         when (BackRing.action(screen)) {
                             BackRing.Action.ToSessions -> screen = Screen.Sessions
                             BackRing.Action.ToAgents -> {
@@ -879,7 +946,8 @@ class MainActivity : ComponentActivity() {
                                 onVoiceStop = { endListening() },
                                 onPick = { e -> runCommand(e) },
                                 onPrompt = { t -> commandsOpen = false; submitMaybeSlash(t) },
-                                onDismiss = { commandsOpen = false },
+                                onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) commandsOpen = false },
+                                guard = Modifier.staleGestureGuard(sheetsOpenedAt),
                             ),
                         )
                         Screen.Chats -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
@@ -1071,7 +1139,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        onDismiss = { showAgents = false; screen = Screen.Chat },
+                        onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { showAgents = false; screen = Screen.Chat } },
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                     )
                 }
                 if (showModels) {
@@ -1095,7 +1164,8 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                         },
-                        onDismiss = { showModels = false; screen = Screen.Chat },
+                        onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { showModels = false; screen = Screen.Chat } },
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                     )
                 }
                 if (approvalsOpen) {
@@ -1115,12 +1185,14 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                         },
-                        onDismiss = { approvalsOpen = false; screen = Screen.Chat },
+                        onDismiss = { if (!staleSheetLift(sheetsOpenedAt)) { approvalsOpen = false; screen = Screen.Chat } },
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                     )
                 }
                 promptSheet?.let { msg ->
                     PromptActionSheet(
                         preview = msg.text,
+                        modifier = Modifier.staleGestureGuard(sheetsOpenedAt),
                         onEdit = {
                             promptSheet = null
                             editor = EditorReq(text = msg.text, original = msg.text, hint = "✎ edit & resend", editOf = msg.id)
@@ -1251,6 +1323,8 @@ private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit)
  *  early so the system edge-back keeps its gesture. Vertical lists are untouched — a scrolling
  *  child consumes the stream and this detector bows out with it. Pure gesture, no state: the
  *  where-to logic stays in BackRing (unit-tested) beside the physical-back handler. */
+private val dialCommitAt = java.util.concurrent.atomic.AtomicLong(0L)
+
 @Composable
 private fun SwipeForward(onForward: () -> Unit, content: @Composable () -> Unit) {
     val slop = with(LocalDensity.current) { 40.dp.toPx() }
@@ -1629,6 +1703,7 @@ private fun ChatBody(
                 onPick = commands.onPick,
                 onPrompt = commands.onPrompt,
                 onDismiss = commands.onDismiss,
+                modifier = commands.guard,
             )
         }
     }
@@ -1643,6 +1718,7 @@ private data class DialCommands(
     val open: Boolean,
     val state: CommandOverlayState,
     val prefill: String?,
+    val guard: Modifier = Modifier,  // #24 stale-lift guard (built from sheetsOpenedAt)
     val voiceOn: Boolean,
     val onVoiceStart: () -> Unit,
     val onVoiceStop: () -> Unit,
@@ -1807,6 +1883,10 @@ private fun OrbCluster(
         },
         onDialEnd = { _, _ ->
             armed = false; activeSlot = -1; risen = false; spinPhase = 0f
+            // Stamp the commit BEFORE dispatch so the sibling swipe detector (see the
+            // dial/slice race gate at the SwipeForward call site) can tell this gesture's
+            // release apart from a deliberate ring slice.
+            dialCommitAt.set(android.os.SystemClock.elapsedRealtime())
             if (volumeMode) {
                 // The double slider commits its level — the mute toggle is consumed by the dwell.
                 volumeMode = false
@@ -2054,3 +2134,15 @@ private fun HermesScaffold(
         }
     }
 }
+
+/**
+ * THE STALE-LIFT RULE (#24, owner saga 2026-11-11): the same finger that COMMITTED a dial lane
+ * keeps traveling after release and its motion stream touches the scrim of the sheet the lane
+ * just opened — dismissOnClickOutside treats that ghost as a tap-outside, so commands flashed
+ * and the agents/model/approval sheets kicked `screen = Chat` behind the owner's back.
+ * A sheet ignores dismissal for 350 ms after its opening stamp; a human's real "get me out of
+ * here" tap always takes longer than that. The stamp is a longArrayOf holder (remembered,
+ * never composed) so guarding costs zero recompositions.
+ */
+internal fun staleSheetLift(sheetsOpenedAtMs: LongArray): Boolean =
+    android.os.SystemClock.elapsedRealtime() - sheetsOpenedAtMs[0] < 350L

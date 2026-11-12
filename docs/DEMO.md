@@ -466,7 +466,7 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
 - Gateway: `wear-demo` profile (key already in the watch's agent map).
 - Seed lived-in history (via API inserts, timestamps spread over days):
   harbor briefs with plots, an aurora forecast, a mooring-fee thread with
-  Hannah drafts, one long essay reply, one mermaid, one archived pair.
+  buyer-reply drafts, one long essay reply, one mermaid, one archived pair.
 - Search beat queries `harbor` → matches ONLY seeded rows.
 - Fork/archive/unarchive beats act on seeded rows only.
 - Old wear-demo chatter cleared with the archive feature itself (dogfood).
@@ -695,7 +695,7 @@ Branch keeps exactly ONE generation of every tracked media path.
   `/p/<profile>/api/sessions/<id>/fork` but the gateway answers `session not found` even for real
   store sessions, while the identical curl with `-d '{}'` + JSON content-type succeeds (likely the
   app's `request()` sends its `{}` body without the JSON content-type and/or a stale base — file a
-  follow-up); the fork beat is proven via curl (`Mooring fees — draft for Hannah #2`, deleted
+  follow-up); the fork beat is proven via curl (`Mooring fees — buyer-reply draft #2`, deleted
   after). (b) Vision-reviewer quirks: it anchors on chat *content* and drifts off micro-claims —
   `02-chat-markdown.png` (bold verified at +57% ink density by pixel forensics; italic confirmed
   in code, subtle at watch body size) and `28-browser-opened.png` (the site genuinely serves its

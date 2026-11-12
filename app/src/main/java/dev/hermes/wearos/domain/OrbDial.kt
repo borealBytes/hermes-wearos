@@ -75,9 +75,17 @@ enum class Lane(val id: String, val glyph: String, val label: String) {
  * (OrbDialTest).
  */
 object OrbDial {
-    /** 9 wedges since 2026-10-29 (owner: approvals deserves a default home — ✅ at 10:40). */
-    const val SLOT_COUNT = 9
-    const val SLOT_DEG = 40f
+    /**
+     * EIGHT 45° wedges — reverted 2026-11-11 (owner ruling after the #24 saga research): the
+     * 9×40° experiment (2026-10-29) grew the ring past the owner's learned clock model — two
+     * wedges fell below the horizon, every wedge narrowed by 12.5 %, and misses multiplied
+     * ("this is 8 ways… we have 9 ways… it used to work"). The clock is the contract:
+     * gear lands on exact 3:00, commands on exact 4:30, sessions on 7:30, agents on 9:00,
+     * approvals on 10:30, keyboard on 12:00. Chats leaves the default ring (owner: "what the
+     * hell do I have chats for") — remappable back onto any slot from Settings ▸ Orb.
+     */
+    const val SLOT_COUNT = 8
+    const val SLOT_DEG = 45f
 
     /**
      * Icon centers sit this far from the orb center (ref px). Chosen so the ring clears the
@@ -110,15 +118,15 @@ object OrbDial {
      *  ("slide it up, then you can go right or left"); side/bottom drags stay pure aim. */
     const val SPIN_UP_ARC_DEG = 65f
 
-    /** Lower-arc bounds that trigger the contextual rise: the wedges whose centers sit below
-     *  the horizon (4:00 / 5:20 / 6:40 / 8:00 on the 9-wedge dial). */
-    const val RISE_FROM_DEG = 100f
-    const val RISE_TO_DEG = 260f
+    /** Lower-arc bounds that trigger the contextual rise — the wedges at/below 4:30, 6:00,
+     *  7:30 on the 8-wedge clock (112°..248° covers their ±22.5° spans). */
+    const val RISE_FROM_DEG = 112f
+    const val RISE_TO_DEG = 248f
 
-    /** Owner's default map, slot 0 → slot 8 (12:00 → 10:40 clockwise), SPEC §12.1. */
+    /** Owner's default map, slot 0 → slot 7 (12:00 → 10:30 clockwise, 45° wedges), SPEC §12.1. */
     val DEFAULT_SLOTS: List<Lane> = listOf(
-        Lane.Keyboard, Lane.Mute, Lane.Settings, Lane.Model,
-        Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents, Lane.Approvals,
+        Lane.Keyboard, Lane.Mute, Lane.Settings, Lane.Commands,
+        Lane.Model, Lane.Sessions, Lane.Agents, Lane.Approvals,
     )
 
     /** 480-reference → viewport scale from the MIN dimension (same rule as `BottomLayout`). */
@@ -208,12 +216,25 @@ object OrbDial {
      * Saved map → exactly [SLOT_COUNT] lanes. Garbage-tolerant by design: an unknown id (a lane
      * renamed in a future build) keeps THAT slot's default instead of blanking the whole dial, and
      * a blank/corrupt value falls back to the owner's default map.
+     *
+     * LEGACY (9-wedge era) SAVES: every save of 9+ slots is compacted BY POSITION — chats (and
+     * any unknown id) is dropped (the owner removed chats from the ring), the list shifts left,
+     * and free slots take the new defaults. There is NO wholesale rewrite to the new default map:
+     * explicit choices survive, so the old default save lands as model@4:30 + commands@6:00
+     * (swapped against today's default) — pinned by OrbDialTest
+     * "a nine-slot legacy save compacts onto the eight-wedge clock".
      */
     fun decode(raw: String?): List<Lane> {
         val parts = raw?.split(",")?.map { it.trim() } ?: emptyList()
-        return List(SLOT_COUNT) { i ->
-            parts.getOrNull(i)?.takeIf { it.isNotEmpty() }?.let { Lane.fromId(it) } ?: DEFAULT_SLOTS[i]
-        }
+        // Position-preserving parse: an unknown id stays NULL at its position and gets that
+        // slot's default (a renamed future lane must not shift the wedges).
+        val parsed: List<Lane?> = parts.map { p -> p.takeIf { it.isNotEmpty() }?.let { Lane.fromId(it) } }
+        val lanes: List<Lane?> = if (parsed.size >= 9) {
+            // Legacy 9-wedge save: compacts onto the 8-way clock — chats is dropped (owner
+            // removed it from the ring) and unknown ids fall out; free slots take defaults.
+            parsed.filter { it != null && it != Lane.Chats }
+        } else parsed
+        return List(SLOT_COUNT) { i -> lanes.getOrNull(i) ?: DEFAULT_SLOTS[i] }
     }
 
     private fun dist(dxPx: Float, dyPx: Float): Float = sqrt(dxPx * dxPx + dyPx * dyPx)

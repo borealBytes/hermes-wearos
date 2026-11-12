@@ -53,7 +53,11 @@ fun ModelPickerDialog(
     agent: String,
     onPick: (String) -> Unit,          // model id, or "" for gateway default
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,     // #24 stale-lift guard
 ) {
+
+    // #24 TRACE: self-name on open — the WindowManager addView line gets a witness.
+    androidx.compose.runtime.LaunchedEffect(Unit) { android.util.Log.i("HermesWear", "sheet-open ModelPickerDialog") }
     var openProvider by remember { mutableStateOf<String?>(null) }
     Dialog(
         onDismissRequest = onDismiss,
@@ -67,7 +71,7 @@ fun ModelPickerDialog(
         val edgeScope = rememberCoroutineScope()
         val edgeDlgScroll = androidx.compose.foundation.rememberScrollState()
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
                 .background(Color.Black)
                 // BATCH-6 #29: model lists circle at 2f (see SettingsScreen).
