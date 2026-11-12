@@ -833,7 +833,7 @@ regex-on-text sees "no valid speech tokens" and dies even though the model is
 speaking. We iterate .generate() ids and resolve names from the GGUF vocab
 ourselves — immune to the renderer.
 """
-import argparse, json, os, re, select, sys, wave
+import argparse, json, os, re, select, sys, time, wave
 
 SPEECH = re.compile(r"^<\\|speech_(\\d+)\\|>$")
 # RESIDENT by owner ruling 2026-11-10: the model stays loaded — reply latency
@@ -950,6 +950,7 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    ap.add_argument("--state", default="", help="busy/idle marker file")
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top-k", type=int, default=50)
     a = ap.parse_args()
@@ -977,6 +978,17 @@ def main():
                 continue
             if req.get("cmd") == "quit":
                 return 0
+            # busy/idle marker (sibling-safe reaping): a worker mid-synth is
+            # NEVER reaped by another process's spawn guard — the 21:16
+            # ping-pong killed the owner's stream mid-draw.
+            _st = open(a.state, "w") if a.state else None
+            def _mark(state, _f=_st):
+                if _f:
+                    _f.seek(0); _f.truncate()
+                    _f.write(json.dumps({"pid": os.getpid(), "state": state,
+                                         "t": time.time()}))
+                    _f.flush()
+            _mark("busy")
             try:
                 text = open(req["text_file"], encoding="utf-8").read()
                 ref_text = open(req["ref_text"], encoding="utf-8").read()
@@ -988,6 +1000,9 @@ def main():
             except Exception as exc:
                 _proto.write(json.dumps({"ok": False,
                                          "error": str(exc)[:300]}) + "\\n")
+            _mark("idle")
+            if _st:
+                _st.close()
             _proto.flush()
     if not (a.text_file and a.ref_wav and a.ref_text and a.out):
         raise SystemExit("one-shot mode needs --text-file/--ref-wav/--ref-text/--out")
@@ -1057,6 +1072,8 @@ def _reap_stray_workers(keep: "set | None" = None) -> None:
     respawns on its NEXT speak; the survivor pays the model load once. Cheap
     /proc scan, stdlib only (rule 10)."""
     keep = keep or set()
+    _foreign_busy_at[0] = 0.0
+    busy = _worker_state_busy()
     try:
         pids = [int(p) for p in os.listdir("/proc") if p.isdigit()]
     except OSError:
@@ -1069,9 +1086,30 @@ def _reap_stray_workers(keep: "set | None" = None) -> None:
                 continue
             if pid in keep or pid == os.getpid():
                 continue
+            if busy is not None and pid == busy:
+                # mid-synth on another surface (the 21:16 ping-pong killed the
+                # owner's stream): never reaped. Spawn guard defers instead.
+                _foreign_busy_at[0] = time.time()
+                continue
             os.kill(pid, signal.SIGKILL)
         except (OSError, ValueError):
             continue                 # raced/permission — best effort
+
+
+_foreign_busy_at = [0.0]             # ts of last seen foreign mid-synth worker
+
+
+def _worker_state_busy() -> "int | None":
+    """pid of the last announced worker while it claims BUSY and its marker
+    is fresher than one synth could take; None = nothing safe to protect."""
+    try:
+        st = json.loads((_root() / "worker.state").read_text())
+        if (st.get("state") == "busy"
+                and time.time() - float(st.get("t", 0)) < SYNTH_TIMEOUT):
+            return int(st.get("pid", -1))
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 _WORKERS_ALL: list = []              # every worker this process ever spawned
@@ -1101,6 +1139,12 @@ def _spawn_guard(w, want: str, seed):
         if w is None or w.poll() is not None:
             write_runner()
             _reap_stray_workers()          # system-wide: no twins, no orphans
+            if _foreign_busy_at[0] and time.time() - _foreign_busy_at[0] < 60:
+                # A sibling surface (dashboard speaking vs this lane) is
+                # MID-SYNTH and cannot be reaped without clipping its audio.
+                # DEFER rather than twin on the 4070: honest retry (the speak
+                # attempt loop re-enters; its marker expires or flips idle).
+                return None
             _WORKER = w = subprocess.Popen(
                 _serve_argv(seed), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -1203,7 +1247,8 @@ def _serve_argv(seed=None, device: Optional[str] = None) -> list:
             "--serve", "--device", eff,
             "--model", str(_root() / "model" / s["file"]),
             "--codec", str(_root() / "codec") if s["codec"]["kind"] == "port"
-                       else s["codec"]["repo"]]
+                       else s["codec"]["repo"],
+            "--state", str(_root() / "worker.state")]
     if seed is not None:
         # neutts 1.4.1 seeds the sampler ONLY at construction, so a rotated
         # draw across a respawn needs the seed in argv, not just in the request.
@@ -1238,6 +1283,15 @@ def _worker_request(req: dict) -> None:
                         "GPU selected but its engine build is not ready — "
                         "Voice-out ▸ GPU row shows build progress")
                 w = _spawn_guard(w, want, req.get("seed"))
+                if w is None:
+                    # deferred: sibling surface mid-synth (marker-guarded) —
+                    # wait; the attempt loop retries honestly, and the third
+                    # give-up stays in the honest RuntimeError shape.
+                    time.sleep(3)
+                    if attempt == 3:
+                        raise RuntimeError(
+                            "engine busy: another surface is speaking")
+                    continue
                 try:
                     w.stdin.write(json.dumps(req) + "\n")
                     w.stdin.flush()

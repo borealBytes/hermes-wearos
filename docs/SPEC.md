@@ -2588,3 +2588,16 @@ Two provable halves of one ruling, both hardware-driven same evening:
   community voice weight (HF LFS oids, cross-verified against day-one
   observed-sha256 files), and NeuCodec revision pins (neuphonic a9400213, bezzam
   port 11873db8) — downloads take `resolve/<rev>`, never floating `main`.
+
+- **2026-11-11 — mid-synth SIGKILL ping-pong (owner: "small clip of really
+  late audio").** Journal proof: `speak-stream synthesis failed: engine failed:
+  worker died mid-request` — the dashboard and the gateway each host a module
+  instance of tts_air; the second one's system-wide reaper SIGKILLed the first
+  one's worker while it was mid-draw (TTS singleton law has no adoption path
+  across processes, and the killed owner's respawn killed back). Fix: the
+  runner now announces `busy`/`idle` in `plugin-data/wearos/tts/worker.state`
+  around every request, and `_reap_stray_workers` DEFERS rather than clips: a
+  marker that claims busy within one SYNTH_TIMEOUT window is never reaped, the
+  spawn guard returns None, and the attempt loop retries (3s sleeps, honest
+  give-up text). A crashed worker's stale busy marker expires on the same
+  window. Test: `test_busy_marker_shields_a_sibling_synth`. (v0.3.8)
