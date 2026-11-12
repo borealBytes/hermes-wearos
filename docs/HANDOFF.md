@@ -236,3 +236,15 @@ off-screen' is the honest no-chime law, not a bug.
 Agent
 flashes): named profile without the plugin → auto-install from install-metadata source+revision, retry enable once. wear profile installed/enabled/granted live.
 - invalidate keeps serving stale (17:10 flash fix): pane refetch must never pay the fan-out sync; pane overlays the clicked state until server confirms; enable-all reports per-profile failures.
+
+## 2026-11-12 ~01:10 — catalog PR merged; body de-borked; private-email follow-up PR #154472
+- PR #151546 MERGED (teknium1, 25 commits, pin a3a5280/0.3.11 — entry live). Body had been
+  double-escaped by the --input patch (JSON string into JSON) + a broken demo-video link +
+  stale "CI has not run" claim: all three fixed via direct gh api PATCH (real newline count
+  verified). The redacted pane shot (66-wearkit @ a3a5280) renders inside the summary table.
+- Private email exposure: merged commits + contributors/emails/<private> carry
+  claytoneyoung+github@gmail.com. main is not rewritable; repo's own mechanism is .mailmap ->
+  PR borealBytes/hermes-agent:wearos-mailmap -> NousResearch#154472: mailmap maps private ->
+  Clayton@SuperiorByteWorks.com (+ GH noreply 206480607+borealBytes@...), registry file
+  renamed to the business address. Future catalog commits: authored with business email from
+  the start (owner should also flip GitHub Settings > Emails commit-address preference).
